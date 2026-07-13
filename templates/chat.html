@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+
+{% block title %}Диалог с HR-помощником{% endblock %}
+
+{% block body_class %}page-chat{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/chat.js') }}"></script>
+{% endblock %}
+
+{% block content %}
+  <div class="chat-layout" id="chatLayout">
+  <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+  <aside class="chat-sidebar" id="chatSidebar">
+    <div class="chat-sidebar-head">
+      <span class="chat-sidebar-title"><i class="fas fa-comments"></i> Диалоги</span>
+      <div class="chat-sidebar-head-actions">
+        <button class="chat-sidebar-new" id="sidebarNewChat" type="button" title="Новый диалог">
+          <i class="fas fa-plus"></i>
+        </button>
+      </div>
+    </div>
+    <div class="chat-sidebar-search">
+      <i class="fas fa-search" aria-hidden="true"></i>
+      <input type="text" id="sidebarSearch" placeholder="Поиск по названию…" autocomplete="off">
+    </div>
+    <div class="chat-sidebar-filters">
+      <button class="sb-filter-btn active" data-filter="active" type="button">Активные</button>
+      <button class="sb-filter-btn" data-filter="finished" type="button">Решённые</button>
+      <button class="sb-filter-btn" data-filter="all" type="button">Все</button>
+    </div>
+    <div class="chat-sidebar-list" id="sidebarList">
+      <div class="loader-container"><div class="loader"></div></div>
+    </div>
+  </aside>
+
+  <div class="chat-box" id="chatBox">
+    <div class="chat-header">
+      <button class="chat-back-btn" id="backToDialoguesBtn" title="Вернуться к списку диалогов">
+        <i class="fa-solid fa-arrow-left"></i>
+      </button>
+      <div class="bot-avatar">🤖</div>
+      <div class="chat-header-text">
+        {% if dialogue %}
+        <div class="dialogue-title-row">
+          <input type="text" id="dialogueTitleInput" class="dialogue-title-input"
+                 placeholder="Название диалога (заполним автоматически)"
+                 value="{{ dialogue.title if dialogue.title and dialogue.title != 'Новый диалог' else '' }}"
+                 data-default="Новый диалог" maxlength="120">
+          <i class="fas fa-pen-to-square dialogue-title-icon" aria-hidden="true"></i>
+          <span class="dialogue-title-status" id="dialogueTitleStatus"></span>
+        </div>
+        {% else %}
+        <h2>HR-помощник</h2>
+        {% endif %}
+        <p id="chatStatus">Подключение...</p>
+      </div>
+
+      {# Панель действий над выделенными сообщениями (как в /messenger) #}
+      <div class="msgr-seltools msgr-seltools-page" id="chatSelTools" hidden>
+        <span class="msgr-sel-count"><b id="chatSelCount">0</b> выбрано</span>
+        <div class="msgr-sel-actions">
+          <button id="chatSelCopy" type="button" title="Копировать"><i class="fa-solid fa-copy"></i></button>
+          <button id="chatSelFwd" type="button" title="Переслать коллеге"><i class="fa-solid fa-share"></i></button>
+          <button id="chatSelCancel" type="button" title="Отмена"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+      </div>
+    </div>
+
+    <div class="messages" id="messages">
+    </div>
+
+<div class="input-area">
+  <div class="attached-files" id="attachedFiles"></div>
+
+  {# Быстрый набор частых вопросов (FAQ отдела кадров): категория → вопрос →
+     ветка; финальная кнопка отправляет вопрос и получает точный ответ #}
+  <div class="faq-quick" id="faqQuick" {% if not session_id %}hidden{% endif %}>
+    <button type="button" class="faq-quick-toggle" id="faqQuickToggle">
+      <i class="fas fa-bolt"></i> Частые вопросы <i class="fas fa-chevron-down faq-chevron"></i>
+    </button>
+    <div class="faq-quick-panel" id="faqQuickPanel" hidden>
+      <div class="faq-quick-path" id="faqQuickPath"></div>
+      <div class="faq-quick-chips" id="faqQuickChips"><span class="faq-quick-loading">Загрузка…</span></div>
+    </div>
+  </div>
+
+  <div class="input-controls">
+    <label class="attach-button" id="attachButton" title="Прикрепить файл к диалогу (локально, не сохраняется в базу знаний)">
+      <i class="fas fa-paperclip"></i>
+      <input
+        type="file"
+        id="fileInput"
+        accept=".pdf,.docx,.doc,.txt,.md,.csv,.rtf,.odt,.xls,.xlsx,.xlsm,.ods,.pptx,.ppt,.odp,.zip"
+        hidden
+        {% if not session_id %}disabled{% endif %}
+      >
+    </label>
+
+    <textarea
+      id="messageInput"
+      class="msg-input"
+      placeholder="Задайте вопрос"
+      rows="1"
+      autocomplete="off"
+      {% if not session_id %}disabled{% endif %}
+      aria-label="Сообщение"
+    ></textarea>
+    <button class="send-button" id="sendButton" {% if not session_id %}disabled{% endif %} aria-pressed="false" title="Отправить" aria-label="Отправить"><i class="fas fa-arrow-up"></i></button>
+  </div>
+
+  <div class="upload-status" id="uploadStatus" style="display: none;">
+    <span class="upload-text">Обработка документа...</span>
+    <div class="upload-progress">
+      <div class="upload-progress-bar"></div>
+    </div>
+  </div>
+</div>
+
+  <div class="floating-unread-indicator" id="floatingUnreadIndicator">
+    <span id="floatingUnreadCount">0</span>
+    <span class="fui-text">непрочитанных</span>
+    <span class="arrow">↓</span>
+  </div>
+
+  <input type="hidden" id="sessionId" value="{{ session_id }}">
+  <input type="hidden" id="dialogueId" value="{{ dialogue.id if dialogue else '' }}">
+  </div>
+
+  {# Язычок скрытия/показа панели — вне chat-box (у него overflow:hidden), иначе
+     выступающая наружу вкладка обрезалась бы. Живёт на уровне chat-layout. #}
+  <button class="chat-sidebar-toggle" id="sidebarToggle" type="button" title="Свернуть/развернуть панель диалогов">
+    <i class="fas fa-angles-left tgl-collapse"></i>
+    <i class="fas fa-angles-right tgl-expand"></i>
+  </button>
+  </div>
+{% endblock %}

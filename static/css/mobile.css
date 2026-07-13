@@ -1,0 +1,312 @@
+/* mobile.css — адаптив под телефоны/планшеты.
+   Загружается ПОСЛЕДНИМ (после всех страничных стилей), поэтому переопределяет
+   их без правки исходников. Все правила — строго внутри media-queries: десктоп
+   не затрагивается. Точки: 900px — раскладка чата, 768px — основной мобильный,
+   480px — узкие телефоны. */
+
+/* Затемнение под мобильной шторкой на десктопе не участвует в раскладке */
+.sidebar-backdrop { display: none; }
+
+/* ============================================================
+   ОБЩЕЕ: без горизонтального переполнения
+   ============================================================ */
+@media (max-width: 768px) {
+  body { overflow-x: hidden; }
+  input, select, textarea, button { box-sizing: border-box; }
+  img { max-width: 100%; height: auto; }
+
+  /* Контейнеры страниц: меньше боковых полей */
+  .container { padding: 14px 12px; }
+  .kb-root,
+  .audit-root { margin: 16px auto; padding: 0 12px; }
+  .home-root { gap: var(--space-lg); }
+}
+
+/* ============================================================
+   ШАПКА (все страницы)
+   ============================================================ */
+@media (max-width: 768px) {
+  .tiu-header { padding: 10px 12px; }
+  .tiu-header-inner { padding: 8px 10px; border-radius: 14px; }
+  .tiu-header-left { padding-left: 0; }
+  .tiu-header-right { padding-right: 0; gap: 6px; }
+  .tiu-logo { height: 42px; width: 92px; }
+  .tiu-icon-btn { width: 34px; height: 34px; font-size: 15px; border-radius: 9px; }
+  .tiu-divider { margin: 0 4px; }
+  .tiu-profile { padding: 2px; gap: 0; }
+  .profile-avatar { width: 36px; height: 36px; border-width: 1px; }
+  .avatar-initials { font-size: 13px; }
+}
+@media (max-width: 480px) {
+  .tiu-header { padding: 8px 8px; }
+  .tiu-header-right { gap: 4px; }
+  .tiu-logo { height: 38px; width: 82px; }
+  .tiu-icon-btn { width: 32px; height: 32px; font-size: 14px; }
+  .tiu-divider { display: none; }
+}
+
+/* Бренд-заголовок страниц (Главная / База знаний / Аудит …) */
+@media (max-width: 768px) {
+  .brand-logo { width: 46px; height: 46px; border-radius: 12px; }
+  .brand-logo i { font-size: 22px !important; }
+  .brand-title { font-size: 22px; gap: 10px; }
+  .brand-title::before { height: 24px; }
+}
+
+/* ============================================================
+   ГЛАВНАЯ
+   ============================================================ */
+@media (max-width: 768px) {
+  .home-hero { padding: var(--space-md); }
+  .home-hero-inner { flex-direction: column; align-items: stretch; gap: 12px; }
+  .home-hero-actions { width: 100%; }
+  .btn-dialogue { width: 100%; justify-content: center; }
+
+  .home-search-input { font-size: 15px; padding: 12px 16px 12px 42px; }
+
+  .home-cards .card-grid { gap: 14px; }
+  .docs-grid { gap: 12px; }
+}
+
+/* ============================================================
+   БАЗА ЗНАНИЙ
+   ============================================================ */
+@media (max-width: 768px) {
+  /* Табы — горизонтальный скролл вместо переноса «в столбик» */
+  .kb-tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    gap: 0;
+  }
+  .kb-tabs::-webkit-scrollbar { display: none; }
+  .kb-tab {
+    flex: 0 0 auto;
+    white-space: nowrap;
+    padding: 10px 14px;
+    font-size: 13px;
+  }
+
+  /* Панель действий: поиск во всю ширину, кнопки — в ряд/перенос */
+  .kb-actions { gap: 10px; }
+  .kb-actions .kb-upload-btn,
+  .kb-actions .kb-btn-secondary { flex: 1 1 auto; justify-content: center; }
+  .kb-search-input { flex: 1 1 100%; min-width: 0; width: 100%; }
+
+  /* Инлайн-строки форм (веб-источник/шаблон): в столбик, кнопка во всю ширину */
+  .kb-form-row-inline {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .kb-form-row-inline input[type="number"] { width: 100%; margin: 0; }
+  .kb-form-row-inline .kb-btn-primary,
+  .kb-form-row-inline .kb-upload-btn { width: 100%; justify-content: center; }
+  .kb-btn-primary { width: 100%; justify-content: center; }
+  .kb-form-row input[type="text"],
+  .kb-form-row input[type="url"],
+  .kb-select { width: 100%; box-sizing: border-box; }
+
+  /* Карточка документа/источника: заголовок сверху, управление — второй строкой,
+     чтобы иконки/бейджи/статус не наезжали друг на друга (было главной проблемой). */
+  .kb-item {
+    flex-wrap: wrap;
+    align-items: center;
+    row-gap: 10px;
+    column-gap: 8px;
+    padding: 12px;
+  }
+  /* Иконка + заголовок/мета/бейджи — первая строка; управление — вторая строка,
+     всё в один ряд (без отступа, иначе не влезает и переносится ещё раз). */
+  .kb-item > .kb-item-body { flex: 1 1 calc(100% - 44px); }
+  .kb-item > .kb-priority,
+  .kb-item > .kb-status,
+  .kb-item > .kb-default-toggle,
+  .kb-item > .kb-icon-btn,
+  .kb-item > .kb-tpl-default-mark {
+    margin-left: 0;
+  }
+  .kb-item-title { white-space: normal; }
+  .kb-doc-badges { margin-top: 6px; }
+}
+
+/* ============================================================
+   ЖУРНАЛ АУДИТА
+   ============================================================ */
+@media (max-width: 768px) {
+  .audit-filters { flex-direction: column; align-items: stretch; }
+  .audit-select, .audit-input { width: 100%; }
+  .audit-filters .kb-btn-secondary { width: 100%; justify-content: center; }
+  /* Таблица уже в скролл-обёртке (.audit-table-wrap overflow:auto) — просто плотнее */
+  .audit-table th, .audit-table td { padding: 8px 10px; }
+  .audit-table { font-size: 12px; }
+  .audit-pagination { flex-wrap: wrap; gap: 8px; }
+}
+
+/* ============================================================
+   ДИАЛОГИ
+   ============================================================ */
+@media (max-width: 768px) {
+  .btn-dialogue, .btn-dialogue .btn-text { width: 100%; max-width: 100%; }
+
+  /* Фильтры «Активные / Решённые / Все диалоги» — в один ряд (равные доли),
+     а не в две строки. Текст ужимаем, чтобы поместился на узком экране. */
+  .dialogues-filters { flex-wrap: nowrap; }
+  .dialogues-filters .filter-btn {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 7px 6px;
+    font-size: 12.5px;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+/* ============================================================
+   ЧАТ: сайдбар-«шторка» + ввод
+   ============================================================ */
+@media (max-width: 900px) {
+  /* Чат занимает всю ширину; сайдбар становится выезжающей панелью поверх */
+  .chat-layout { display: block; position: relative; gap: 0; }
+  .chat-layout .chat-box { width: 100%; }
+
+  .chat-sidebar {
+    /* Перебиваем display:none из chat.css (иначе шторка пуста — не видно поиска,
+       фильтров и списка диалогов). Колонка head/поиск/фильтры/список — из базы. */
+    display: flex;
+    position: fixed;
+    top: 0; left: 0; bottom: 0;
+    height: 100%;
+    min-height: 0;
+    max-height: none;
+    width: 72%;
+    max-width: 280px;
+    z-index: 1200;
+    border-radius: 0 var(--radius-xl) var(--radius-xl) 0;
+    /* Перебиваем «свёрнутое» состояние из chat.css — здесь прячем сдвигом */
+    flex-basis: auto;
+    opacity: 1;
+    border-width: 1px;
+    transform: translateX(0);
+    transition: transform 0.28s ease;
+  }
+  /* Свёрнуто = панель уехала за левый край (по умолчанию на телефоне) */
+  .chat-layout.sidebar-collapsed .chat-sidebar {
+    transform: translateX(-102%);
+    opacity: 1;
+    border-width: 1px;
+    pointer-events: none;
+  }
+
+  /* Затемнение под открытой шторкой */
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.5);
+    z-index: 1100;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s ease;
+  }
+  .chat-layout:not(.sidebar-collapsed) .sidebar-backdrop {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* «Язычок» открытия — на телефоне держим у ВНУТРЕННЕГО левого края чата (иначе,
+     выступая наружу, он уходил бы за левый край экрана и был бы недоступен). */
+  .chat-sidebar-toggle {
+    z-index: 5;
+    left: 0; transform: translate(0, -50%);
+    border: 1px solid var(--border-color); border-left: none;
+    border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
+    box-shadow: var(--shadow-sm);
+  }
+}
+
+@media (max-width: 900px) {
+  /* Единый скруглённый контейнер (скрепка • поле • стрелка) сохраняем и на
+     телефоне — иконки компактны и помещаются в один ряд. */
+  .input-controls { flex-wrap: nowrap; gap: 6px; align-items: flex-end; }
+  .input-controls .attach-button { flex: 0 0 auto; }
+  .input-controls #messageInput {
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 0;
+    box-sizing: border-box;
+  }
+  .input-controls .send-button { width: 36px; min-width: 36px; flex: 0 0 auto; }
+}
+
+@media (max-width: 768px) {
+  .chat-box { height: calc(100dvh - 150px); min-height: 420px; }
+  .messages { padding: var(--space-md); }
+  /* Аватары пользователя и ассистента в поле чата скрыты — экономим ширину;
+     пузырь сообщения растягиваем почти на всю ширину. */
+  .message .message-avatar { display: none; }
+  .message { max-width: 96%; gap: 0; }
+
+  /* Страница чата: прячем шапку сайта и раскрываем чат на весь экран телефона.
+     На остальных страницах шапка (с навигацией) остаётся. */
+  body.page-chat .tiu-header { display: none; }
+  body.page-chat .container { padding: 6px 6px 0; }   /* без нижнего отступа */
+  body.page-chat .chat-box { height: calc(100dvh - 6px); min-height: 0; }
+
+  /* Прокручивается только лента сообщений; сама страница на /chat и /messenger не
+     скроллится (иначе можно «утащить» весь чат вверх и увидеть пустоту под полем
+     ввода). overscroll-behavior гасит «резинку», которая цеплялась за body. */
+  body.page-chat { overflow: hidden; height: 100dvh; }
+  body.page-chat .messages { overscroll-behavior: contain; }
+
+  /* Плавающая кнопка мессенджера перекрывает круглую кнопку «Отправить» на /chat —
+     на телефоне прячем её на странице диалога с ботом (в мессенджер попадают из меню). */
+  body.page-chat:not(.page-messenger) .msgr-fab { display: none !important; }
+
+  /* Запрет выделения текста ВНУТРИ пузырей сообщений (в чате с ботом и мессенджере):
+     на телефоне выделять и копировать можно только текст, набранный в поле ввода. */
+  .messages .message,
+  .message-content,
+  .message-meta,
+  .message-footer,
+  .msg-attachments,
+  .chat-attachment,
+  .msgr-messages .message {
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    user-select: none;
+  }
+  /* Поле ввода и его редактор — выделяемы (иначе нельзя править набранный текст). */
+  .msg-input,
+  .msg-edit-input,
+  #messageInput, #mpInput, #msgrInput,
+  .input-area textarea,
+  .input-area input {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+}
+
+/* Скрытая по умолчанию шторка на телефоне не должна создавать прокрутку */
+@media (max-width: 900px) {
+  .sidebar-backdrop { will-change: opacity; }
+}
+
+/* ============================================================
+   TOAST-УВЕДОМЛЕНИЯ НА ТЕЛЕФОНЕ: сверху, по одному, свайпаемые
+   ============================================================ */
+@media (max-width: 768px) {
+  .toast-container.toast-container--top {
+    top: 10px; bottom: auto;
+    left: 10px; right: 10px;
+    width: auto; max-width: none;
+  }
+  /* Жесты (влево/вправо — закрыть, вверх — скрыть все) полностью наши. */
+  .toast-container--top .toast { touch-action: none; }
+  /* Появление сверху (а не снизу). */
+  .toast-container--top .toast { transform: translateY(-18px) scale(0.98); }
+  .toast-container--top .toast.is-visible { transform: none; }
+}

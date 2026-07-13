@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+
+{% block title %}{{ post.title }}{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/news.css') }}">
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/news_article.js') }}"></script>
+{% endblock %}
+
+{% block content %}
+<div class="news-article" data-id="{{ post.id }}">
+  <div class="news-article-bar">
+    <a href="/news" class="news-back"><i class="fas fa-arrow-left"></i> К новостям</a>
+    {% if can_edit %}
+    <div class="news-article-actions">
+      <a href="/news?edit={{ post.id }}" class="news-btn-secondary"><i class="fas fa-pen"></i> Редактировать</a>
+      <button type="button" class="news-btn-danger" id="newsArticleDelete"><i class="fas fa-trash"></i> Удалить</button>
+    </div>
+    {% endif %}
+  </div>
+
+  {% if post.is_pinned %}
+  <div class="news-pin-badge"><i class="fas fa-thumbtack"></i> Закреплено</div>
+  {% endif %}
+
+  <h1 class="news-article-title">{{ post.title }}</h1>
+  <div class="news-article-meta">
+    <i class="fas fa-user"></i> {{ post.author }} ·
+    {{ post.created_at.strftime('%d.%m.%Y %H:%M') if post.created_at else '' }}
+    {% if post.updated_at %} · изменено{% endif %}
+  </div>
+
+  <div class="news-article-body" id="newsArticleBody">{{ post.body_html | safe }}</div>
+
+  <div class="news-article-poll" id="newsArticlePoll" hidden></div>
+</div>
+
+{# Лайтбокс для картинок в статье #}
+<div class="news-lightbox" id="newsLightbox" hidden>
+  <button class="news-lightbox-close" aria-label="Закрыть"><i class="fas fa-xmark"></i></button>
+  <img src="" alt="" id="newsLightboxImg">
+</div>
+{% endblock %}

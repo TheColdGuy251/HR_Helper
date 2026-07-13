@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HR-помощник ТИУ — {% block title %}{% endblock %}</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/home.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/dialogues.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/chat.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/messenger.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/notifications.css') }}">
+  <link rel="icon" href="https://storage.tyuiu.ru/public/favicon/main.ico">
+
+  {# ===== PWA ===== #}
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#1e40af">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="HR-помощник">
+  <link rel="apple-touch-icon" href="/static/images/apple-touch-icon.png">
+
+  {% block extra_css %}{% endblock %}
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/mobile.css') }}">
+{% if user_sex in ['Мужской','М','м','male'] %}
+  <link rel="preload" as="image" href="{{ url_for('static', filename='images/male.svg') }}">
+{% elif user_sex in ['Женский','Ж','ж','female'] %}
+  <link rel="preload" as="image" href="{{ url_for('static', filename='images/female.svg') }}">
+{% else %}
+
+{% endif %}
+</head>
+<body
+   class="{% block body_class %}{% endblock %}"
+   data-male-src="{{ url_for('static', filename='images/male.svg') }}"
+   data-female-src="{{ url_for('static', filename='images/female.svg') }}">
+  {% set user_sex = current_user.sex if current_user.is_authenticated else 'unknown' %}
+
+  <header class="tiu-header">
+    <div class="tiu-header-inner">
+      <div class="tiu-header-left" onclick="window.location.href='/'">
+        <img
+          src="{{ url_for('static', filename='images/full-color.svg') }}"
+          alt="ТИУ"
+          class="tiu-logo"
+        >
+      </div>
+
+      <div class="tiu-header-right">
+        <a href="/news" class="tiu-icon-btn" title="Новости HR">
+          <i class="fa-regular fa-newspaper"></i>
+        </a>
+        <a href="/kb" class="tiu-icon-btn" title="База знаний">
+          <i class="fa-solid fa-book"></i>
+        </a>
+        <a href="/dialogues" class="tiu-icon-btn" title="Диалоги">
+          <i class="fa-regular fa-comment"></i>
+        </a>
+        {% if current_user.is_authenticated %}
+        <button class="tiu-icon-btn tiu-notif-btn" id="notifBtn" type="button" title="Уведомления">
+          <i class="fa-regular fa-bell"></i>
+          <span class="tiu-notif-badge" id="notifBadge" hidden>0</span>
+        </button>
+        {% endif %}
+        {% if current_user.is_admin %}
+        <a href="/audit" class="tiu-icon-btn" title="Журнал аудита">
+          <i class="fa-solid fa-clipboard-list"></i>
+        </a>
+        <a href="/admin" class="tiu-icon-btn" title="Администрирование">
+          <i class="fa-solid fa-user-shield"></i>
+        </a>
+        {% endif %}
+
+        <div class="tiu-divider"></div>
+
+        <div class="tiu-profile" id="profileButton">
+          <span class="tiu-profile-name">{{ user_name }}</span>
+          <div class="profile-avatar" id="profileAvatar" data-sex="{{ user_sex }}">
+            <span class="avatar-initials">{{ user_initials }}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <div class="profile-modal" id="profileModal">
+    <div class="profile-modal-content">
+      <button class="back-button" id="backButton">← Назад</button>
+
+      <div class="profile-modal-header">
+        <div class="profile-modal-avatar" id="profileModalAvatar" data-sex="{{ user_sex }}">
+          <span class="avatar-initials">{{ user_initials }}</span>
+        </div>
+        <div class="profile-modal-info">
+          <h3>{{ user_full_name }}</h3>
+          <p>{{ user_position }}</p>
+          {% if current_user.email %}<p class="profile-modal-email"><i class="fa-regular fa-envelope"></i> {{ current_user.email }}</p>{% endif %}
+        </div>
+      </div>
+
+      <div class="profile-menu">
+        <button class="profile-menu-item active" id="myDialoguesButton">
+          <i class="fas fa-list-alt menu-icon"></i>
+          <span>Мои диалоги</span>
+        </button>
+        <button class="profile-menu-item" id="newDialogueButton">
+          <i class="fas fa-plus-circle menu-icon"></i>
+          <span>Создать новый диалог</span>
+        </button>
+      </div>
+
+      <button class="logout-button" id="logoutButton">Выйти</button>
+    </div>
+  </div>
+
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+
+  {% if current_user.is_authenticated %}
+
+
+  {# ===== Чат между пользователями ===== #}
+  <button class="msgr-fab" id="msgrFab" title="Чат с коллегами" aria-label="Открыть чат">
+    <i class="fa-solid fa-comments"></i>
+    <span class="msgr-fab-badge" id="msgrFabBadge" hidden>0</span>
+  </button>
+
+  <div class="msgr-panel" id="msgrPanel" hidden data-me="{{ current_user.id }}">
+    <div class="msgr-resize" data-dir="nw" title="Потяните, чтобы изменить размер"></div>
+    <div class="msgr-resize" data-dir="ne" title="Потяните, чтобы изменить размер"></div>
+    <div class="msgr-resize" data-dir="sw" title="Потяните, чтобы изменить размер"></div>
+    <div class="msgr-resize" data-dir="se" title="Потяните, чтобы изменить размер"></div>
+    <div class="msgr-head">
+      <button class="msgr-back" id="msgrBack" hidden aria-label="Назад"><i class="fa-solid fa-arrow-left"></i></button>
+      <div class="msgr-head-titles">
+        <div class="msgr-head-title" id="msgrTitle">Сообщения</div>
+        <div class="msgr-head-sub" id="msgrHeadSub"></div>
+      </div>
+      <button class="msgr-popout" id="msgrPopout" type="button" title="Вынести в отдельное окно (можно двигать между экранами)" aria-label="Вынести в окно"><i class="fa-solid fa-window-restore"></i></button>
+      <a class="msgr-expand" href="/messenger" title="Развернуть на всю страницу" aria-label="Развернуть"><i class="fa-solid fa-up-right-and-down-left-from-center"></i></a>
+      <button class="msgr-close" id="msgrClose" aria-label="Закрыть"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+
+    {# --- Панель действий над выделенными сообщениями --- #}
+    <div class="msgr-seltools" id="msgrSelTools" hidden>
+      <span class="msgr-sel-count"><b id="msgrSelCount">0</b> выбрано</span>
+      <div class="msgr-sel-actions">
+        <button id="msgrSelCopy" title="Копировать"><i class="fa-solid fa-copy"></i></button>
+        <button id="msgrSelFwd" title="Переслать"><i class="fa-solid fa-share"></i></button>
+        <button id="msgrSelDel" title="Удалить"><i class="fa-solid fa-trash"></i></button>
+        <button id="msgrSelCancel" title="Отмена"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+    </div>
+
+    {# --- Список диалогов --- #}
+    <div class="msgr-view msgr-list" id="msgrListView">
+      <div class="msgr-search">
+        <i class="fa-solid fa-magnifying-glass"></i>
+        <input type="text" id="msgrSearch" placeholder="Поиск по ФИО…" autocomplete="off">
+      </div>
+      <div class="msgr-convs" id="msgrConvs"></div>
+    </div>
+
+    {# --- Переписка --- #}
+    <div class="msgr-view msgr-thread" id="msgrThreadView" hidden>
+      <div class="msgr-pinbar" id="msgrPinBar" hidden></div>
+      <div class="messages msgr-messages" id="msgrMessages"></div>
+      <div class="msgr-compose input-area">
+        <button type="button" class="msgr-scrolldown" id="msgrScrollDown" aria-label="Вниз" hidden>
+          <i class="fa-solid fa-arrow-down"></i>
+          <span class="msgr-sd-badge" hidden></span>
+        </button>
+        <div class="msgr-forward-chip" id="msgrForwardChip" hidden>
+          <i class="fa-solid fa-share"></i><span id="msgrForwardChipText">Пересылка сообщения</span>
+          <button id="msgrForwardCancel" aria-label="Отменить"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="msgr-reply-bar" id="msgrReplyBar" hidden>
+          <i class="fa-solid fa-reply"></i>
+          <div class="msgr-reply-info"><b id="msgrReplyName"></b><span id="msgrReplyText"></span></div>
+          <button id="msgrReplyCancel" aria-label="Отменить"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="msgr-pending-atts" id="msgrPendingAtts" hidden></div>
+        <div class="msgr-compose-row input-controls">
+          <button type="button" class="attach-button msgr-attach-btn" id="msgrAttachBtn" title="Прикрепить / голосование">
+            <i class="fa-solid fa-paperclip"></i>
+          </button>
+          <input type="file" id="msgrFileInput" multiple hidden>
+          <textarea id="msgrInput" class="msg-input" rows="1" placeholder="Написать сообщение…"></textarea>
+          <button type="button" class="msgr-mode-btn" id="msgrModeBtn" data-mode="normal" title="Режим: обычное сообщение / вопрос ИИ"><i class="fa-solid fa-comment"></i></button>
+          <button class="send-button" id="msgrSend" aria-label="Отправить"><i class="fa-solid fa-arrow-up"></i></button>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <script src="{{ url_for('static', filename='js/scripts.js') }}"></script>
+  {% if current_user.is_authenticated %}
+  <script src="{{ url_for('static', filename='js/message_format.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/messenger_common.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/messenger.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/notifications.js') }}"></script>
+  {% endif %}
+  {% block extra_js %}{% endblock %}
+</body>
+</html>

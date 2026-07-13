@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+
+{% block title %}Аудит{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/audit.css') }}">
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/audit.js') }}"></script>
+{% endblock %}
+
+{% block content %}
+<div class="audit-root">
+  <div class="audit-header">
+    <div class="home-brand">
+      <div class="brand-logo">
+        <i class="fas fa-shield-alt" style="font-size: 28px; color: white;"></i>
+      </div>
+      <h1 class="brand-title">Журнал аудита</h1>
+    </div>
+    <p class="audit-subtitle">История действий с персональными данными: кто, что и когда смотрел, загружал, удалял.</p>
+  </div>
+
+  <div class="audit-filters">
+    <select id="auditAction" class="audit-select">
+      <option value="">Все действия</option>
+      <option value="reauth_ok">Вход в раздел</option>
+      <option value="reauth_fail">Ошибка входа</option>
+      <option value="view_person">Просмотр карточки</option>
+      <option value="create_person">Создание карточки</option>
+      <option value="delete_person">Удаление карточки</option>
+      <option value="upload">Загрузка документа</option>
+      <option value="download">Скачивание документа</option>
+      <option value="delete">Удаление документа</option>
+      <option value="quick_analyze">Быстрая загрузка (анализ)</option>
+    </select>
+    <input type="text" id="auditUserId" class="audit-input" placeholder="Фильтр по ID пользователя">
+    <button class="kb-btn-secondary" id="auditReload"><i class="fas fa-sync"></i> Обновить</button>
+  </div>
+
+  <div class="audit-table-wrap">
+    <table class="audit-table" id="auditTable">
+      <thead>
+        <tr>
+          <th>Время</th>
+          <th>Пользователь</th>
+          <th>Действие</th>
+          <th>Объект</th>
+          <th>Доп.</th>
+        </tr>
+      </thead>
+      <tbody id="auditTbody">
+        <tr><td colspan="5" class="audit-loader">Загрузка…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="audit-pagination">
+    <button class="kb-btn-secondary" id="auditPrev" disabled><i class="fas fa-chevron-left"></i> Назад</button>
+    <span id="auditPageInfo" class="audit-page-info">—</span>
+    <button class="kb-btn-secondary" id="auditNext" disabled>Вперёд <i class="fas fa-chevron-right"></i></button>
+  </div>
+</div>
+{% endblock %}

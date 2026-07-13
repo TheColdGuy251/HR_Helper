@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <title>Вход — HR-помощник ТИУ</title>
+
+  <meta charset="utf-8">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="https://storage.tyuiu.ru/public/sso/tailwind3.4.16.js"></script>
+  <link rel="icon" href="https://storage.tyuiu.ru/public/favicon/main.ico">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <style>
+    * { font-family: 'Open Sans', sans-serif; box-sizing: border-box; }
+    body { margin: 0; }
+
+    /* ====== Preloader (стиль SSO ТИУ) ====== */
+    .preloader {
+      position: fixed; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      background: #f1f5f9; z-index: 1000000;
+      transition: opacity 0.25s;
+    }
+    .preloader .content {
+      max-width: 500px; width: 100%;
+      display: flex; align-items: flex-end; justify-content: center;
+    }
+    .e-loadholder {
+      width: 240px; height: 240px;
+      border: 5px solid #60a5fa; border-radius: 120px;
+      position: relative;
+    }
+    .e-loadholder::after {
+      position: absolute; top: 50%; left: 50%;
+      transform: translate(-51%, -50%);
+      content: " "; display: block;
+      background: #f1f5f9; transform-origin: center;
+      z-index: 0; width: 100px; height: 100%;
+      animation: outerRotate2 30s infinite linear;
+    }
+    .e-loadholder .m-loader {
+      position: absolute; top: 50%; left: 50%;
+      transform: translate(-51%, -50%);
+      width: 200px; height: 200px;
+      color: #888; text-align: center;
+      border: 5px solid #2563eb; border-radius: 100px;
+      z-index: 20; text-transform: uppercase;
+    }
+    .e-loadholder .m-loader::after {
+      position: absolute; top: 50%; left: 50%;
+      transform: translate(-51%, -50%);
+      content: " "; display: block;
+      background: #f1f5f9; transform-origin: center;
+      z-index: -1; width: 100px; height: 106%;
+      animation: outerRotate1 15s infinite linear;
+    }
+    .e-loadholder .m-loader .e-text {
+      font-size: 14px; line-height: 130px;
+      position: absolute; top: 50%; left: 50%;
+      transform: translate(-51%, -50%);
+      animation: textColour 1s alternate linear infinite;
+      display: block; width: 140px; height: 140px;
+      border: 5px solid #1e40af; border-radius: 70px;
+      z-index: 20;
+    }
+    .e-loadholder .m-loader .e-text::before,
+    .e-loadholder .m-loader .e-text::after {
+      position: absolute; top: 50%; left: 50%;
+      transform: translate(-51%, -50%);
+      content: " "; display: block;
+      background: #f1f5f9; transform-origin: center;
+      z-index: -1;
+    }
+    .e-loadholder .m-loader .e-text::before {
+      width: 110%; height: 40px;
+      animation: outerRotate2 3.5s infinite linear;
+    }
+    .e-loadholder .m-loader .e-text::after {
+      width: 40px; height: 110%;
+      animation: outerRotate1 8s infinite linear;
+    }
+    @keyframes outerRotate1 { 0% { transform: translate(-50%, -50%) rotate(0); } 100% { transform: translate(-50%, -50%) rotate(360deg); } }
+    @keyframes outerRotate2 { 0% { transform: translate(-50%, -50%) rotate(0); } 100% { transform: translate(-50%, -50%) rotate(-360deg); } }
+    @keyframes textColour    { 0% { color: #fff; } 100% { color: #1e40af; } }
+  </style>
+</head>
+<body class="bg-slate-100 flex flex-col items-center justify-center py-6 md:py-none min-h-screen sm:py-16" style="overflow: auto;">
+
+  <!-- Preloader -->
+  <div class="preloader">
+    <div class="content">
+      <div class="e-loadholder">
+        <div class="m-loader">
+          <span class="e-text">Загрузка</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script>
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('load', () => {
+      const preloader = document.querySelector('.preloader');
+      setTimeout(() => {
+        preloader.style.opacity = 0;
+        setTimeout(() => {
+          preloader.style.display = 'none';
+          document.body.style.overflow = 'auto';
+        }, 250);
+      }, 300);
+    });
+  </script>
+
+  <div class="w-full px-6">
+    <div class="mx-auto max-w-4xl grid md:grid-cols-2 w-full bg-white rounded-lg overflow-hidden">
+
+      <!-- Левая часть: брендовый баннер -->
+      <div class="border-r border-gray-300 relative rounded-t-lg md:rounded-none md:rounded-l-lg overflow-hidden">
+        <div class="absolute z-30 p-5">
+          <img src="https://storage.tyuiu.ru/public/logo/full-white.webp" width="160" alt="ТИУ">
+        </div>
+        <div class="absolute top-0 left-0 w-full h-full z-20 min-h-[700px] bg-gradient-to-b from-zinc-900/60 md:from-zinc-900/40 via-transparent"></div>
+        <img class="!w-full h-full object-cover md:absolute object-right md:object-left max-h-[250px] md:max-h-full"
+             src="https://storage.tyuiu.ru/public/sso/background.webp" alt="ТИУ фон">
+      </div>
+
+      <!-- Правая часть: форма -->
+      <div>
+        <div class="p-8 space-y-6">
+          <div class="space-y-4">
+            <h2 class="font-bold text-xl md:text-2xl mb-2 flex-grow mr-2">
+              Вход в HR-помощник
+            </h2>
+          </div>
+
+          <div class="space-y-4">
+
+            <div class="text-sm text-gray-600">
+              Войдите, используя <span class="font-semibold">логин</span> или <span class="font-semibold">корпоративную почту</span> ТИУ.
+            </div>
+
+            <div class="relative bg-blue-200 border border-blue-500 text-blue-800 text-sm p-4 !mb-2 md:!mb-5 rounded">
+              Для входа подойдёт ваш логин (например <span class="font-semibold">ivanov</span>) или почта вида
+              <span class="font-semibold">employee@tyuiu.ru</span>.
+            </div>
+
+            <div class="relative bg-orange-200 border border-orange-500 text-orange-800 text-sm p-4 !mb-2 md:!mb-5 rounded">
+              Возникли проблемы со входом? Обратитесь в
+              <a href="https://support.tyuiu.ru" target="_blank" class="font-bold text-blue-500 underline">службу поддержки</a>.
+            </div>
+
+            {% if errors.common %}
+            <div class="relative bg-red-100 border border-red-400 text-red-700 text-sm p-3 rounded">
+              {{ errors.common }}
+            </div>
+            {% endif %}
+
+            <form class="m-0 space-y-4" method="POST" action="/auth/login">
+
+              <!-- Скрытое поле, которое уходит на сервер: либо «ivanov», либо «ivanov@tyuiu.ru». -->
+              <input id="username" name="username" type="hidden" value="{{ username or '' }}">
+
+              <div class="block">
+                <label class="block font-medium text-sm text-gray-700" for="email">
+                  Корпоративная почта
+                </label>
+                <div class="flex">
+                  <input
+                    autofocus required aria-invalid="false"
+                    id="email" type="text" autocomplete="email"
+                    oninput="handleEmailInput()"
+                    value="{{ username or '' }}"
+                    class="block py-2.5 px-3 text-base border border-gray-300 mt-1 rounded-md w-full focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50 sm:text-sm"
+                    placeholder="ivanov">
+                  <select
+                    id="domainSelect" onchange="handleEmailInput()"
+                    class="block py-2.5 px-3 text-base border border-gray-300 mt-1 rounded-md focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50 sm:text-sm"
+                    style="max-width: 195px;">
+                    <option value="@tyuiu.ru">@tyuiu.ru</option>
+                    <option value="@std.tyuiu.ru" selected>@std.tyuiu.ru</option>
+                  </select>
+                </div>
+                <div class="mt-2 text-red-600 text-sm">{{ errors.username or '' }}</div>
+              </div>
+
+              <script>
+                function handleEmailInput() {
+                  const emailInput = document.getElementById('email');
+                  const domainSelect = document.getElementById('domainSelect');
+                  const usernameInput = document.getElementById('username');
+                  if (emailInput.value.includes('@')) {
+                    domainSelect.style.display = 'none';
+                    emailInput.style.borderTopRightRadius = '';
+                    emailInput.style.borderBottomRightRadius = '';
+                    usernameInput.value = emailInput.value;
+                  } else {
+                    domainSelect.style.display = 'inline';
+                    emailInput.style.borderTopRightRadius = '0px';
+                    emailInput.style.borderBottomRightRadius = '0px';
+                    domainSelect.style.borderTopLeftRadius = '0px';
+                    domainSelect.style.borderBottomLeftRadius = '0px';
+                    usernameInput.value = emailInput.value + domainSelect.value;
+                  }
+                }
+                handleEmailInput();
+              </script>
+
+              <div class="block">
+                <label class="block font-medium text-sm text-gray-700" for="password">
+                  Пароль
+                </label>
+                <input
+                  required
+                  id="password" name="password" type="password" autocomplete="current-password"
+                  class="block py-2.5 px-3 text-base border border-gray-300 mt-1 rounded-md w-full focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50 sm:text-sm">
+                <div class="mt-2 text-red-600 text-sm">{{ errors.password or '' }}</div>
+              </div>
+
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <div class="flex items-center">
+                  <input checked class="border-gray-300 h-4 rounded text-blue-600 w-4 focus:ring-blue-200 focus:ring-opacity-50"
+                         id="rememberMe" name="remember" type="checkbox" value="true">
+                  <label class="ml-2 text-gray-600 text-sm" for="rememberMe">Запомнить меня</label>
+                </div>
+              </div>
+
+              <div class="flex flex-col pt-4 space-y-2">
+                <button
+                  class="bg-blue-600 text-white focus:ring-blue-600 hover:bg-blue-700 px-4 py-2.5 font-semibold text-base uppercase tracking-widest flex justify-center relative rounded-lg w-full focus:outline-none focus:ring-2 focus:ring-offset-2"
+                  type="submit" name="login">
+                  Войти
+                </button>
+              </div>
+            </form>
+
+            <div class="text-gray-500 md:mt-2 text-sm">
+              Ещё нет аккаунта?
+              <a href="/auth/register" class="font-bold text-indigo-500 hover:text-indigo-700 transition ease-in-out duration-300">Зарегистрироваться</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Футер -->
+  <div class="w-full max-w-4xl">
+    <div class="flex mt-3 px-6 md:px-0 w-full justify-center md:justify-end">
+      <a href="https://digital.tyuiu.ru" target="_blank"
+         class="w-fit text-sm flex items-center gap-1 text-gray-400 hover:!text-blue-600 transition">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 flex-none" width="24" height="24" viewBox="0 0 24 24"
+             stroke-width="2" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round">
+          <path stroke="none" d="M0 0h24v24H0z" fill="none"></path>
+          <path d="M12 12v.01"></path>
+          <path d="M19.071 4.929c-1.562 -1.562 -6 .337 -9.9 4.243c-3.905 3.905 -5.804 8.337 -4.242 9.9c1.562 1.561 6 -.338 9.9 -4.244c3.905 -3.905 5.804 -8.337 4.242 -9.9"></path>
+          <path d="M4.929 4.929c-1.562 1.562 .337 6 4.243 9.9c3.905 3.905 8.337 5.804 9.9 4.242c1.561 -1.562 -.338 -6 -4.244 -9.9c-3.905 -3.905 -8.337 -5.804 -9.9 -4.242"></path>
+        </svg>
+        Разработано Департаментом цифрового развития ТИУ
+      </a>
+    </div>
+  </div>
+</body>
+</html>

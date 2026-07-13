@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+
+{% block title %}Новости HR{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/news.css') }}">
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/news.js') }}"></script>
+{% endblock %}
+
+{% block content %}
+<div class="news-root" data-can-edit="{{ '1' if can_edit else '0' }}">
+  <div class="news-header">
+    <div class="home-brand">
+      <div class="brand-logo">
+        <i class="fa-regular fa-newspaper" style="font-size: 26px; color: white;"></i>
+      </div>
+      <h1 class="brand-title">Новости HR-отдела</h1>
+    </div>
+    <p class="news-subtitle">Что изменилось в кадровых процессах, анонсы и полезные материалы.</p>
+    {% if can_edit %}
+    <button class="news-add-btn" id="newsAddBtn" type="button">
+      <i class="fas fa-plus"></i> Создать новость
+    </button>
+    {% endif %}
+  </div>
+
+  <div class="news-feed" id="newsFeed">
+    <div class="news-empty" id="newsLoading">Загрузка…</div>
+  </div>
+</div>
+
+{% if can_edit %}
+{# ───────── Редактор новости (модалка) ───────── #}
+<div class="news-editor-ov" id="newsEditorOv" hidden>
+  <div class="news-editor" role="dialog" aria-modal="true" aria-label="Редактор новости">
+    <div class="news-editor-head">
+      <span class="news-editor-title" id="newsEditorTitle">Новая новость</span>
+      <button class="news-editor-close" id="newsEditorClose" type="button" aria-label="Закрыть">
+        <i class="fas fa-xmark"></i>
+      </button>
+    </div>
+
+    <div class="news-editor-body">
+      <input type="text" id="newsTitleInput" class="news-title-input"
+             placeholder="Заголовок новости" autocomplete="off" maxlength="500">
+
+      <div class="news-toolbar" id="newsToolbar">
+        <button type="button" data-cmd="bold" title="Жирный"><i class="fas fa-bold"></i></button>
+        <button type="button" data-cmd="italic" title="Курсив"><i class="fas fa-italic"></i></button>
+        <button type="button" data-cmd="underline" title="Подчёркнутый"><i class="fas fa-underline"></i></button>
+        <button type="button" data-cmd="strikeThrough" title="Зачёркнутый"><i class="fas fa-strikethrough"></i></button>
+        <span class="news-tb-sep"></span>
+        <button type="button" data-block="h2" title="Заголовок"><i class="fas fa-heading"></i></button>
+        <button type="button" data-block="blockquote" title="Цитата"><i class="fas fa-quote-right"></i></button>
+        <button type="button" data-cmd="insertUnorderedList" title="Маркированный список"><i class="fas fa-list-ul"></i></button>
+        <button type="button" data-cmd="insertOrderedList" title="Нумерованный список"><i class="fas fa-list-ol"></i></button>
+        <span class="news-tb-sep"></span>
+        <button type="button" data-align="left" title="По левому краю"><i class="fas fa-align-left"></i></button>
+        <button type="button" data-align="center" title="По центру"><i class="fas fa-align-center"></i></button>
+        <button type="button" data-align="right" title="По правому краю"><i class="fas fa-align-right"></i></button>
+        <button type="button" data-align="justify" title="По ширине"><i class="fas fa-align-justify"></i></button>
+        <span class="news-tb-sep"></span>
+        <button type="button" id="newsLinkBtn" title="Ссылка"><i class="fas fa-link"></i></button>
+        <button type="button" id="newsImgBtn" title="Вставить картинку"><i class="fas fa-image"></i></button>
+        <button type="button" id="newsFileBtn" title="Прикрепить документ"><i class="fas fa-paperclip"></i></button>
+        <button type="button" id="newsPollBtn" title="Добавить голосование"><i class="fas fa-square-poll-vertical"></i></button>
+      </div>
+
+      <div class="news-body-input" id="newsBodyInput" contenteditable="true"
+           data-placeholder="Текст новости. Ставьте курсор в нужное место и добавляйте картинки и документы…"></div>
+
+      <div class="news-poll-pending" id="newsPollPending" hidden></div>
+      <div class="news-editor-status" id="newsEditorStatus" hidden></div>
+    </div>
+
+    <div class="news-editor-foot">
+      <label class="news-pin-toggle"><input type="checkbox" id="newsPinInput"> Закрепить сверху</label>
+      <div class="news-editor-actions">
+        <button type="button" class="news-btn-secondary" id="newsCancelBtn">Отмена</button>
+        <button type="button" class="news-btn-primary" id="newsSaveBtn">Опубликовать</button>
+      </div>
+    </div>
+
+    <input type="file" id="newsImgFile" accept="image/*" hidden>
+    <input type="file" id="newsDocFile" hidden>
+  </div>
+</div>
+
+{# ───────── Модалка создания голосования (стиль как в мессенджере) ───────── #}
+<div class="news-editor-ov" id="newsPollOv" hidden>
+  <div class="news-editor msgr-poll-modal" role="dialog" aria-modal="true" aria-label="Голосование">
+    <div class="news-editor-head">
+      <span class="news-editor-title">Голосование</span>
+      <button class="news-editor-close" id="newsPollClose" type="button" aria-label="Закрыть"><i class="fas fa-xmark"></i></button>
+    </div>
+    <div class="news-editor-body">
+      <input class="msgr-poll-inp" id="npQ" maxlength="300" placeholder="Вопрос">
+      <textarea class="msgr-poll-inp" id="npD" rows="2" maxlength="500" placeholder="Описание (необязательно)"></textarea>
+      <div class="msgr-poll-opts-edit" id="npOpts"></div>
+      <button class="msgr-poll-add" id="npAdd" type="button"><i class="fa-solid fa-plus"></i> Добавить вариант</button>
+      <div class="msgr-poll-settings">
+        <label><input type="checkbox" id="npMulti"> Несколько ответов</label>
+        <label><input type="checkbox" id="npVoters"> Открытое (видно, кто голосовал)</label>
+      </div>
+      <div class="news-editor-status" id="newsPollStatus" hidden></div>
+    </div>
+    <div class="news-editor-foot">
+      <div class="news-editor-actions" style="margin-left:auto;">
+        <button type="button" class="news-btn-secondary" id="npCancel">Отмена</button>
+        <button type="button" class="news-btn-primary" id="npOk">Готово</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ───────── Модалка редактора изображения (обрезка/поворот/размер) ───────── #}
+<div class="news-editor-ov" id="newsImgEditOv" hidden>
+  <div class="news-editor news-imgedit" role="dialog" aria-modal="true" aria-label="Редактор изображения">
+    <div class="news-editor-head">
+      <span class="news-editor-title">Редактирование изображения</span>
+      <button class="news-editor-close" id="newsImgEditClose" type="button" aria-label="Закрыть"><i class="fas fa-xmark"></i></button>
+    </div>
+    <div class="news-editor-body">
+      <div class="news-imgedit-toolbar">
+        <button type="button" id="ieRotL" title="Повернуть влево"><i class="fas fa-rotate-left"></i></button>
+        <button type="button" id="ieRotR" title="Повернуть вправо"><i class="fas fa-rotate-right"></i></button>
+        <button type="button" id="ieCrop" title="Обрезать по выделению"><i class="fas fa-crop-simple"></i> Обрезать</button>
+        <button type="button" id="ieReset" title="Сбросить"><i class="fas fa-arrow-rotate-left"></i> Сброс</button>
+        <span class="news-tb-sep"></span>
+        <label class="news-imgedit-scale">Размер
+          <input type="range" id="ieScale" min="10" max="100" value="100">
+          <span id="ieScaleVal">100%</span>
+        </label>
+      </div>
+      <div class="news-imgedit-stage" id="ieStage">
+        <canvas id="ieCanvas"></canvas>
+        <div class="news-imgedit-crop" id="ieCropBox" hidden></div>
+      </div>
+      <div class="news-imgedit-hint">Потяните рамку на изображении, чтобы выделить область для обрезки.</div>
+      <div class="news-editor-status" id="newsImgEditStatus" hidden></div>
+    </div>
+    <div class="news-editor-foot">
+      <div class="news-editor-actions" style="margin-left:auto;">
+        <button type="button" class="news-btn-secondary" id="ieCancel">Отмена</button>
+        <button type="button" class="news-btn-primary" id="ieApply">Применить</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

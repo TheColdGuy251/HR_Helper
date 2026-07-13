@@ -1,0 +1,78 @@
+# ============================================================================
+#  HR-помощник ТИУ — Python-зависимости
+#  Python 3.11 или 3.12 (рекомендуется 3.12)
+#  Установка:  pip install -r requirements.txt
+# ============================================================================
+
+# --- Web / ASGI ---------------------------------------------------------------
+fastapi>=0.110
+uvicorn[standard]>=0.27
+jinja2>=3.1
+python-multipart>=0.0.9      # парсинг multipart-форм (загрузка файлов)
+itsdangerous>=2.1            # подпись сессионных cookie (Starlette SessionMiddleware)
+python-dotenv>=1.0           # чтение .env (используется pydantic-settings)
+
+# --- Конфигурация / валидация -------------------------------------------------
+pydantic>=2.6
+pydantic-settings>=2.2
+pydantic[email]              # EmailStr в схемах регистрации
+
+# --- БД -----------------------------------------------------------------------
+sqlalchemy>=2.0
+alembic>=1.13               # миграции (каталог migrations/)
+bcrypt>=4.1                 # хеширование паролей
+
+# --- Шифрование ПДн (AES-GCM) -------------------------------------------------
+cryptography>=42.0          # services/pii/crypto.py — шифрование персональных данных
+
+# --- Системные уведомления (Web Push) -----------------------------------------
+pywebpush>=1.14             # отправка Web Push (VAPID); без него уведомления только в открытой вкладке
+
+# --- Логи / системные метрики -------------------------------------------------
+loguru>=0.7
+psutil>=5.9
+
+# --- Парсинг документов -------------------------------------------------------
+PyMuPDF>=1.24              # PDF (import fitz)
+python-docx>=1.1          # DOCX
+openpyxl>=3.1             # XLSX
+python-pptx>=0.6          # PPTX (презентации; .ppt/.odp → через LibreOffice)
+striprtf>=0.0.26          # RTF (нативно, без LibreOffice)
+xlrd>=2.0                 # XLS старый Excel (нативно, без LibreOffice)
+docxtpl>=0.16            # генерация .docx по шаблонам (Jinja2 поверх docx)
+httpx>=0.27              # HTTP-клиент (загрузка веб-источников)
+beautifulsoup4>=4.12     # парсинг HTML (вместе с trafilatura)
+trafilatura>=1.7         # извлечение основного текста веб-страниц
+lxml>=5.1
+pytesseract>=0.3         # обёртка над Tesseract OCR (нужен системный бинарь!)
+opencv-python-headless>=4.9  # препроцессинг сканов перед OCR (import cv2)
+Pillow>=10
+numpy>=1.26               # матричные операции (OCR, эмбеддинги)
+
+# --- RAG / поиск --------------------------------------------------------------
+fastembed>=0.3           # ONNX-эмбеддер и реранкер на CPU
+qdrant-client>=1.9       # векторная БД
+rank-bm25>=0.2           # лексический поиск BM25
+pymorphy3>=2.0           # лемматизация русского для BM25 (основная)
+snowballstemmer>=2.2     # стемминг русского для BM25 (фолбэк)
+llama-cpp-python>=0.2.85 # локальная LLM (GGUF). См. блок GPU ниже.
+
+# --- Фоновые задачи -----------------------------------------------------------
+APScheduler>=3.10        # обновление веб-источников по расписанию
+
+# ============================================================================
+#  GPU-режим LLM (опционально, NVIDIA + CUDA)
+# ============================================================================
+# По умолчанию выше ставится CPU-сборка llama-cpp-python. Для запуска LLM на
+# видеокарте поставьте CUDA-сборку и runtime-пакеты (пример для CUDA 12.4):
+#
+#   pip install llama-cpp-python --force-reinstall --no-deps --no-cache-dir \
+#       --index-url https://abetlen.github.io/llama-cpp-python/whl/cu124
+#   pip install nvidia-cuda-runtime-cu12 nvidia-cublas-cu12
+#
+# и выставьте в .env:  LLM_USE_GPU=true  LLM_N_GPU_LAYERS=-1
+#
+# ВНИМАНИЕ: CUDA-сборке нужны эти runtime-пакеты даже при работе в CPU-режиме
+# (import llama_cpp требует cudart):
+#   nvidia-cuda-runtime-cu12>=12.4
+#   nvidia-cublas-cu12>=12.4

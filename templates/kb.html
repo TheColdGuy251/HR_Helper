@@ -1,0 +1,382 @@
+{% extends "base.html" %}
+
+{% block title %}База знаний{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/kb.css') }}">
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/kb.js') }}"></script>
+{% endblock %}
+
+{% block content %}
+<div class="kb-root">
+  <div class="kb-header">
+    <div class="home-brand">
+      <div class="brand-logo">
+        <i class="fas fa-book" style="font-size: 28px; color: white;"></i>
+      </div>
+      <h1 class="brand-title">База знаний</h1>
+    </div>
+    <p class="kb-subtitle">Локальные акты, регламенты, веб-источники, шаблоны и персональные данные сотрудников.</p>
+  </div>
+
+  <div class="kb-tabs">
+    <button class="kb-tab active" data-tab="documents">
+      <i class="fas fa-file-alt"></i> Документы
+    </button>
+    <button class="kb-tab" data-tab="sources">
+      <i class="fas fa-globe"></i> Веб-источники
+    </button>
+    <button class="kb-tab" data-tab="templates">
+      <i class="fas fa-file-word"></i> Шаблоны
+    </button>
+    <button class="kb-tab kb-tab-pii" data-tab="personal">
+      <i class="fas fa-user-shield"></i> Персональные данные
+    </button>
+    {% if current_user.is_admin or current_user.is_kb_editor %}
+    <button class="kb-tab" data-tab="faq">
+      <i class="fas fa-comments"></i> FAQ
+    </button>
+    {% endif %}
+  </div>
+
+  <!-- ───── ДОКУМЕНТЫ ───── -->
+  <section class="kb-panel" data-panel="documents">
+    <div class="kb-actions">
+      <label class="kb-upload-btn" id="kbUploadBtn">
+        <i class="fas fa-upload"></i>
+        <span>Загрузить документ</span>
+        <input type="file" id="kbFileInput" accept=".pdf,.docx,.doc,.txt,.md,.rst,.csv,.rtf,.odt,.xlsx,.xlsm,.xls,.ods,.pptx,.ppt,.odp,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff" hidden>
+      </label>
+      <label class="kb-btn-secondary" id="kb1cImportBtn" title="Импорт документов из выгрузки 1С (ZIP)">
+        <i class="fas fa-file-zipper"></i>
+        <span>Импорт из 1С</span>
+        <input type="file" id="kb1cFileInput" accept=".zip" hidden>
+      </label>
+      <input type="search" class="kb-search-input" id="kbDocsSearch" placeholder="Поиск по документам…">
+    </div>
+    <div class="kb-upload-hint">Поддерживаются: PDF (сканы — авто-OCR), DOCX/DOC, XLSX/XLS, RTF, ODT/ODS, TXT, MD. «Импорт из 1С» — ZIP с файлами.</div>
+
+    <div class="kb-upload-status" id="kbUploadStatus" style="display:none;">
+      <span class="kb-upload-text" id="kbUploadText"></span>
+      <div class="kb-progress"><div class="kb-progress-bar" id="kbProgressBar"></div></div>
+    </div>
+
+    <div class="kb-list" id="kbDocsList">
+      <div class="kb-loader">Загрузка…</div>
+    </div>
+  </section>
+
+  <!-- ───── ВЕБ-ИСТОЧНИКИ ───── -->
+  <section class="kb-panel" data-panel="sources" style="display:none;">
+    <form class="kb-source-form" id="kbSourceForm">
+      <div class="kb-form-row">
+        <input type="text" id="kbSrcName" placeholder="Название источника" required>
+      </div>
+      <div class="kb-form-row">
+        <input type="url" id="kbSrcUrl" placeholder="https://..." required>
+      </div>
+      <div class="kb-form-row kb-form-row-inline">
+        <label>Обновлять каждые
+          <input type="number" id="kbSrcInterval" value="24" min="1" max="720"> часов
+        </label>
+        <button type="submit" class="kb-btn-primary">
+          <i class="fas fa-plus"></i> Добавить источник
+        </button>
+      </div>
+    </form>
+
+    <div class="kb-actions">
+      <input type="search" class="kb-search-input" id="kbSourcesSearch" placeholder="Поиск по источникам…">
+    </div>
+
+    <div class="kb-list" id="kbSourcesList">
+      <div class="kb-loader">Загрузка…</div>
+    </div>
+  </section>
+
+  <!-- ───── ШАБЛОНЫ ───── -->
+  <section class="kb-panel" data-panel="templates" style="display:none;">
+    <form class="kb-source-form" id="kbTemplateForm">
+      <div class="kb-form-row">
+        <input type="text" id="kbTplTitle" placeholder="Название шаблона" required>
+      </div>
+      <div class="kb-form-row">
+        <input type="text" id="kbTplDescription" placeholder="Описание (необязательно)">
+      </div>
+      <div class="kb-form-row">
+        <select id="kbTplCategory" class="kb-select"></select>
+      </div>
+      <div class="kb-form-row kb-form-row-inline">
+        <label class="kb-upload-btn">
+          <i class="fas fa-upload"></i>
+          <span id="kbTplFileLabel">Выбрать .docx / .doc / .pdf</span>
+          <input type="file" id="kbTplFile" accept=".docx,.doc,.pdf" hidden>
+        </label>
+        <button type="submit" class="kb-btn-primary">
+          <i class="fas fa-plus"></i> Добавить шаблон
+        </button>
+      </div>
+      <div class="kb-upload-hint">
+        Плейсхолдеры <code>{{ "{{ фамилия }}" }}</code>, <code>{{ "{{ должность }}" }}</code> станут полями формы.
+        Если их нет — поля <b>определятся автоматически</b> по пропускам «____» в бланке.
+        <code>.doc</code> конвертируется в <code>.docx</code>, <code>.pdf</code> — справочный (только просмотр/скачивание).
+      </div>
+    </form>
+
+    <div class="kb-upload-status" id="kbTplStatus" style="display:none;">
+      <span class="kb-upload-text" id="kbTplStatusText"></span>
+    </div>
+
+    <div class="kb-actions">
+      <input type="search" class="kb-search-input" id="kbTplSearch" placeholder="Поиск по шаблонам…">
+    </div>
+
+    <div class="kb-list" id="kbTemplatesList">
+      <div class="kb-loader">Загрузка…</div>
+    </div>
+  </section>
+
+  <!-- ───── ПЕРСОНАЛЬНЫЕ ДАННЫЕ ───── -->
+  <section class="kb-panel" data-panel="personal" style="display:none;">
+    <div class="kb-pii-locked" id="kbPiiLocked">
+      <i class="fas fa-lock kb-pii-lock-icon"></i>
+      <h3>Раздел защищён</h3>
+      <p>Для доступа к персональным данным сотрудников введите пароль вашей учётной записи. Доступ сохраняется на 15 минут.</p>
+      <form id="kbPiiReauthForm" class="kb-pii-reauth-form">
+        <input type="password" id="kbPiiPassword" placeholder="Ваш пароль" required>
+        <button type="submit" class="kb-btn-primary">
+          <i class="fas fa-unlock"></i> Открыть
+        </button>
+      </form>
+      <div class="kb-pii-error" id="kbPiiError" style="display:none;"></div>
+    </div>
+
+    <div class="kb-pii-unlocked" id="kbPiiUnlocked" style="display:none;">
+      <div class="kb-pii-banner">
+        <div>
+          <i class="fas fa-shield-alt"></i>
+          <strong>Защищённый раздел.</strong>
+          Сессия активна <span id="kbPiiCountdown">15:00</span>.
+        </div>
+        <button class="kb-btn-secondary" id="kbPiiLogout" type="button">
+          <i class="fas fa-sign-out-alt"></i> Заблокировать
+        </button>
+      </div>
+
+      <div class="kb-actions kb-actions-pii">
+        <label class="kb-upload-btn">
+          <i class="fas fa-bolt"></i> Быстрая загрузка
+          <input type="file" id="kbPiiQuickFile" accept=".pdf,.docx,.doc,.txt,.md" hidden>
+        </label>
+        <button class="kb-btn-secondary" id="kbPiiAddPersonBtn" type="button">
+          <i class="fas fa-user-plus"></i> Создать карточку
+        </button>
+        <label class="kb-btn-secondary" id="kbPii1cBtn" title="Импорт сотрудников из таблицы 1С (CSV/XLSX)">
+          <i class="fas fa-file-import"></i> Импорт из 1С
+          <input type="file" id="kbPii1cFile" accept=".csv,.xlsx,.xls,.ods" hidden>
+        </label>
+        <input type="search" class="kb-search-input" id="kbPiiSearch" placeholder="Поиск по ФИО…">
+      </div>
+
+      <div class="kb-upload-status" id="kbPiiStatus" style="display:none;">
+        <span class="kb-upload-text" id="kbPiiStatusText"></span>
+      </div>
+
+      <div class="kb-list" id="kbPiiList">
+        <div class="kb-loader">Загрузка…</div>
+      </div>
+    </div>
+  </section>
+
+  {% if current_user.is_admin or current_user.is_kb_editor %}
+  <!-- ───── FAQ (А2/А6): курируемые вопросы-ответы чат-бота ───── -->
+  <section class="kb-panel" data-panel="faq" style="display:none;">
+    <div class="kb-actions">
+      <label class="kb-upload-btn" id="kbFaqImportBtn" title="Полный реимпорт из файлов «чат-бот …» (заменит все записи)">
+        <i class="fas fa-file-import"></i>
+        <span>Импорт из файлов</span>
+        <input type="file" id="kbFaqImportInput" accept=".docx,.doc" multiple hidden>
+      </label>
+      <input type="search" class="kb-search-input" id="kbFaqSearch" placeholder="Поиск по вопросам и ответам…">
+    </div>
+    <div class="kb-upload-hint">
+      Записи FAQ подмешиваются в ответы бота при совпадении формулировок; у ветвящихся блоков
+      бот задаёт уточняющий вопрос. Контакт подразделения показывается в футере ответа.
+      Импорт <b>заменяет</b> все записи, включая ручные правки.
+    </div>
+    <div class="kb-upload-status" id="kbFaqStatus" style="display:none;">
+      <span class="kb-upload-text" id="kbFaqStatusText"></span>
+    </div>
+
+    {% if current_user.is_admin %}
+    <details class="kb-faq-access" id="kbFaqAccess">
+      <summary><i class="fas fa-user-gear"></i> Доступы: редакторы базы знаний</summary>
+      <div class="kb-list" id="kbUsersList"><div class="kb-loader">Загрузка…</div></div>
+    </details>
+    {% endif %}
+
+    <div class="kb-list" id="kbFaqList">
+      <div class="kb-loader">Загрузка…</div>
+    </div>
+  </section>
+  {% endif %}
+</div>
+
+<!-- Модалка: подтверждение результата распознавания при быстрой загрузке -->
+<div class="kb-modal" id="kbQuickConfirmModal" style="display:none;">
+  <div class="kb-modal-overlay"></div>
+  <div class="kb-modal-content">
+    <button class="kb-modal-close" id="kbQuickConfirmClose">&times;</button>
+    <h3>Распознавание сотрудника</h3>
+    <p class="kb-modal-subtitle" id="kbQuickFileName"></p>
+
+    <div class="kb-fields-grid">
+      <label>Фамилия*<input id="kbQ_surname" type="text" required></label>
+      <label>Имя*<input id="kbQ_name" type="text" required></label>
+      <label>Отчество<input id="kbQ_patronymic" type="text"></label>
+      <label>Дата рождения<input id="kbQ_birth_date" type="text" placeholder="DD.MM.YYYY"></label>
+    </div>
+
+    <div class="kb-candidates" id="kbQ_candidates" style="display:none;">
+      <div class="kb-candidates-title">Похожие карточки уже есть в базе:</div>
+      <div id="kbQ_candidates_list"></div>
+    </div>
+
+    <label class="kb-modal-note">
+      Комментарий (тип документа, № и т.д.)
+      <textarea id="kbQ_note" rows="2"></textarea>
+    </label>
+
+    <div class="kb-modal-actions">
+      <button class="kb-btn-secondary" id="kbQ_cancel" type="button">Отмена</button>
+      <button class="kb-btn-primary" id="kbQ_submit" type="button">
+        <i class="fas fa-save"></i> Сохранить
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- Модалка: метаданные документа базы знаний -->
+<div class="kb-modal" id="kbDocMetaModal" style="display:none;">
+  <div class="kb-modal-overlay"></div>
+  <div class="kb-modal-content">
+    <button class="kb-modal-close" id="kbDocMetaClose">&times;</button>
+    <h3>Метаданные документа</h3>
+    <p class="kb-modal-subtitle" id="kbDMTitle"></p>
+
+    <div class="kb-meta-grid">
+      <label>
+        <span>Название</span>
+        <input type="text" id="kbDM_title">
+      </label>
+      <label>
+        <span>Тип документа</span>
+        <select id="kbDM_kind">
+          <option value="">— не указан —</option>
+          <option value="code">Кодекс</option>
+          <option value="law">Закон</option>
+          <option value="regulation">Положение / Регламент</option>
+          <option value="order">Приказ</option>
+          <option value="manual">Инструкция</option>
+          <option value="other">Прочее</option>
+        </select>
+      </label>
+      <label>
+        <span>Источник (издатель)</span>
+        <input type="text" id="kbDM_issuer" placeholder="Минтруд, Учёный совет ТИУ…">
+      </label>
+      <label>
+        <span>Приоритет в поиске</span>
+        <select id="kbDM_priority">
+          <option value="1">Низкий</option>
+          <option value="2">Средний</option>
+          <option value="3">Высокий</option>
+        </select>
+      </label>
+      <label>
+        <span>Действует с</span>
+        <input type="date" id="kbDM_from">
+      </label>
+      <label>
+        <span>Действует по</span>
+        <input type="date" id="kbDM_to">
+      </label>
+      <label class="kb-meta-grid-wide">
+        <span>Теги (через запятую)</span>
+        <input type="text" id="kbDM_tags" placeholder="увольнение, отпуска, оплата">
+        <small class="kb-meta-hint">Рекомендуемые: приём, увольнение, отпуска, дисциплина, оплата, охрана_труда, социальные_гарантии, обучение, договоры</small>
+      </label>
+      <label class="kb-meta-grid-wide kb-meta-checkbox">
+        <input type="checkbox" id="kbDM_archived">
+        <span>Архивная редакция — исключить из поиска по умолчанию</span>
+      </label>
+    </div>
+
+    <div class="kb-modal-actions">
+      <button class="kb-btn-secondary" id="kbDM_cancel" type="button">Отмена</button>
+      <button class="kb-btn-primary" id="kbDM_submit" type="button">
+        <i class="fas fa-save"></i> Сохранить
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- Модалка: удаление карточки сотрудника -->
+<div class="kb-modal" id="kbDeletePersonModal" style="display:none;">
+  <div class="kb-modal-overlay"></div>
+  <div class="kb-modal-content kb-modal-danger">
+    <button class="kb-modal-close" id="kbDeletePersonClose">&times;</button>
+    <div class="kb-danger-icon"><i class="fas fa-exclamation-triangle"></i></div>
+    <h3>Удаление карточки сотрудника</h3>
+    <p class="kb-modal-subtitle">
+      Будут <strong>безвозвратно удалены</strong> карточка
+      <span id="kbDPName" class="kb-danger-highlight"></span>
+      и все её документы (<span id="kbDPDocs">0</span> шт.). Зашифрованные файлы будут стёрты с диска.
+    </p>
+    <p class="kb-modal-subtitle">
+      Чтобы подтвердить, введите ФИО сотрудника <strong>полностью</strong>:
+    </p>
+    <label class="kb-modal-note">
+      <input type="text" id="kbDPConfirmInput"
+             placeholder="Введите ФИО точно как показано выше"
+             autocomplete="off"
+             spellcheck="false"
+             autocapitalize="off"
+             onpaste="event.preventDefault(); return false;"
+             ondrop="event.preventDefault(); return false;"
+             oncontextmenu="event.preventDefault(); return false;">
+      <span class="kb-danger-hint" id="kbDPHint">Кнопка активируется при совпадении. Вставка из буфера обмена отключена.</span>
+    </label>
+    <div class="kb-modal-actions">
+      <button class="kb-btn-secondary" id="kbDPCancel" type="button">Отмена</button>
+      <button class="kb-btn-danger" id="kbDPSubmit" type="button" disabled>
+        <i class="fas fa-trash"></i> Удалить навсегда
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- Модалка: новая карточка сотрудника -->
+<div class="kb-modal" id="kbNewPersonModal" style="display:none;">
+  <div class="kb-modal-overlay"></div>
+  <div class="kb-modal-content">
+    <button class="kb-modal-close" id="kbNewPersonClose">&times;</button>
+    <h3>Новая карточка сотрудника</h3>
+    <div class="kb-fields-grid">
+      <label>Фамилия*<input id="kbNP_surname" type="text" required></label>
+      <label>Имя*<input id="kbNP_name" type="text" required></label>
+      <label>Отчество<input id="kbNP_patronymic" type="text"></label>
+      <label>Дата рождения<input id="kbNP_birth_date" type="text" placeholder="DD.MM.YYYY"></label>
+    </div>
+    <div class="kb-modal-actions">
+      <button class="kb-btn-secondary" id="kbNP_cancel" type="button">Отмена</button>
+      <button class="kb-btn-primary" id="kbNP_submit" type="button">
+        <i class="fas fa-user-plus"></i> Создать
+      </button>
+    </div>
+  </div>
+</div>
+{% endblock %}

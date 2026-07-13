@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block title %}Мои диалоги{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/dialogues.js') }}"></script>
+{% endblock %}
+
+{% block content %}
+  <div class="dialogues-header">
+    <div class="home-brand">
+      <div class="brand-logo">
+        <i class="fas fa-comments" style="font-size: 28px; color: white;"></i>
+      </div>
+      <h1 class="brand-title">Мои диалоги</h1>
+    </div>
+
+    <div class="dialogues-filters">
+        <button class="filter-btn active" data-filter="active">Активные</button>
+        <button class="filter-btn" data-filter="finished">Решённые</button>
+        <button class="filter-btn" data-filter="all">Все диалоги</button>
+    </div>
+
+<button class="btn-dialogue" id="createDialogueBtn" type="button">
+  <i class="fas fa-plus" aria-hidden="true" style="margin-right:8px"></i>
+  Начать диалог
+</button>
+  </div>
+
+  <div class="stats-bar">
+    <div class="stats-container" id="statsContainer">
+      <div class="loader-container"><div class="loader"></div></div>
+    </div>
+    <div class="dialogues-search">
+      <i class="fas fa-search" aria-hidden="true"></i>
+      <input type="text" id="dialogueSearch" placeholder="Поиск по названию…" autocomplete="off">
+    </div>
+  </div>
+
+  <div class="dialogues-container">
+    <div class="dialogues-list" id="dialoguesList">
+       <div class="loader-container"><div class="loader"></div></div>
+    </div>
+    <div class="dialogues-pagination" id="dialoguesPagination"></div>
+  </div>
+
+{% endblock %}

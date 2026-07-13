@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+
+{% block title %}Чат с коллегами{% endblock %}
+
+{% block body_class %}page-chat page-messenger{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/messenger_page.js') }}"></script>
+{% endblock %}
+
+{% block content %}
+  <div class="chat-layout" id="mpLayout" data-me="{{ current_user.id }}">
+    <div class="sidebar-backdrop" id="mpBackdrop"></div>
+
+    <aside class="chat-sidebar" id="mpSidebar">
+      <div class="chat-sidebar-head">
+        <span class="chat-sidebar-title"><i class="fas fa-comments"></i> Чаты</span>
+      </div>
+      <div class="chat-sidebar-search">
+        <i class="fas fa-search" aria-hidden="true"></i>
+        <input type="text" id="mpSearch" placeholder="Поиск по ФИО…" autocomplete="off">
+      </div>
+      <div class="chat-sidebar-list" id="mpConvs">
+        <div class="loader-container"><div class="loader"></div></div>
+      </div>
+    </aside>
+
+    <div class="chat-box" id="mpBox">
+      <div class="chat-header">
+        <button class="chat-back-btn" id="mpPageBack" type="button" title="Вернуться на предыдущую страницу">
+          <i class="fa-solid fa-arrow-left"></i>
+        </button>
+        <div class="bot-avatar" id="mpAvatar">💬</div>
+        <div class="chat-header-text">
+          <h2 id="mpTitle">Выберите чат</h2>
+          <p id="mpSubtitle">Личные диалоги и общий чат со всеми сотрудниками</p>
+        </div>
+
+        {# Панель действий над выделенными сообщениями (поверх шапки) #}
+        <div class="msgr-seltools msgr-seltools-page" id="mpSelTools" hidden>
+          <span class="msgr-sel-count"><b id="mpSelCount">0</b> выбрано</span>
+          <div class="msgr-sel-actions">
+            <button id="mpSelCopy" type="button" title="Копировать"><i class="fa-solid fa-copy"></i></button>
+            <button id="mpSelFwd" type="button" title="Переслать"><i class="fa-solid fa-share"></i></button>
+            <button id="mpSelDel" type="button" title="Удалить"><i class="fa-solid fa-trash"></i></button>
+            <button id="mpSelCancel" type="button" title="Отмена"><i class="fa-solid fa-xmark"></i></button>
+          </div>
+        </div>
+      </div>
+
+      <div class="msgr-pinbar" id="mpPinBar" hidden></div>
+      <div class="messages msgr-messages" id="mpMessages">
+        <div class="msgr-empty" id="mpPlaceholder">Выберите собеседника слева, чтобы начать переписку</div>
+      </div>
+
+      <div class="input-area">
+        <div class="msgr-forward-chip" id="mpForwardChip" hidden>
+          <i class="fa-solid fa-share"></i><span id="mpForwardChipText">Пересылка сообщения</span>
+          <button id="mpForwardCancel" type="button" aria-label="Отменить"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="msgr-reply-bar" id="mpReplyBar" hidden>
+          <i class="fa-solid fa-reply"></i>
+          <div class="msgr-reply-info"><b id="mpReplyName"></b><span id="mpReplyText"></span></div>
+          <button id="mpReplyCancel" type="button" aria-label="Отменить"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="msgr-pending-atts" id="mpPendingAtts" hidden></div>
+        <div class="input-controls">
+          <button type="button" class="attach-button msgr-attach-btn" id="mpAttachBtn" title="Прикрепить / голосование">
+            <i class="fas fa-paperclip"></i>
+          </button>
+          <input type="file" id="mpFileInput" multiple hidden>
+          <textarea id="mpInput" class="msg-input" placeholder="Сообщение" rows="1"
+                    autocomplete="off" aria-label="Сообщение" disabled></textarea>
+          <button type="button" class="msgr-mode-btn" id="mpModeBtn" data-mode="normal" title="Режим: обычное сообщение / вопрос ИИ"><i class="fa-solid fa-comment"></i></button>
+          <button class="send-button" id="mpSend" disabled title="Отправить" aria-label="Отправить">
+            <i class="fas fa-arrow-up"></i>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    {# Язычок скрытия/показа списка чатов — как в /chat: вне chat-box (overflow:hidden),
+       на уровне chat-layout, чтобы выступающая наружу вкладка не обрезалась. #}
+    <button class="chat-sidebar-toggle" id="mpSidebarToggle" type="button" title="Свернуть/развернуть список чатов">
+      <i class="fas fa-angles-left tgl-collapse"></i>
+      <i class="fas fa-angles-right tgl-expand"></i>
+    </button>
+
+    <button type="button" class="msgr-scrolldown" id="mpScrollDown" aria-label="Вниз" hidden>
+      <i class="fa-solid fa-arrow-down"></i>
+      <span class="msgr-sd-badge" hidden></span>
+    </button>
+  </div>
+{% endblock %}

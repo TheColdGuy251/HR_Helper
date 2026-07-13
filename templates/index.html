@@ -1,0 +1,548 @@
+{% extends "base.html" %}
+
+{% block title %}Главная{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/characteristic.js') }}"></script>
+<script src="{{ url_for('static', filename='js/dpo_report.js') }}"></script>
+<script src="{{ url_for('static', filename='js/process_schema.js') }}"></script>
+<script src="{{ url_for('static', filename='js/b_tools.js') }}"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  // Живой поиск по карточкам-инструментам (название + описание + ключевые слова)
+  const search = document.getElementById('homeSearch');
+  if (search) {
+    search.addEventListener('input', () => {
+      const q = search.value.trim().toLowerCase();
+      let visible = 0;
+      document.querySelectorAll('.home-cards .card').forEach((card) => {
+        const hay = (card.textContent + ' ' + (card.dataset.keywords || '')).toLowerCase();
+        const show = !q || q.split(/\s+/).every((w) => hay.includes(w));
+        card.hidden = !show;
+        if (show) visible++;
+      });
+      // Прячем заголовки групп, в которых не осталось карточек
+      document.querySelectorAll('.home-cards [data-group]').forEach((g) => {
+        g.hidden = ![...g.querySelectorAll('.card')].some((c) => !c.hidden);
+      });
+      const empty = document.getElementById('homeSearchEmpty');
+      if (empty) empty.hidden = visible > 0;
+    });
+  }
+
+  document.querySelectorAll('[data-download-doc]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      window.location.href = `/api/documents/${btn.dataset.downloadDoc}/download`;
+    });
+  });
+
+  document.querySelectorAll('[data-delete-doc]').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const id = btn.dataset.deleteDoc;
+      const card = btn.closest('.doc-card');
+      const title = card ? (card.querySelector('.doc-title')?.textContent || '').trim() : '';
+      if (!confirm(`Удалить документ${title ? ` «${title}»` : ''}? Файл будет безвозвратно стёрт.`)) return;
+      btn.disabled = true;
+      try {
+        const resp = await fetch(`/api/documents/${id}`, { method: 'DELETE' });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok || !data.success) {
+          alert('Не удалось удалить документ');
+          btn.disabled = false;
+          return;
+        }
+        if (card) {
+          card.style.transition = 'opacity 0.2s, transform 0.2s';
+          card.style.opacity = '0';
+          card.style.transform = 'scale(0.96)';
+          setTimeout(() => {
+            card.remove();
+            // Обновляем счётчик и пустое состояние
+            const badge = document.querySelector('.docs-count-badge');
+            if (badge) {
+              const n = Math.max(0, parseInt(badge.textContent || '0', 10) - 1);
+              badge.textContent = String(n);
+            }
+            const grid = document.querySelector('.docs-grid');
+            if (grid && grid.querySelectorAll('.doc-card').length === 0) {
+              grid.innerHTML = '<div class="docs-empty"><p>У вас пока нет сохранённых документов. Создайте первый по карточкам выше.</p></div>';
+            }
+          }, 200);
+        }
+      } catch (err) {
+        alert('Ошибка соединения: ' + err.message);
+        btn.disabled = false;
+      }
+    });
+  });
+});
+</script>
+{% endblock %}
+
+{% block content %}
+<div class="home-root">
+
+  <section class="home-hero">
+    <div class="home-hero-inner">
+      <div class="home-brand">
+        <div class="brand-logo">
+          <i class="fas fa-user-tie" style="font-size: 28px; color: white;"></i>
+        </div>
+        <h1 class="brand-title">HR-помощник</h1>
+      </div>
+
+      <div class="home-hero-actions">
+        <a href="/dialogues" class="btn-dialogue" role="button" id="goDialoguesBtn">
+          <i class="fas fa-comments" aria-hidden="true"></i>
+          <span class="btn-text">Диалоги с ИИ</span>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <section class="home-search-wrap">
+    <div class="home-search-inner">
+      <i class="fas fa-search search-icon"></i>
+      <input id="homeSearch" type="text" placeholder="Что вы хотите сделать? (например: оформить отпуск)" class="home-search-input">
+    </div>
+  </section>
+
+  <section class="home-cards">
+
+    <div class="home-group" data-group>
+      <h2 class="home-group-title"><i class="fas fa-file-signature"></i> Документы по сотрудникам</h2>
+      <div class="card-grid">
+        <article class="card" data-action="characteristic"
+                 data-keywords="характеристика награда ходатайство поощрение благодарность">
+          <div class="card-icon icon-gradient-amber">
+            <i class="fas fa-award icon-white" style="font-size: 24px;"></i>
+          </div>
+          <h3 class="card-title">Характеристика на награду</h3>
+          <p class="card-desc">Загрузите ходатайство из 1С — ИИ подготовит характеристику по образцам ТИУ</p>
+          <button class="card-btn" type="button" id="chrOpenBtn">Создать</button>
+        </article>
+
+        <article class="card" data-action="certificate-emp"
+                 data-keywords="справка работник сотрудник 1с зик стаж повышение квалификации">
+          <div class="card-icon icon-gradient-sky">
+            <i class="fas fa-id-card icon-white" style="font-size: 24px;"></i>
+          </div>
+          <h3 class="card-title">Справка на работника</h3>
+          <p class="card-desc">Выгрузка из 1С:ЗиК — читабельная справка: ПК за 3 года, работа по должностям без дублей</p>
+          <button class="card-btn" type="button" id="crtOpenBtn">Создать</button>
+        </article>
+
+        <article class="card" data-action="vacancy"
+                 data-keywords="вакансия должностная инструкция hh джоб работа объявление найм">
+          <div class="card-icon icon-gradient-emerald">
+            <i class="fas fa-briefcase icon-white" style="font-size: 24px;"></i>
+          </div>
+          <h3 class="card-title">Вакансия из инструкции</h3>
+          <p class="card-desc">Загрузите должностную инструкцию — ИИ превратит раздел обязанностей в текст для job-сайтов</p>
+          <button class="card-btn" type="button" id="vacOpenBtn">Создать</button>
+        </article>
+      </div>
+    </div>
+
+    <div class="home-group" data-group>
+      <h2 class="home-group-title"><i class="fas fa-table-list"></i> Отчёты и описи из 1С</h2>
+      <div class="card-grid">
+        <article class="card" data-action="dpo"
+                 data-keywords="дпо отчёт повышение квалификации обучение переподготовка год">
+          <div class="card-icon icon-gradient-indigo">
+            <i class="fas fa-chart-column icon-white" style="font-size: 24px;"></i>
+          </div>
+          <h3 class="card-title">Отчёт по ДПО</h3>
+          <p class="card-desc">Загрузите выгрузку «ПК за период» из 1С:ЗиК — получите готовый word-отчёт с точными цифрами</p>
+          <button class="card-btn" type="button" id="dpoOpenBtn">Создать</button>
+        </article>
+
+        <article class="card" data-action="inventory"
+                 data-keywords="опись уволенные архив личные дела принято уволено">
+          <div class="card-icon icon-gradient-rose">
+            <i class="fas fa-box-archive icon-white" style="font-size: 24px;"></i>
+          </div>
+          <h3 class="card-title">Опись уволенных</h3>
+          <p class="card-desc">Отчёт «Принято уволено» — опись личных дел для архива (без повторно принятых)</p>
+          <button class="card-btn" type="button" id="invOpenBtn">Создать</button>
+        </article>
+
+        <article class="card" data-action="pps"
+                 data-keywords="конкурс ппс выборы заведующий кафедра объявление профессор доцент">
+          <div class="card-icon icon-gradient-violet">
+            <i class="fas fa-bullhorn icon-white" style="font-size: 24px;"></i>
+          </div>
+          <h3 class="card-title">Объявление конкурса ППС</h3>
+          <p class="card-desc">Выгрузки «Форма 2» — word-объявление о выборах завкафедрами и конкурсе ППС</p>
+          <button class="card-btn" type="button" id="ppsOpenBtn">Создать</button>
+        </article>
+      </div>
+    </div>
+
+    <div class="home-group" data-group>
+      <h2 class="home-group-title"><i class="fas fa-wand-magic-sparkles"></i> Схемы и анализ</h2>
+      <div class="card-grid">
+        <article class="card" data-action="process"
+                 data-keywords="схема процесс единый вид стиль word excel powerpoint svg">
+          <div class="card-icon icon-gradient-blue">
+            <i class="fas fa-diagram-project icon-white" style="font-size: 24px;"></i>
+          </div>
+          <h3 class="card-title">Единая схема процесса</h3>
+          <p class="card-desc">Загрузите схему из Word, Excel или PowerPoint — получите схему в едином стиле ТИУ</p>
+          <button class="card-btn" type="button" id="prcOpenBtn">Преобразовать</button>
+        </article>
+
+        <article class="card" data-action="otdedup"
+                 data-keywords="дубликаты инструкции охрана труда однотипные совпадение сравнение">
+          <div class="card-icon icon-gradient-teal">
+            <i class="fas fa-clone icon-white" style="font-size: 24px;"></i>
+          </div>
+          <h3 class="card-title">Дубликаты инструкций ОТ</h3>
+          <p class="card-desc">Загрузите архив инструкций — получите пары с совпадением текста более 80% и группы однотипных</p>
+          <button class="card-btn" type="button" id="otdOpenBtn">Найти</button>
+        </article>
+      </div>
+    </div>
+
+    <div class="home-search-empty" id="homeSearchEmpty" hidden>
+      <i class="fas fa-magnifying-glass"></i>
+      <p>По запросу ничего не найдено среди инструментов.</p>
+      <p>Попробуйте <a href="/dialogues">спросить у ИИ-ассистента</a> — приказы, заявления
+        и любые кадровые вопросы он оформит в диалоге.</p>
+    </div>
+  </section>
+
+  {# ===== Модалка «Отчёт по ДПО» (Б2) ===== #}
+  <div class="chr-overlay" id="dpoOverlay" hidden>
+    <div class="chr-modal" role="dialog" aria-modal="true" aria-label="Отчёт по ДПО">
+      <div class="chr-head">
+        <span class="chr-title"><i class="fas fa-chart-column"></i> Отчёт по ДПО из выгрузки 1С:ЗиК</span>
+        <button class="chr-close" id="dpoClose" type="button" aria-label="Закрыть"><i class="fas fa-xmark"></i></button>
+      </div>
+
+      <div class="chr-step" id="dpoStepUpload">
+        <p class="chr-hint">Загрузите xlsx-выгрузку «ПК за период» (1С:ЗиК → Обучение). Все цифры отчёта
+          считаются <b>из таблицы</b> — без участия ИИ, ошибки в числах исключены.
+          Файл обрабатывается локально и не сохраняется в базе знаний.</p>
+        <label class="chr-file">
+          <input type="file" id="dpoFile" accept=".xlsx,.xlsm" hidden>
+          <i class="fas fa-file-arrow-up"></i> <span id="dpoFileName">Выбрать xlsx-выгрузку</span>
+        </label>
+        <div class="chr-status" id="dpoStatus" hidden></div>
+      </div>
+
+      <div class="chr-step" id="dpoStepResult" hidden>
+        <div class="chr-result-head"><i class="fas fa-circle-check"></i> <span id="dpoResultTitle"></span></div>
+        <div class="dpo-stats" id="dpoStats"></div>
+        <pre class="chr-preview" id="dpoPreview"></pre>
+        <div class="chr-actions">
+          <a class="chr-btn secondary" id="dpoView" target="_blank" rel="noopener">Просмотреть</a>
+          <a class="chr-btn primary" id="dpoDownload">Скачать .docx</a>
+          <button class="chr-btn secondary" id="dpoAgain" type="button">Другой файл</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# ===== Модалка «Единая схема процесса» (А10) ===== #}
+  <div class="chr-overlay" id="prcOverlay" hidden>
+    <div class="chr-modal chr-modal-wide" role="dialog" aria-modal="true" aria-label="Единая схема процесса">
+      <div class="chr-head">
+        <span class="chr-title"><i class="fas fa-diagram-project"></i> Схема процесса в едином стиле ТИУ</span>
+        <button class="chr-close" id="prcClose" type="button" aria-label="Закрыть"><i class="fas fa-xmark"></i></button>
+      </div>
+
+      <div class="chr-step" id="prcStepUpload">
+        <p class="chr-hint">Загрузите файл со схемой процесса — Word (.docx/.doc), Excel (.xlsx/.xls)
+          или PowerPoint (.pptx/.ppt). Блоки, стрелки, роли подразделений и условия переходов будут
+          распознаны и перерисованы в едином стиле. Схемы-картинки (сканы) преобразовать нельзя.
+          Файл обрабатывается локально и не сохраняется.</p>
+        <label class="chr-file">
+          <input type="file" id="prcFile" accept=".docx,.doc,.pptx,.ppt,.xlsx,.xlsm,.xls" hidden>
+          <i class="fas fa-file-arrow-up"></i> <span id="prcFileName">Выбрать файл со схемой</span>
+        </label>
+        <div class="chr-status" id="prcStatus" hidden></div>
+      </div>
+
+      <div class="chr-step" id="prcStepResult" hidden>
+        <div class="chr-result-head"><i class="fas fa-circle-check"></i> <span id="prcResultTitle"></span></div>
+        <div class="dpo-stats" id="prcStats"></div>
+        <div class="prc-preview" id="prcPreview"></div>
+        <div class="chr-actions">
+          <a class="chr-btn primary" id="prcDownload" download="схема.svg">Скачать SVG</a>
+          <button class="chr-btn secondary" id="prcPrint" type="button">Печать</button>
+          <button class="chr-btn secondary" id="prcAgain" type="button">Другой файл</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# ===== Модалка «Справка на работника» (Б3) ===== #}
+  <div class="chr-overlay" id="crtOverlay" hidden>
+    <div class="chr-modal" role="dialog" aria-modal="true" aria-label="Справка на работника">
+      <div class="chr-head">
+        <span class="chr-title"><i class="fas fa-id-card"></i> Справка на работника из 1С:ЗиК</span>
+        <button class="chr-close" id="crtClose" type="button" aria-label="Закрыть"><i class="fas fa-xmark"></i></button>
+      </div>
+      <div class="chr-step" id="crtStepUpload">
+        <p class="chr-hint">Загрузите xls-выгрузку «Справка на сотрудника» из 1С:ЗиК. На выходе —
+          аккуратный docx для печати: повышение квалификации только за последние 3 года,
+          «Работа по окончании ВУЗа» — по должностям (без дублирующих приказов). Без ИИ,
+          файл не сохраняется в базе знаний.</p>
+        <label class="chr-file">
+          <input type="file" id="crtFile" accept=".xls,.xlsx,.xlsm" hidden>
+          <i class="fas fa-file-arrow-up"></i> <span id="crtFileName">Выбрать выгрузку (.xls)</span>
+        </label>
+        <div class="chr-status" id="crtStatus" hidden></div>
+      </div>
+      <div class="chr-step" id="crtStepResult" hidden>
+        <div class="chr-result-head"><i class="fas fa-circle-check"></i> <span id="crtResultTitle"></span></div>
+        <p class="chr-hint" id="crtSummary"></p>
+        <div class="chr-actions">
+          <a class="chr-btn secondary" id="crtView" target="_blank" rel="noopener">Просмотреть</a>
+          <a class="chr-btn primary" id="crtDownload">Скачать .docx</a>
+          <button class="chr-btn secondary" id="crtAgain" type="button">Другой файл</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# ===== Модалка «Опись уволенных» (Б4) ===== #}
+  <div class="chr-overlay" id="invOverlay" hidden>
+    <div class="chr-modal" role="dialog" aria-modal="true" aria-label="Опись уволенных">
+      <div class="chr-head">
+        <span class="chr-title"><i class="fas fa-box-archive"></i> Опись личных дел уволенных</span>
+        <button class="chr-close" id="invClose" type="button" aria-label="Закрыть"><i class="fas fa-xmark"></i></button>
+      </div>
+      <div class="chr-step" id="invStepUpload">
+        <p class="chr-hint">Загрузите отчёт «Принято уволено» из 1С:ЗиК (Кадры → Отчеты). В опись попадут
+          только уволенные <b>без повторного приёма</b> за период; дата увольнения — «дата записи» минус
+          1 день. Результат — xlsx по образцу УРП с шапкой и подписями. Без ИИ.</p>
+        <label class="chr-check">
+          <input type="checkbox" id="invAllCats"> Включить все категории персонала
+          (по умолчанию — только АУП, АХП и УВП, как в названии описи)
+        </label>
+        <label class="chr-file">
+          <input type="file" id="invFile" accept=".xls,.xlsx,.xlsm" hidden>
+          <i class="fas fa-file-arrow-up"></i> <span id="invFileName">Выбрать отчёт (.xls)</span>
+        </label>
+        <div class="chr-status" id="invStatus" hidden></div>
+      </div>
+      <div class="chr-step" id="invStepResult" hidden>
+        <div class="chr-result-head"><i class="fas fa-circle-check"></i> <span id="invResultTitle"></span></div>
+        <div class="dpo-stats" id="invStats"></div>
+        <div class="otd-tables" id="invTable"></div>
+        <div class="chr-actions">
+          <a class="chr-btn primary" id="invDownload">Скачать опись .xlsx</a>
+          <button class="chr-btn secondary" id="invAgain" type="button">Другой файл</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# ===== Модалка «Объявление конкурса ППС» (Б5) ===== #}
+  <div class="chr-overlay" id="ppsOverlay" hidden>
+    <div class="chr-modal" role="dialog" aria-modal="true" aria-label="Объявление конкурса ППС">
+      <div class="chr-head">
+        <span class="chr-title"><i class="fas fa-bullhorn"></i> Объявление о выборах и конкурсе ППС</span>
+        <button class="chr-close" id="ppsClose" type="button" aria-label="Закрыть"><i class="fas fa-xmark"></i></button>
+      </div>
+      <div class="chr-step" id="ppsStepUpload">
+        <p class="chr-hint">Загрузите выгрузки «Форма 2» из 1С:ЗиК (Кадры → Аттестации → Конкурсные
+          отборы и выборы → печать → форма 2) — <b>можно несколько файлов сразу</b>, по одному на
+          должность. Требования в скобках собираются из данных переизбираемых работников
+          (специальность, учёная степень) — это черновик, отредактируйте его в Word. Без ИИ.</p>
+        <label class="chr-file">
+          <input type="file" id="ppsFile" accept=".xls,.xlsx,.xlsm" multiple hidden>
+          <i class="fas fa-file-arrow-up"></i> <span id="ppsFileName">Выбрать файлы «Форма 2»</span>
+        </label>
+        <div class="chr-status" id="ppsStatus" hidden></div>
+      </div>
+      <div class="chr-step" id="ppsStepResult" hidden>
+        <div class="chr-result-head"><i class="fas fa-circle-check"></i> <span id="ppsResultTitle"></span></div>
+        <div class="dpo-stats" id="ppsStats"></div>
+        <div class="chr-actions">
+          <a class="chr-btn secondary" id="ppsView" target="_blank" rel="noopener">Просмотреть</a>
+          <a class="chr-btn primary" id="ppsDownload">Скачать .docx</a>
+          <button class="chr-btn secondary" id="ppsAgain" type="button">Другие файлы</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# ===== Модалка «Вакансия из должностной инструкции» (Б6) ===== #}
+  <div class="chr-overlay" id="vacOverlay" hidden>
+    <div class="chr-modal" role="dialog" aria-modal="true" aria-label="Вакансия из инструкции">
+      <div class="chr-head">
+        <span class="chr-title"><i class="fas fa-briefcase"></i> Текст вакансии из должностной инструкции</span>
+        <button class="chr-close" id="vacClose" type="button" aria-label="Закрыть"><i class="fas fa-xmark"></i></button>
+      </div>
+
+      <div class="chr-step" id="vacStepUpload">
+        <p class="chr-hint">Загрузите должностную инструкцию (.docx/.doc/.pdf). ИИ перепишет раздел 2
+          «Должностные обязанности» в удобную форму для hh.ru: обязанности, требования, условия.
+          Зарплату и график НЕ выдумывает — их добавляет специалист УРП. Файл не сохраняется в базе знаний.</p>
+        <label class="chr-file">
+          <input type="file" id="vacFile" accept=".docx,.doc,.rtf,.pdf,.txt,.odt" hidden>
+          <i class="fas fa-file-arrow-up"></i> <span id="vacFileName">Выбрать должностную инструкцию</span>
+        </label>
+        <div class="chr-status" id="vacStatus" hidden></div>
+      </div>
+
+      <div class="chr-step" id="vacStepResult" hidden>
+        <div class="chr-result-head"><i class="fas fa-circle-check"></i> <span id="vacResultTitle"></span></div>
+        <pre class="chr-preview" id="vacPreview"></pre>
+        <div class="chr-actions">
+          <a class="chr-btn secondary" id="vacView" target="_blank" rel="noopener">Просмотреть</a>
+          <a class="chr-btn primary" id="vacDownload">Скачать .docx</a>
+          <button class="chr-btn secondary" id="vacAgain" type="button">Другой файл</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# ===== Модалка «Дубликаты инструкций ОТ» (Б7) ===== #}
+  <div class="chr-overlay" id="otdOverlay" hidden>
+    <div class="chr-modal chr-modal-wide" role="dialog" aria-modal="true" aria-label="Дубликаты инструкций">
+      <div class="chr-head">
+        <span class="chr-title"><i class="fas fa-clone"></i> Поиск однотипных инструкций по охране труда</span>
+        <button class="chr-close" id="otdClose" type="button" aria-label="Закрыть"><i class="fas fa-xmark"></i></button>
+      </div>
+
+      <div class="chr-step" id="otdStepUpload">
+        <p class="chr-hint">Загрузите <b>ZIP-архив</b> с инструкциями (docx/doc/pdf/rtf/txt, до 500 файлов).
+          Совпадение считается по тексту детерминированно, без ИИ. Пары с совпадением <b>≥80%</b> —
+          кандидаты на объединение; они группируются в семейства однотипных.
+          Старые .doc обрабатываются заметно дольше — при возможности используйте docx.</p>
+        <label class="chr-file">
+          <input type="file" id="otdFile" accept=".zip" hidden>
+          <i class="fas fa-file-zipper"></i> <span id="otdFileName">Выбрать ZIP-архив</span>
+        </label>
+        <div class="chr-status" id="otdStatus" hidden></div>
+      </div>
+
+      <div class="chr-step" id="otdStepResult" hidden>
+        <div class="chr-result-head"><i class="fas fa-circle-check"></i> <span id="otdResultTitle"></span></div>
+        <div class="dpo-stats" id="otdStats"></div>
+        <div class="otd-tables" id="otdTables"></div>
+        <div class="chr-actions">
+          <a class="chr-btn primary" id="otdDownload">Скачать отчёт .xlsx</a>
+          <button class="chr-btn secondary" id="otdAgain" type="button">Другой архив</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# ===== Модалка «Характеристика из ходатайства» (Б1) ===== #}
+  <div class="chr-overlay" id="chrOverlay" hidden>
+    <div class="chr-modal" role="dialog" aria-modal="true" aria-label="Создание характеристики">
+      <div class="chr-head">
+        <span class="chr-title"><i class="fas fa-award"></i> Характеристика для представления к награде</span>
+        <button class="chr-close" id="chrClose" type="button" aria-label="Закрыть"><i class="fas fa-xmark"></i></button>
+      </div>
+
+      <div class="chr-step" id="chrStepUpload">
+        <p class="chr-hint">Загрузите печатную форму «Ходатайство о награждении» из 1С:Документооборот
+          (.docx/.doc/.pdf). Файл обрабатывается локально и <b>не сохраняется</b> в базе знаний.</p>
+        <label class="chr-file">
+          <input type="file" id="chrFile" accept=".docx,.doc,.rtf,.pdf,.txt,.odt" hidden>
+          <i class="fas fa-file-arrow-up"></i> <span id="chrFileName">Выбрать файл ходатайства</span>
+        </label>
+        <div class="chr-status" id="chrUploadStatus" hidden></div>
+      </div>
+
+      <div class="chr-step" id="chrStepFields" hidden>
+        <p class="chr-hint">Проверьте распознанные поля — при необходимости поправьте, затем сформируйте документ.</p>
+        <div class="chr-grid">
+          <label>Награда <input id="chrF_award"></label>
+          <label>Основание <input id="chrF_basis"></label>
+          <label>ФИО <input id="chrF_fio"></label>
+          <label>Должность <input id="chrF_position"></label>
+          <label>Подразделение <input id="chrF_department"></label>
+          <label>Учёная степень <input id="chrF_degree"></label>
+          <label>Учёное звание <input id="chrF_rank"></label>
+          <label>Категория
+            <select id="chrF_category">
+              <option value="pps">ППС (преподаватель)</option>
+              <option value="aup">АУП / специалист</option>
+            </select>
+          </label>
+        </div>
+        <label class="chr-area">Трудовая деятельность (по строке на запись)
+          <textarea id="chrF_career" rows="4"></textarea></label>
+        <label class="chr-area">Награды и поощрения (по строке на запись)
+          <textarea id="chrF_awards" rows="3"></textarea></label>
+        <label class="chr-area">Конкретные результаты и достижения
+          <textarea id="chrF_achievements" rows="6"></textarea></label>
+        <div class="chr-actions">
+          <button class="chr-btn secondary" id="chrBack" type="button">← Другой файл</button>
+          <button class="chr-btn primary" id="chrGenerate" type="button">
+            <i class="fas fa-wand-magic-sparkles"></i> Сформировать характеристику</button>
+        </div>
+        <div class="chr-status" id="chrGenStatus" hidden></div>
+      </div>
+
+      <div class="chr-step" id="chrStepResult" hidden>
+        <div class="chr-result-head"><i class="fas fa-circle-check"></i> <span id="chrResultTitle"></span></div>
+        <pre class="chr-preview" id="chrPreview"></pre>
+        <div class="chr-actions">
+          <a class="chr-btn secondary" id="chrView" target="_blank" rel="noopener">Просмотреть</a>
+          <a class="chr-btn primary" id="chrDownload">Скачать .docx</a>
+          <button class="chr-btn secondary" id="chrAgain" type="button">Создать ещё</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <section class="docs-section">
+    <div class="docs-header">
+      <h2>Мои документы</h2>
+      <span class="docs-count-badge">{{ documents_count }}</span>
+    </div>
+
+    <div class="docs-grid">
+      {% if documents %}
+        {% for doc in documents %}
+        <a class="doc-card group" data-doc-id="{{ doc.id }}"
+           href="/documents/{{ doc.id }}/view" target="_blank" rel="noopener"
+           title="Открыть «{{ doc.title or 'Без названия' }}» для просмотра">
+           <button class="doc-delete-btn" type="button" data-delete-doc="{{ doc.id }}" title="Удалить документ">
+             <i class="fas fa-times"></i>
+           </button>
+           <div class="doc-card-header">
+            <div class="doc-icon-wrapper">
+              <i class="fas fa-file-word doc-icon-svg"></i>
+            </div>
+            <div class="doc-title-wrapper">
+              <h3 class="doc-title">{{ doc.title or 'Без названия' }}</h3>
+            </div>
+          </div>
+
+          <div class="doc-meta">
+            <i class="far fa-clock"></i>
+            <span>{{ doc.last_activity | time_ago }}</span>
+          </div>
+
+          <div class="doc-card-footer">
+            <span class="doc-status doc-status-{{ doc.status or 'ready' }}">
+              {% if doc.status == 'ready' or not doc.status %}Готов{% elif doc.status == 'draft' %}Черновик{% else %}{{ doc.status }}{% endif %}
+            </span>
+            <button class="doc-download-hint" type="button" data-download-doc="{{ doc.id }}"
+                    title="Скачать «{{ doc.title or 'Без названия' }}»"><i class="fas fa-download"></i> Скачать</button>
+          </div>
+        </a>
+        {% endfor %}
+      {% else %}
+        <div class="docs-empty">
+          <p>У вас пока нет сохранённых документов. Создайте первый по карточкам выше.</p>
+        </div>
+      {% endif %}
+    </div>
+  </section>
+
+</div>
+{% endblock %}

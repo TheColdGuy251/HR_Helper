@@ -1,0 +1,351 @@
+/* ============================================================
+   НОВОСТИ HR-ОТДЕЛА
+   ============================================================ */
+.news-root {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: var(--space-lg, 24px) var(--space-md, 16px) 64px;
+}
+
+.news-header { position: relative; margin-bottom: 28px; }
+.news-subtitle { color: var(--text-secondary, #64748b); margin: 10px 0 0; font-size: 15px; }
+
+.news-add-btn {
+  position: absolute; top: 0; right: 0;
+  display: inline-flex; align-items: center; gap: 8px;
+  background: var(--tyuiu-blue-gradient); color: #fff;
+  border: none; border-radius: var(--radius-lg, 12px);
+  padding: 11px 18px; font-size: 14px; font-weight: 600; cursor: pointer;
+  box-shadow: 0 6px 18px rgba(30, 64, 175, 0.25);
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.news-add-btn:hover { transform: translateY(-2px); box-shadow: 0 10px 24px rgba(30, 64, 175, 0.32); }
+
+/* ── Лента ── */
+.news-feed { display: flex; flex-direction: column; gap: 20px; }
+.news-empty {
+  text-align: center; color: var(--text-secondary, #64748b);
+  padding: 60px 20px; font-size: 15px;
+}
+
+/* Превью-карточка: обложка (если есть картинка) + заголовок + выжимка. */
+.news-card {
+  position: relative;
+  display: flex;
+  gap: 18px;
+  background: var(--bg-primary, #fff);
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 18px;
+  padding: 18px 20px;
+  box-shadow: var(--shadow-sm, 0 1px 3px rgba(15, 23, 42, 0.08));
+  cursor: pointer;
+  transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
+}
+.news-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.12);
+  border-color: var(--tyuiu-blue-light, #3b82f6);
+}
+.news-card.pinned { border-color: var(--tyuiu-blue-light, #3b82f6); }
+
+.news-card-cover {
+  flex: 0 0 190px; height: 130px; border-radius: 12px; overflow: hidden;
+  background: var(--bg-secondary, #f1f5f9);
+}
+.news-card-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.news-card-main { flex: 1; min-width: 0; }
+
+.news-pin-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11.5px; font-weight: 700; color: var(--tyuiu-blue, #1e40af);
+  background: rgba(59, 130, 246, 0.12); border-radius: 20px;
+  padding: 3px 10px; margin-bottom: 8px;
+}
+.news-card-top { display: flex; align-items: flex-start; gap: 12px; }
+.news-card-title {
+  flex: 1; margin: 0; font-size: 19px; font-weight: 700;
+  color: var(--text-primary, #0f172a); line-height: 1.3;
+}
+.news-card-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.news-icon-btn {
+  width: 32px; height: 32px; border-radius: 9px;
+  border: 1px solid var(--border-color, #e2e8f0); background: var(--bg-secondary, #f8fafc);
+  color: var(--text-secondary, #64748b); cursor: pointer; font-size: 13px;
+  display: flex; align-items: center; justify-content: center; transition: all 0.15s;
+}
+.news-icon-btn:hover { color: var(--tyuiu-blue, #1e40af); border-color: var(--tyuiu-blue-light, #3b82f6); }
+.news-card-meta { color: var(--text-secondary, #94a3b8); font-size: 13px; margin: 6px 0 8px; }
+.news-card-meta i { margin-right: 4px; }
+.news-card-excerpt {
+  color: var(--text-secondary, #475569); font-size: 14.5px; line-height: 1.55; margin: 0;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+
+@media (max-width: 560px) {
+  .news-card { flex-direction: column; gap: 12px; }
+  .news-card-cover { flex-basis: auto; width: 100%; height: 170px; }
+}
+
+/* ============================================================
+   РЕДАКТОР НОВОСТИ (модалка поверх миничата)
+   ============================================================ */
+.news-editor-ov {
+  position: fixed; inset: 0; z-index: 1300;   /* выше миничата (msgr-panel: 1200) */
+  background: rgba(15, 23, 42, 0.55);
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+  backdrop-filter: blur(3px);
+}
+/* display:flex перебивает атрибут hidden — возвращаем скрытие явным правилом. */
+.news-editor-ov[hidden] { display: none; }
+.news-editor {
+  width: 720px; max-width: 100%; max-height: 92vh;
+  background: var(--bg-primary, #fff); border-radius: 16px;
+  display: flex; flex-direction: column; overflow: hidden;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.35);
+}
+.news-editor-head {
+  display: flex; align-items: center; padding: 16px 20px;
+  background: var(--tyuiu-blue-gradient); color: #fff; flex-shrink: 0;
+}
+.news-editor-title { flex: 1; font-size: 16px; font-weight: 700; }
+.news-editor-close {
+  width: 32px; height: 32px; border-radius: 8px; border: none;
+  background: rgba(255, 255, 255, 0.18); color: #fff; cursor: pointer; font-size: 15px;
+}
+.news-editor-close:hover { background: rgba(255, 255, 255, 0.32); }
+
+.news-editor-body { padding: 18px 20px; overflow-y: auto; flex: 1; }
+.news-title-input {
+  width: 100%; box-sizing: border-box; border: none; border-bottom: 2px solid var(--border-color, #e2e8f0);
+  font-size: 20px; font-weight: 700; padding: 6px 2px 10px; outline: none;
+  color: var(--text-primary, #0f172a); background: transparent;
+}
+.news-title-input:focus { border-color: var(--tyuiu-blue-light, #3b82f6); }
+.news-title-input::placeholder { color: var(--text-secondary, #cbd5e1); font-weight: 600; }
+
+.news-toolbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 3px;
+  margin: 14px 0 10px; padding: 6px; border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 10px; background: var(--bg-secondary, #f8fafc); position: sticky; top: 0; z-index: 1;
+}
+.news-toolbar button {
+  width: 32px; height: 32px; border: none; background: none; border-radius: 7px;
+  color: var(--text-secondary, #475569); cursor: pointer; font-size: 14px;
+  display: flex; align-items: center; justify-content: center; transition: all 0.12s;
+}
+.news-toolbar button:hover { background: #fff; color: var(--tyuiu-blue, #1e40af); box-shadow: var(--shadow-sm, 0 1px 3px rgba(0,0,0,0.1)); }
+.news-tb-sep { width: 1px; height: 20px; background: var(--border-color, #e2e8f0); margin: 0 4px; }
+
+.news-body-input {
+  min-height: 220px; border: 1px solid var(--border-color, #e2e8f0); border-radius: 12px;
+  padding: 14px 16px; font-size: 15px; line-height: 1.65; outline: none;
+  color: var(--text-primary, #1e293b); overflow-y: auto; max-height: 46vh;
+}
+.news-body-input:focus { border-color: var(--tyuiu-blue-light, #3b82f6); }
+.news-body-input:empty::before { content: attr(data-placeholder); color: var(--text-secondary, #cbd5e1); }
+.news-body-input img { max-width: 100%; height: auto; border-radius: 10px; margin: 6px 0; }
+.news-body-input h2 { font-size: 18px; margin: 14px 0 6px; }
+.news-body-input blockquote {
+  margin: 10px 0; padding: 4px 14px; border-left: 3px solid var(--tyuiu-blue-light, #3b82f6); color: var(--text-secondary, #475569);
+}
+.news-body-input ul, .news-body-input ol { padding-left: 26px; }
+
+/* Чипы документов в редакторе */
+.news-atts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.news-att-chip {
+  display: inline-flex; align-items: center; gap: 8px;
+  border: 1px solid var(--border-color, #e2e8f0); border-radius: 9px; padding: 6px 8px 6px 10px;
+  background: var(--bg-secondary, #f8fafc); font-size: 13px;
+}
+.news-att-chip img { width: 26px; height: 26px; object-fit: cover; border-radius: 5px; }
+.news-att-chip i { color: var(--tyuiu-blue, #1e40af); font-size: 15px; }
+.news-att-chip-name { font-weight: 600; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.news-att-chip-size { color: var(--text-secondary, #94a3b8); font-size: 11.5px; }
+.news-att-rm { border: none; background: none; color: var(--text-secondary, #94a3b8); cursor: pointer; font-size: 14px; padding: 2px 4px; }
+.news-att-rm:hover { color: var(--tyuiu-error, #ef4444); }
+
+.news-editor-status { margin-top: 12px; font-size: 13.5px; color: var(--text-secondary, #64748b); }
+.news-editor-status.err { color: var(--tyuiu-error, #ef4444); }
+
+.news-editor-foot {
+  display: flex; align-items: center; gap: 14px; padding: 14px 20px;
+  border-top: 1px solid var(--border-color, #e2e8f0); flex-shrink: 0;
+}
+.news-pin-toggle { display: flex; align-items: center; gap: 7px; font-size: 13.5px; color: var(--text-secondary, #475569); cursor: pointer; }
+.news-pin-toggle input { width: 16px; height: 16px; cursor: pointer; }
+.news-editor-actions { margin-left: auto; display: flex; gap: 10px; }
+.news-btn-secondary, .news-btn-primary {
+  border: none; border-radius: 10px; padding: 10px 20px; font-size: 14px; font-weight: 600; cursor: pointer;
+}
+.news-btn-secondary { background: var(--bg-secondary, #f1f5f9); color: var(--text-secondary, #475569); }
+.news-btn-secondary:hover { background: var(--border-color, #e2e8f0); }
+.news-btn-primary { background: var(--tyuiu-blue-gradient); color: #fff; }
+.news-btn-primary:hover { box-shadow: 0 6px 16px rgba(30, 64, 175, 0.3); }
+
+@media (max-width: 600px) {
+  .news-add-btn { position: static; margin-top: 16px; width: 100%; justify-content: center; }
+  .news-card { padding: 16px; }
+  .news-card-title { font-size: 17px; }
+  .news-editor-foot { flex-wrap: wrap; }
+  .news-editor-actions { width: 100%; }
+  .news-btn-primary, .news-btn-secondary { flex: 1; }
+}
+
+/* Документ в тексте (редактор + статья) — карточка как во вложениях /chat и /messenger,
+   растянута на всю ширину новости: основная область — предпросмотр, справа — скачать. */
+.news-doc {
+  display: flex; align-items: center; gap: 12px;
+  margin: 12px 0; padding: 12px 14px; width: 100%; box-sizing: border-box;
+  background: var(--bg-primary, #fff);
+  border: 1px solid rgba(30, 64, 175, 0.18);
+  border-left: 4px solid var(--tyuiu-blue, #1e40af);
+  border-radius: 14px; text-decoration: none; color: var(--text-primary, #1e293b);
+  transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
+}
+.news-doc:hover {
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.12);
+  border-color: var(--tyuiu-blue, #1e40af);
+}
+.news-doc a { text-decoration: none; }
+.news-doc-main {
+  display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0;
+  color: var(--text-primary, #1e293b); border-radius: 10px; padding: 2px; margin: -2px;
+  transition: background 0.15s;
+}
+.news-doc-main:hover { background: rgba(30, 64, 175, 0.06); }
+.news-doc-ic {
+  width: 40px; height: 40px; flex-shrink: 0; border-radius: 10px;
+  background: var(--tyuiu-blue-gradient); color: #fff; font-size: 18px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.news-doc-info { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.news-doc-title {
+  font-weight: 600; font-size: 14px; color: var(--tyuiu-blue-dark, #1e3a8a);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.news-doc-size { font-size: 12px; color: var(--text-secondary, #64748b); margin-top: 2px; }
+.news-doc-dl {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 36px; height: 36px; flex-shrink: 0; border-radius: 10px;
+  background: var(--tyuiu-blue-gradient); color: #fff; font-size: 14px;
+  transition: filter 0.15s;
+}
+.news-doc-dl:hover { filter: brightness(1.08); }
+
+/* ============================================================
+   СТРАНИЦА СТАТЬИ
+   ============================================================ */
+.news-article { max-width: 760px; margin: 0 auto; padding: var(--space-lg, 24px) var(--space-md, 16px) 72px; }
+.news-article-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 22px; }
+.news-back {
+  display: inline-flex; align-items: center; gap: 8px; text-decoration: none;
+  color: var(--text-secondary, #64748b); font-weight: 600; font-size: 14px;
+}
+.news-back:hover { color: var(--tyuiu-blue, #1e40af); }
+.news-article-actions { display: flex; gap: 10px; }
+.news-article-actions .news-btn-secondary,
+.news-btn-danger {
+  display: inline-flex; align-items: center; gap: 7px; text-decoration: none;
+  border: none; border-radius: 10px; padding: 9px 16px; font-size: 13.5px; font-weight: 600; cursor: pointer;
+}
+.news-btn-danger { background: rgba(239, 68, 68, 0.1); color: var(--tyuiu-error, #ef4444); }
+.news-btn-danger:hover { background: rgba(239, 68, 68, 0.18); }
+
+.news-article-title { font-size: 30px; font-weight: 800; line-height: 1.2; margin: 8px 0 10px; color: var(--text-primary, #0f172a); }
+.news-article-meta { color: var(--text-secondary, #94a3b8); font-size: 14px; margin-bottom: 24px; }
+.news-article-meta i { margin-right: 5px; }
+
+/* Тело статьи (санитизированный HTML) */
+.news-article-body { color: var(--text-primary, #1e293b); font-size: 17px; line-height: 1.75; word-break: break-word; }
+.news-article-body p { margin: 0 0 16px; }
+.news-article-body h2 { font-size: 23px; margin: 28px 0 10px; }
+.news-article-body h3 { font-size: 19px; margin: 22px 0 8px; }
+.news-article-body h4 { font-size: 17px; margin: 18px 0 6px; }
+.news-article-body ul, .news-article-body ol { margin: 0 0 16px; padding-left: 28px; }
+.news-article-body li { margin: 5px 0; }
+.news-article-body blockquote {
+  margin: 18px 0; padding: 10px 20px; border-left: 4px solid var(--tyuiu-blue-light, #3b82f6);
+  color: var(--text-secondary, #475569); background: var(--bg-secondary, #f8fafc); border-radius: 0 10px 10px 0;
+}
+.news-article-body a:not(.news-doc):not(.news-doc-main):not(.news-doc-dl) { color: var(--tyuiu-blue, #1e40af); text-decoration: underline; }
+.news-article-body img {
+  max-width: 100%; height: auto; border-radius: 14px; margin: 14px 0; display: inline-block;
+}
+.news-article-body img.news-zoomable { cursor: zoom-in; }
+.news-article-body pre { background: var(--bg-secondary, #f1f5f9); padding: 14px; border-radius: 12px; overflow-x: auto; }
+
+/* Лайтбокс */
+.news-lightbox {
+  position: fixed; inset: 0; z-index: 1400;   /* поверх всего, включая миничат */
+  background: rgba(15, 23, 42, 0.9);
+  display: flex; align-items: center; justify-content: center; padding: 30px;
+  cursor: zoom-out;
+}
+.news-lightbox[hidden] { display: none; }
+.news-lightbox img { max-width: 96vw; max-height: 92vh; border-radius: 8px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5); }
+.news-lightbox-close {
+  position: absolute; top: 20px; right: 24px; width: 42px; height: 42px; border-radius: 50%;
+  border: none; background: rgba(255, 255, 255, 0.15); color: #fff; font-size: 20px; cursor: pointer;
+}
+.news-lightbox-close:hover { background: rgba(255, 255, 255, 0.3); }
+
+/* ── Выравнивание блоков/картинок (классы, т.к. style режется санитайзером) ── */
+.news-align-center { text-align: center; }
+.news-align-right { text-align: right; }
+.news-align-justify { text-align: justify; }
+.news-align-left { text-align: left; }
+.news-body-input img { display: inline-block; }
+
+/* Выравнивание самой картинки (когда она выбрана) — работает и вне абзаца. */
+.news-body-input img.news-img-left, .news-article-body img.news-img-left { display: block; margin-left: 0; margin-right: auto; }
+.news-body-input img.news-img-center, .news-article-body img.news-img-center { display: block; margin-left: auto; margin-right: auto; }
+.news-body-input img.news-img-right, .news-article-body img.news-img-right { display: block; margin-left: auto; margin-right: 0; }
+.news-body-input img.news-img-full, .news-article-body img.news-img-full { display: block; width: 100%; }
+.news-body-input img.news-img-selected { outline: 3px solid var(--tyuiu-blue-light, #3b82f6); outline-offset: 2px; }
+
+/* ── Прикреплённое к посту голосование (карточка в редакторе) ── */
+.news-poll-pending { margin-top: 14px; }
+.news-poll-pend-card {
+  display: flex; align-items: center; gap: 12px;
+  border: 1px solid var(--border-color, #e2e8f0); border-left: 4px solid var(--tyuiu-blue, #1e40af);
+  border-radius: 12px; padding: 10px 14px; background: var(--bg-secondary, #f8fafc);
+}
+.news-poll-pend-info { flex: 1; min-width: 0; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.news-poll-pend-info i { color: var(--tyuiu-blue, #1e40af); margin-right: 4px; }
+.news-poll-pend-cnt { color: var(--text-secondary, #94a3b8); font-size: 12.5px; }
+.news-poll-pend-act { display: flex; gap: 6px; flex-shrink: 0; }
+
+/* Голосование на странице статьи (переиспользуем стили .msgr-poll из messenger.css) */
+.news-article-poll { margin-top: 26px; }
+.news-article-poll .msgr-poll {
+  border: 1px solid var(--border-color, #e2e8f0); border-radius: 16px; padding: 18px 20px;
+  background: var(--bg-primary, #fff); max-width: 520px;
+}
+.news-article-poll .msgr-poll-q { font-size: 17px; }
+
+/* ── Редактор изображения ── */
+.news-imgedit { width: 780px; max-width: 96vw; }
+.news-imgedit-toolbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 12px;
+}
+.news-imgedit-toolbar button {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--border-color, #e2e8f0); background: var(--bg-secondary, #f8fafc);
+  color: var(--text-secondary, #475569); border-radius: 8px; padding: 7px 11px; font-size: 13px;
+  font-weight: 600; cursor: pointer; transition: all 0.12s;
+}
+.news-imgedit-toolbar button:hover { background: #fff; color: var(--tyuiu-blue, #1e40af); border-color: var(--tyuiu-blue-light, #3b82f6); }
+.news-imgedit-scale { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-secondary, #475569); }
+.news-imgedit-scale input[type="range"] { cursor: pointer; }
+.news-imgedit-stage {
+  position: relative; display: flex; justify-content: center; align-items: center;
+  background: repeating-conic-gradient(#f1f5f9 0% 25%, #fff 0% 50%) 0 / 20px 20px;
+  border: 1px solid var(--border-color, #e2e8f0); border-radius: 12px; padding: 10px; overflow: hidden;
+  max-height: 56vh;
+}
+.news-imgedit-stage canvas { max-width: 100%; max-height: 52vh; display: block; cursor: crosshair; }
+.news-imgedit-crop {
+  position: absolute; border: 2px dashed var(--tyuiu-blue, #1e40af);
+  background: rgba(59, 130, 246, 0.15); pointer-events: none;
+}
+.news-imgedit-hint { font-size: 12.5px; color: var(--text-secondary, #94a3b8); margin-top: 8px; }

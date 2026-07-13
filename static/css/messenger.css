@@ -1,0 +1,1013 @@
+/* ===== Чат между пользователями (мессенджер) ===== */
+
+/* Атрибут hidden должен перекрывать display:flex у элементов панели. */
+.msgr-panel[hidden],
+.msgr-view[hidden],
+.msgr-fab-badge[hidden],
+.msgr-forward-chip[hidden],
+.msgr-head button[hidden] { display: none !important; }
+
+/* На отдельной странице мессенджера мини-виджет не нужен. */
+.page-messenger .msgr-fab,
+.page-messenger .msgr-panel { display: none !important; }
+
+/* Мессенджер, открытый как отдельное окно (вынос миничата): без шапки сайта, на весь экран. */
+body.msgr-popup .tiu-header { display: none !important; }
+body.msgr-popup .container { padding: 0 !important; max-width: none !important; }
+body.msgr-popup .chat-layout,
+body.msgr-popup .chat-box,
+body.msgr-popup .chat-sidebar { height: 100vh !important; max-height: 100vh !important; min-height: 0 !important; border-radius: 0 !important; }
+
+
+/* Плавающая кнопка (нижний правый угол) */
+.msgr-fab {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  width: 60px;
+  height: 60px;
+  border-radius: var(--radius-full, 999px);
+  border: none;
+  background: var(--tyuiu-blue-gradient);
+  color: #fff;
+  font-size: 22px;
+  cursor: pointer;
+  box-shadow: 0 8px 24px rgba(30, 64, 175, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1200;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, bottom 0.28s cubic-bezier(0.16,1,0.3,1);
+}
+.msgr-fab:hover { transform: translateY(-2px) scale(1.04); box-shadow: 0 12px 28px rgba(30, 64, 175, 0.45); }
+
+/* Пока показан toast — кнопка чата поднимается над ним (--toast-lift задаёт JS). */
+body.has-toasts .msgr-fab { bottom: calc(24px + var(--toast-lift, 0px) + 14px); }
+.msgr-fab:active { transform: scale(0.97); }
+
+.msgr-fab-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--tyuiu-error, #ef4444);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid #fff;
+}
+
+/* Панель */
+.msgr-panel {
+  position: fixed;
+  right: 24px;
+  bottom: 96px;
+  width: 380px;
+  max-width: calc(100vw - 32px);
+  height: 560px;
+  max-height: calc(100vh - 130px);
+  background: var(--bg-primary, #fff);
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: var(--radius-lg, 14px);
+  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.25);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  z-index: 1200;
+}
+/* Анимация открытия — только по классу, который вешается при ручном открытии
+   и снимается на animationend. НЕ на базовом правиле: иначе перетаскивание/ресайз
+   (снятие класса .msgr-dragging и т.п.) заново проигрывали бы «всплытие». */
+.msgr-panel.msgr-pop { animation: msgrPop 0.16s ease-out; }
+@keyframes msgrPop { from { opacity: 0; transform: translateY(12px) scale(0.98); } to { opacity: 1; transform: none; } }
+
+.msgr-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--tyuiu-blue-gradient);
+  color: #fff;
+  flex-shrink: 0;
+  cursor: grab;
+}
+.msgr-panel.msgr-dragging,
+.msgr-panel.msgr-resizing { user-select: none; }
+.msgr-panel.msgr-dragging,
+.msgr-panel.msgr-dragging .msgr-head { cursor: grabbing; }
+.msgr-head-titles { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; }
+.msgr-head-title { font-weight: 700; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.msgr-head-sub { font-size: 11.5px; color: rgba(255,255,255,0.8); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; min-height: 13px; }
+.msgr-head button,
+.msgr-head a.msgr-expand {
+  background: rgba(255,255,255,0.15);
+  border: none;
+  color: #fff;
+  width: 30px; height: 30px;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.15s;
+  text-decoration: none;
+  font-size: 13px;
+}
+.msgr-head button:hover,
+.msgr-head a.msgr-expand:hover { background: rgba(255,255,255,0.3); }
+/* Кнопка «вынести в окно» — тот же стиль, что и «развернуть». */
+.msgr-head .msgr-popout {
+  background: rgba(255,255,255,0.15); border: none; color: #fff;
+  width: 30px; height: 30px; border-radius: 8px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.15s; font-size: 13px;
+}
+
+/* Панель, вынесенная в отдельное окно (Document PiP): заполняет окно целиком,
+   без плавающего оформления, ручек ресайза, кнопок «вынести/развернуть». */
+.msgr-panel.msgr-in-pip {
+  position: static !important; inset: auto !important;
+  width: 100% !important; height: 100% !important;
+  max-width: none !important; max-height: none !important;
+  min-width: 0 !important; min-height: 0 !important;
+  border-radius: 0 !important; box-shadow: none !important; transform: none !important;
+}
+.msgr-panel.msgr-in-pip .msgr-resize,
+.msgr-panel.msgr-in-pip .msgr-popout,
+.msgr-panel.msgr-in-pip .msgr-expand,
+.msgr-panel.msgr-in-pip .msgr-close { display: none !important; }
+
+.msgr-view { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+
+/* Поиск */
+.msgr-search {
+  position: relative;
+  padding: 10px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border-color, #e2e8f0);
+}
+.msgr-search i { position: absolute; left: 20px; top: 50%; transform: translateY(-50%); color: var(--tyuiu-gray-medium, #94a3b8); font-size: 13px; }
+.msgr-search input {
+  width: 100%;
+  padding: 9px 12px 9px 32px;
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 10px;
+  font-size: 14px;
+  outline: none;
+  background: var(--bg-secondary, #f8fafc);
+}
+.msgr-search input:focus { border-color: var(--tyuiu-blue-light, #3b82f6); background: #fff; }
+
+/* Список диалогов */
+.msgr-convs { flex: 1; overflow-y: auto; }
+.msgr-conv {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 14px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--bg-secondary, #f1f5f9);
+  transition: background 0.12s;
+}
+.msgr-conv:hover { background: var(--bg-secondary, #f8fafc); }
+.msgr-conv.active { background: rgba(59,130,246,0.1); box-shadow: inset 3px 0 0 var(--tyuiu-blue, #1e40af); }
+.msgr-conv-avatar {
+  width: 42px; height: 42px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 14px; color: #fff;
+  background: linear-gradient(135deg, var(--tyuiu-blue-light) 0%, var(--tyuiu-info) 100%);
+}
+.msgr-conv.general .msgr-conv-avatar { background: linear-gradient(135deg, var(--tyuiu-warning, #f59e0b) 0%, #fb923c 100%); }
+/* Ряд «HR-ассистент» (пересылка сообщений ассистенту / новый диалог в /chat) */
+.msgr-conv-avatar.assistant { background: linear-gradient(135deg, var(--tyuiu-blue, #1e40af) 0%, #6d28d9 100%); font-size: 17px; }
+.msgr-conv-assistant { border-bottom-width: 2px; }
+.msgr-conv-assistant .msgr-conv-name { color: var(--tyuiu-blue, #1e40af); }
+.msgr-conv-body { flex: 1; min-width: 0; }
+.msgr-conv-name { font-weight: 600; font-size: 14px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.msgr-conv-last { font-size: 12.5px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+.msgr-conv-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; }
+.msgr-conv-unread {
+  min-width: 20px; height: 20px; padding: 0 6px;
+  border-radius: 999px;
+  background: var(--tyuiu-blue, #1e40af);
+  color: #fff; font-size: 11px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+}
+.msgr-empty { padding: 30px 16px; text-align: center; color: var(--text-secondary); font-size: 13px; }
+
+/* Переписка — используем .messages/.message из chat.css.
+   Классы .peer/.mine — только у мессенджера (ассистент использует .user/.bot),
+   поэтому селекторы глобальные и работают и в мини-виджете, и на полной странице. */
+.msgr-messages { position: relative; padding: 12px 12px 16px; gap: 4px; scroll-behavior: auto; scrollbar-width: none; -ms-overflow-style: none; }
+.msgr-messages::-webkit-scrollbar { width: 0; height: 0; display: none; }
+.msgr-messages .message { max-width: 92%; gap: 7px; }
+/* Компактнее: аватары меньше и ближе к пузырькам. */
+.msgr-messages .message-avatar { width: 32px; height: 32px; font-size: 14px; border-width: 1px; }
+
+/* Пузырёк собеседника — ЗЕЛЁНЫЙ (отличие от синего ИИ-ассистента) */
+.message.peer { align-self: flex-start; }
+.message.peer .message-avatar {
+  background: linear-gradient(135deg, var(--tyuiu-success, #10b981) 0%, #059669 100%);
+  color: #fff;
+}
+.message.peer .message-content {
+  background-color: #d1f7dd;
+  color: #0f3d24;
+  border-color: #86e0a4;
+  border-top-left-radius: var(--radius-sm, 6px);
+}
+:root[data-theme="dark"] .message.peer .message-content { background-color: #0b5132; color: #d1fae5; border-color: #157a4a; }
+
+.message.mine { align-self: flex-end; flex-direction: row-reverse; }
+.message.mine .message-avatar { background: rgba(59,130,246,0.15); color: var(--tyuiu-blue-dark); }
+.message.mine .message-content {
+  background-color: var(--tyuiu-blue, #1e40af);
+  color: #fff;
+  border-color: var(--tyuiu-blue-dark);
+  border-top-right-radius: var(--radius-sm, 6px);
+}
+
+.msgr-msg-sender { font-size: 11.5px; font-weight: 700; color: var(--tyuiu-success, #059669); margin-bottom: 3px; }
+.msgr-msg-text { font-size: 13.5px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+
+/* Пересланное сообщение ассистента — отдельный «собеседник» (HR-ассистент):
+   иконка бота (как в /chat), БЕЛЫЙ пузырёк. Сторона — по тому, КТО переслал. */
+.message.forwarded.fwd-peer { align-self: flex-start; }
+.message.forwarded.fwd-mine { align-self: flex-end; flex-direction: row-reverse; }
+.message.forwarded .message-avatar {
+  background: linear-gradient(135deg, var(--tyuiu-blue-light, #3b82f6) 0%, var(--tyuiu-info, #06b6d4) 100%);
+  color: #fff;
+}
+.message.forwarded .message-content {
+  background-color: #ffffff;
+  color: var(--text-primary);
+  border-color: var(--border-color, #e2e8f0);
+}
+/* Ассистент, пересланный МНОЙ — белый с бледно-синими тонами; собеседником — с салатовыми. */
+.message.forwarded.fwd-mine .message-content { background-color: #f2f6ff; border-color: #cdddff; }
+.message.forwarded.fwd-peer .message-content { background-color: #f3fbf0; border-color: #cfead0; }
+:root[data-theme="dark"] .message.forwarded.fwd-mine .message-content { background-color: #0f1b33; color: #e2e8f0; }
+:root[data-theme="dark"] .message.forwarded.fwd-peer .message-content { background-color: #0f2417; color: #e2e8f0; }
+
+/* Индикатор «печатает» — пузырёк с анимацией точек (стиль /chat). */
+.message.msgr-typing { align-self: flex-start; }
+.msgr-typing-wrap { display: flex; align-items: center; gap: 10px; }
+.msgr-typing-label { font-size: 12.5px; color: var(--text-secondary); font-style: italic; }
+.msgr-fwd-caption { font-size: 11.5px; font-weight: 700; color: var(--tyuiu-gray-dark, #475569); display: flex; align-items: center; gap: 5px; margin-bottom: 6px; }
+
+/* Пометка «Переслано от <аватар> Имя» (сообщение из другого чата). */
+/* Подпись переноса переносится по строкам — не растягивает пузырёк шире контента. */
+.msgr-fwd-from { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; margin-bottom: 5px; }
+/* Одиночная картинка с подписью (Переслано/ответ): картинка на всю ширину пузыря,
+   подпись переносится — половина пузыря больше не пустует. */
+.message.msgr-wide-cap .msgr-atts { width: 248px; max-width: 100%; }
+.message.msgr-wide-cap .msgr-att-img { width: 100% !important; max-width: none; }
+.message.msgr-wide-cap .msgr-att-img img { width: 100%; height: auto; max-height: 320px; }
+.message.msgr-wide-cap .msgr-fwd-from,
+.message.msgr-wide-cap .msgr-reply-quote { max-width: 248px; }
+.msgr-fwd-from-label { color: var(--tyuiu-blue-light, #3b82f6); font-weight: 600; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.msgr-fwd-from-ava {
+  flex: 0 0 auto; width: 18px; height: 18px; border-radius: 999px;
+  background: linear-gradient(135deg, var(--tyuiu-blue-light) 0%, var(--tyuiu-info) 100%);
+  color: #fff; font-size: 8.5px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center;
+}
+.msgr-fwd-from-name { font-weight: 700; color: var(--tyuiu-blue, #1e40af); white-space: normal; word-break: break-word; }
+.message.mine .msgr-fwd-from-label { color: #bfdbfe; }
+.message.mine .msgr-fwd-from-name { color: #eff6ff; }
+.msgr-fwd-comment { font-size: 13.5px; line-height: 1.45; margin-bottom: 8px; padding: 6px 9px; background: var(--bg-secondary, #f1f5f9); border-radius: 8px; white-space: pre-wrap; }
+.msgr-fwd-label { font-size: 11px; font-weight: 700; color: var(--tyuiu-blue, #1e40af); display: flex; align-items: center; gap: 5px; margin-bottom: 4px; }
+.msgr-fwd-body { font-size: 13.5px; line-height: 1.5; white-space: pre-wrap; }
+.msgr-fwd-attach {
+  display: inline-flex; align-items: center; gap: 7px;
+  margin-top: 8px; padding: 7px 11px;
+  background: #fff; border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 8px; text-decoration: none; color: var(--tyuiu-blue, #1e40af);
+  font-size: 13px; font-weight: 600;
+}
+.msgr-fwd-attach:hover { background: var(--bg-secondary, #f8fafc); }
+
+/* Поле ввода */
+/* Ввод в мини-чате переиспользует стиль /chat (.input-area/.msg-input/.send-button).
+   Компактнее по паддингу, чтобы влезать в узкую панель. */
+.msgr-compose.input-area { flex-shrink: 0; padding: 10px 10px; }
+.msgr-compose .input-controls { gap: 6px; }
+.msgr-compose .msg-input { max-height: 110px; }
+
+/* Плашка «Вопрос ассистенту» (сообщение — запрос к ИИ). Отдельной строкой НАД
+   текстом (как «Переслано от …»), поэтому display:flex + width:fit-content. */
+.msgr-ai-query-tag {
+  display: flex; width: fit-content; max-width: 100%;
+  align-items: center; gap: 5px;
+  font-size: 11px; font-weight: 600; line-height: 1;
+  padding: 3px 8px; border-radius: 999px; margin-bottom: 5px;
+  background: rgba(30,64,175,0.1); color: var(--tyuiu-blue-dark, #1e3a8a);
+  border: 1px solid rgba(30,64,175,0.2);
+}
+.msgr-ai-query-tag i { font-size: 10px; }
+.message.mine .msgr-ai-query-tag {
+  background: rgba(255,255,255,0.2); color: #fff; border-color: rgba(255,255,255,0.4);
+}
+
+/* Кнопка «Голос бота» под голосованием + аватар бота-голосующего */
+.msgr-poll-bot {
+  border: 1px solid rgba(30,64,175,0.25); background: rgba(30,64,175,0.06);
+  color: var(--tyuiu-blue, #1e40af); font-size: 12px; font-weight: 600;
+  border-radius: 999px; padding: 3px 10px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 5px; margin-left: 8px;
+  transition: background 0.15s;
+}
+.msgr-poll-bot:hover { background: rgba(30,64,175,0.14); }
+.msgr-voter-bot { background: var(--tyuiu-blue-gradient) !important; color: #fff !important; }
+
+.msgr-forward-chip {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px; margin-bottom: 8px;
+  background: rgba(59,130,246,0.08);
+  border: 1px solid rgba(59,130,246,0.3);
+  border-radius: 8px;
+  font-size: 12.5px; color: var(--tyuiu-blue, #1e40af);
+}
+.msgr-forward-chip span { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.msgr-forward-chip button { background: none; border: none; cursor: pointer; color: var(--tyuiu-gray-dark); padding: 2px; }
+
+.message { position: relative; }
+
+/* Атрибут hidden должен перекрывать display у панелей ввода. */
+.msgr-reply-bar[hidden], .msgr-pending-atts[hidden], .msgr-seltools[hidden] { display: none !important; }
+
+/* ── Компактный пузырёк (стиль Telegram) ── */
+.msgr-messages .message-content { padding: 5px 9px 4px; font-size: 14px; line-height: 1.34; }
+.msgr-msg-text { display: inline; white-space: pre-wrap; word-break: break-word; }
+.msgr-meta-spacer { display: inline-block; width: 42px; height: 1px; }
+.message.mine .msgr-meta-spacer { width: 56px; }
+.msgr-meta-spacer.edited { width: 76px; }
+.message.mine .msgr-meta-spacer.edited { width: 90px; }
+
+/* ── Время + галочка ── */
+.msgr-meta { display: inline-flex; align-items: center; gap: 3px; font-size: 10.5px; line-height: 1; white-space: nowrap; user-select: none; }
+/* Текстовый пузырь: время в правом нижнем углу, текст обтекает spacer. */
+.message.msgr-plain .message-content { position: relative; }
+.message.msgr-plain .msgr-meta { position: absolute; right: 8px; bottom: 4px; }
+/* Пересланное/голосование: время отдельной строкой справа. */
+.message:not(.msgr-plain) .msgr-meta { display: flex; justify-content: flex-end; margin-top: 4px; }
+.message.mine .msgr-meta { color: rgba(255,255,255,0.82); }
+.message.peer .msgr-meta, .message.forwarded .msgr-meta { color: var(--tyuiu-gray-medium, #94a3b8); }
+.msgr-tick { display: inline-flex; font-size: 10px; }
+.msgr-tick.sending { width: 8px; }
+.msgr-tick.failed { color: #f87171; font-weight: 700; }
+.msgr-tick.seen { color: #38bdf8; }
+.message.mine .msgr-tick.seen { color: #7dd3fc; }
+
+/* Картинка без рамки; время — тёмная пилюля в углу картинки. */
+.message.msgr-media-only .message-content { padding: 0; background: transparent !important; border: none !important; }
+.message.msgr-media-only .msgr-att-img { border: none; }
+.message.msgr-media-only .msgr-meta {
+  right: 8px; bottom: 8px; background: rgba(0,0,0,0.5); color: #fff !important;
+  padding: 2px 7px; border-radius: 10px; backdrop-filter: blur(2px);
+}
+.message.msgr-media-only .msgr-tick { color: #fff; }
+
+/* ── Группировка одного автора (≤10 мин) — свои и собеседник ──
+   .msgr-messages задаёт gap:10px; отрицательным margin делаем пачку плотнее. */
+.msgr-messages .message { align-items: flex-start; }   /* аватар — у верхнего края пузырька */
+.msgr-messages .message.grouped { margin-top: -2px; }
+.msgr-messages .message.grouped .msgr-msg-sender { display: none; }  /* имя — только у первого */
+/* Аватар показываем только у ПОСЛЕДНЕГО в группе; у остальных — прячем (колонка сохраняется). */
+.msgr-messages .message.msgr-hide-avatar .message-avatar { visibility: hidden; height: 0; }
+/* У СВОИХ сообщений аватар не нужен вовсе (как в Telegram) — в т.ч. у пересланного
+   мной ответа ассистента (иконка робота на моей стороне не нужна). */
+.msgr-messages .message.mine .message-avatar,
+.msgr-messages .message.forwarded.fwd-mine .message-avatar { display: none; }
+/* В диалоге 1-на-1 профильных иконок нет вообще (ни у кого, ни у ассистента). */
+.msgr-messages.msgr-1to1 .message-avatar { display: none !important; }
+/* Отступ для новой «пачки» после паузы >10 мин */
+.msgr-messages .message.has-gap { margin-top: 8px; }
+
+/* ── Шапка «Закреплённое сообщение» (стиль Telegram) ── */
+.msgr-pinbar {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 10px;
+  padding: 7px 12px; cursor: pointer;
+  background: var(--bg-primary, #fff); border-bottom: 1px solid var(--border-color, #e2e8f0);
+}
+.msgr-pinbar[hidden] { display: none !important; }
+.msgr-pinbar:hover { background: var(--bg-secondary, #f8fafc); }
+.msgr-pinbar-accent { flex: 0 0 auto; width: 3px; align-self: stretch; border-radius: 2px; background: var(--tyuiu-blue, #1e40af); }
+.msgr-pinbar-body { flex: 1; min-width: 0; }
+.msgr-pinbar-title { font-size: 12px; font-weight: 700; color: var(--tyuiu-blue, #1e40af); display: flex; align-items: center; gap: 5px; }
+.msgr-pinbar-text { font-size: 12.5px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msgr-pinbar-unpin { flex: 0 0 auto; background: none; border: none; cursor: pointer; color: var(--tyuiu-gray-medium, #94a3b8); padding: 4px; border-radius: 6px; }
+.msgr-pinbar-unpin:hover { background: var(--bg-tertiary, #e2e8f0); color: var(--tyuiu-error, #ef4444); }
+
+/* Встроенный редактор (стиль /chat) внутри пузыря мессенджера */
+.msgr-messages .msg-edit-box { width: 100%; box-sizing: border-box; margin-top: 4px; }
+
+/* ── Ответ (reply) — шире и чуть выше, кликабельно ── */
+.msgr-reply-quote {
+  border-left: 4px solid var(--tyuiu-blue-light, #3b82f6);
+  padding: 6px 12px; margin-bottom: 8px;
+  background: rgba(59,130,246,0.09); border-radius: 8px;
+  display: flex; flex-direction: column; gap: 2px; cursor: pointer;
+  min-width: 180px; width: 100%; box-sizing: border-box;
+}
+.msgr-reply-quote:hover { background: rgba(59,130,246,0.16); }
+.msgr-reply-name { font-size: 12px; font-weight: 700; color: var(--tyuiu-blue, #1e40af); }
+.msgr-reply-text { font-size: 13px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.message.mine .msgr-reply-quote { border-left-color: rgba(255,255,255,0.7); background: rgba(255,255,255,0.14); }
+.message.mine .msgr-reply-name, .message.mine .msgr-reply-text { color: rgba(255,255,255,0.9); }
+
+.msgr-reply-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px; margin-bottom: 8px;
+  background: var(--bg-secondary, #f1f5f9); border-radius: 8px;
+  border-left: 3px solid var(--tyuiu-blue, #1e40af); font-size: 12.5px;
+}
+.msgr-reply-bar i { color: var(--tyuiu-blue, #1e40af); }
+.msgr-reply-info { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.msgr-reply-info b { font-size: 12px; color: var(--tyuiu-blue, #1e40af); }
+.msgr-reply-info span { font-size: 12px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msgr-reply-bar button { background: none; border: none; cursor: pointer; color: var(--tyuiu-gray-dark); padding: 2px; }
+
+/* ── Закрепление ── */
+.msgr-pin-badge { font-size: 11px; color: var(--tyuiu-warning, #f59e0b); margin-bottom: 3px; }
+.message.mine .msgr-pin-badge { color: #fde68a; }
+
+/* ── Вложения ── */
+.msgr-atts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.msgr-att-img { display: block; border-radius: 10px; overflow: hidden; max-width: 240px; cursor: zoom-in; border: 1px solid var(--border-color, #e2e8f0); background: var(--bg-tertiary, #e8ecf1); }
+.msgr-att-img img { display: block; width: 100%; height: auto; max-width: 100%; background: var(--bg-tertiary, #e8ecf1); }
+
+/* Альбом из нескольких картинок (визуально — одно сообщение, стиль Telegram).
+   Плотная сетка (gap 2px); фиксированный размер блока через aspect-ratio,
+   картинки заполняют ячейки (object-fit: cover). До 3 столбцов и 4 строк. */
+.msgr-album {
+  display: grid; gap: 2px; margin-top: 6px; border-radius: 12px; overflow: hidden;
+  width: min(300px, 74vw); grid-template-columns: 1fr 1fr; grid-auto-rows: 1fr;
+}
+.msgr-album .msgr-att-img { border: none; border-radius: 0; max-width: none; margin: 0; }
+.msgr-album .msgr-att-img img { width: 100%; height: 100%; max-height: none; object-fit: cover; display: block; }
+
+.msgr-album[data-count="2"] { aspect-ratio: 2 / 1; }
+/* 3 — большая слева, две справа стопкой (как в примере) */
+.msgr-album[data-count="3"] { aspect-ratio: 3 / 2; grid-template-columns: 1.55fr 1fr; grid-template-rows: 1fr 1fr; }
+.msgr-album[data-count="3"] .msgr-att-img:nth-child(1) { grid-row: 1 / 3; }
+/* 4 — сетка 2×2 */
+.msgr-album[data-count="4"] { aspect-ratio: 1 / 1; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+/* 5 — две сверху, три снизу */
+.msgr-album[data-count="5"] { aspect-ratio: 3 / 2; grid-template-columns: repeat(6, 1fr); grid-template-rows: 1fr 1fr; }
+.msgr-album[data-count="5"] .msgr-att-img:nth-child(1),
+.msgr-album[data-count="5"] .msgr-att-img:nth-child(2) { grid-column: span 3; }
+.msgr-album[data-count="5"] .msgr-att-img:nth-child(3),
+.msgr-album[data-count="5"] .msgr-att-img:nth-child(4),
+.msgr-album[data-count="5"] .msgr-att-img:nth-child(6) { grid-column: span 2; }
+/* 6 и больше — сетка 3 столбца, ряды по 3 (до 4 строк => до 10 картинок) */
+.msgr-album[data-count="6"], .msgr-album[data-count="7"], .msgr-album[data-count="8"],
+.msgr-album[data-count="9"], .msgr-album[data-count="10"] { grid-template-columns: 1fr 1fr 1fr; }
+.msgr-album[data-count="6"] .msgr-att-img img,
+.msgr-album[data-count="7"] .msgr-att-img img, .msgr-album[data-count="8"] .msgr-att-img img,
+.msgr-album[data-count="9"] .msgr-att-img img, .msgr-album[data-count="10"] .msgr-att-img img { height: auto; aspect-ratio: 1 / 1; }
+.msgr-att-file { margin-top: 0; }
+.msgr-atts .chat-attachment { width: 100%; min-width: 220px; }
+
+/* ── Превью прикреплённых перед отправкой ── */
+.msgr-pending-atts { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.msgr-pend-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 8px; background: var(--bg-secondary, #f1f5f9);
+  border: 1px solid var(--border-color, #e2e8f0); border-radius: 8px; font-size: 12.5px; max-width: 200px;
+}
+.msgr-pend-chip i { color: var(--tyuiu-blue, #1e40af); }
+.msgr-pend-chip button { background: none; border: none; cursor: pointer; font-size: 15px; line-height: 1; color: var(--tyuiu-gray-dark); }
+/* Миниатюра загружаемой картинки (предпросмотр перед отправкой). */
+.msgr-pend-img { position: relative; width: 60px; height: 60px; border-radius: 10px; overflow: hidden; border: 1px solid var(--border-color, #e2e8f0); flex: 0 0 auto; }
+.msgr-pend-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.msgr-pend-img button {
+  position: absolute; top: 2px; right: 2px; width: 18px; height: 18px; border-radius: 999px;
+  border: none; cursor: pointer; background: rgba(0,0,0,0.55); color: #fff; font-size: 13px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+}
+
+/* Скрепка в мини-панели */
+.msgr-attach-btn {
+  flex: 0 0 auto; width: 40px; height: 40px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; color: var(--tyuiu-gray-dark, #475569); border-radius: 999px;
+  transition: background 0.15s, color 0.15s;
+}
+.msgr-attach-btn:hover { background: var(--bg-secondary, #f1f5f9); color: var(--tyuiu-blue, #1e40af); }
+
+/* ── Выделение сообщений ── */
+.msgr-select-check {
+  display: none; flex: 0 0 auto;
+  width: 22px; height: 22px; margin: auto 2px;
+  border-radius: 999px; border: 2px solid var(--tyuiu-gray-medium, #94a3b8);
+  align-items: center; justify-content: center; color: transparent; font-size: 11px;
+  align-self: center; transition: background 0.12s, border-color 0.12s;
+}
+.msgr-messages.selecting .msgr-select-check { display: flex; }
+.msgr-messages.selecting { user-select: none; }
+/* Область выделения — на всю ширину чата (клик рядом с пузырём тоже выделяет). */
+.msgr-messages.selecting .message { cursor: pointer; width: 100%; max-width: 100%; }
+.message.is-selected .msgr-select-check { background: var(--tyuiu-blue, #1e40af); border-color: var(--tyuiu-blue, #1e40af); color: #fff; }
+.message.is-selected { background: rgba(59,130,246,0.14); border-radius: 12px; box-shadow: 0 -1px 0 0 rgba(59,130,246,0.14), 0 1px 0 0 rgba(59,130,246,0.14); }
+
+/* ── Панель действий над выделением: под шапкой, полупрозрачная ── */
+.msgr-seltools {
+  flex: 0 0 auto; z-index: 8;
+  height: 48px; display: flex; align-items: center; justify-content: space-between;
+  padding: 0 12px; color: #fff;
+  background: linear-gradient(135deg, rgba(30,64,175,0.92) 0%, rgba(59,130,246,0.92) 100%);
+  backdrop-filter: blur(4px);
+  border-bottom: 1px solid rgba(255,255,255,0.15);
+}
+.msgr-seltools .msgr-sel-count { font-size: 14px; font-weight: 600; }
+.msgr-seltools .msgr-sel-actions { display: flex; gap: 4px; }
+.msgr-seltools .msgr-sel-actions button {
+  width: 34px; height: 34px; border: none; border-radius: 8px; cursor: pointer;
+  background: rgba(255,255,255,0.15); color: #fff; display: flex; align-items: center; justify-content: center;
+  transition: background 0.15s;
+}
+.msgr-seltools .msgr-sel-actions button:hover { background: rgba(255,255,255,0.32); }
+/* На полной странице — полупрозрачная полоса ПОД chat-header */
+.chat-header { position: relative; }
+.msgr-seltools-page {
+  position: absolute; top: 100%; left: 0; right: 0; height: 46px;
+  border-radius: 0 0 6px 6px;
+}
+
+/* ── Контекстное меню + ряд реакций ── */
+.msgr-ctx-wrap { position: fixed; z-index: 5000; display: flex; flex-direction: column; gap: 8px; }
+.msgr-react-rows {
+  display: flex; flex-direction: column; align-self: flex-start;
+  padding: 5px 6px; background: var(--bg-primary, #fff);
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 18px; box-shadow: 0 10px 30px rgba(15,23,42,0.2);
+}
+.msgr-react-row { display: flex; gap: 2px; }
+/* Дополнительные реакции — раскрываются/сжимаются анимацией (без разделителя). */
+.msgr-react-extra {
+  display: flex; flex-direction: column; gap: 3px;
+  max-height: 0; overflow: hidden; opacity: 0; margin-top: 0;
+  transition: max-height 0.26s ease, opacity 0.2s ease, margin-top 0.2s ease;
+}
+.msgr-react-extra.open { max-height: 180px; opacity: 1; margin-top: 3px; }
+.msgr-react-btn {
+  border: none; background: none; cursor: pointer; font-size: 20px; line-height: 1;
+  width: 34px; height: 34px; border-radius: 999px; transition: transform 0.12s, background 0.12s;
+  display: flex; align-items: center; justify-content: center; flex: 0 0 auto;
+}
+.msgr-react-btn:hover { transform: scale(1.22); background: var(--bg-secondary, #f1f5f9); }
+.msgr-react-btn.active { background: rgba(59,130,246,0.15); }
+.msgr-react-more { font-size: 13px; color: var(--tyuiu-gray-dark, #475569); }
+.msgr-react-more:hover { transform: none; background: var(--bg-secondary, #f1f5f9); }
+.msgr-react-more i { transition: transform 0.26s ease; }
+.msgr-react-more.rotated i { transform: rotate(180deg); }
+.msgr-ctx-menu {
+  position: static; z-index: 3000; min-width: 190px;
+  background: var(--bg-primary, #fff); border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 12px; box-shadow: 0 16px 40px rgba(15,23,42,0.22); padding: 6px; overflow: hidden;
+}
+.msgr-ctx-item {
+  width: 100%; display: flex; align-items: center; gap: 11px;
+  padding: 9px 12px; border: none; background: none; cursor: pointer;
+  font-size: 14px; color: var(--text-primary); border-radius: 8px; text-align: left;
+}
+.msgr-ctx-item i { width: 16px; text-align: center; color: var(--tyuiu-gray-dark, #475569); }
+.msgr-ctx-item:hover { background: var(--bg-secondary, #f1f5f9); }
+.msgr-ctx-item.danger { color: var(--tyuiu-error, #ef4444); }
+.msgr-ctx-item.danger i { color: var(--tyuiu-error, #ef4444); }
+.msgr-ctx-sep { height: 1px; background: var(--border-color, #e2e8f0); margin: 5px 6px; }
+
+/* ── Анимации: появление контекстного меню, вход в режим выделения, отправка ── */
+@keyframes msgrCtxIn {
+  from { opacity: 0; transform: scale(0.95) translateY(-6px); }
+  to   { opacity: 1; transform: none; }
+}
+/* translate/scale не искажают замер размеров меню (width/height берутся до анимации). */
+.msgr-ctx-wrap { animation: msgrCtxIn 0.15s cubic-bezier(0.16, 1, 0.3, 1); transform-origin: top center; }
+.msgr-ctx-item { transition: background 0.12s, transform 0.1s; }
+.msgr-ctx-item:active { transform: scale(0.98); }
+
+@keyframes msgrCheckPop { from { opacity: 0; transform: scale(0.3); } to { opacity: 1; transform: scale(1); } }
+.msgr-messages.selecting .msgr-select-check,
+.messages.selecting .msgr-select-check { animation: msgrCheckPop 0.2s cubic-bezier(0.16, 1, 0.3, 1); }
+.msgr-select-check { transition: background 0.12s, border-color 0.12s, transform 0.16s cubic-bezier(0.16, 1, 0.3, 1); }
+.message.is-selected .msgr-select-check { transform: scale(1.1); }
+/* Плавная подсветка самого сообщения при выделении. */
+.message { transition: background 0.16s ease; }
+
+@keyframes msgrSelToolsIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+.msgr-seltools:not([hidden]) { animation: msgrSelToolsIn 0.2s cubic-bezier(0.16, 1, 0.3, 1); }
+
+/* Отправка сообщения: пузырь «вылетает» вверх из области ввода. */
+@keyframes msgSendIn {
+  0%   { opacity: 0; transform: translateY(18px) scale(0.94); }
+  55%  { opacity: 1; }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+.message.msg-just-sent { animation: msgSendIn 0.34s cubic-bezier(0.16, 1, 0.3, 1); }
+
+/* ── Лайтбокс изображений ── */
+.msgr-lightbox {
+  position: fixed; inset: 0; z-index: 4300; background: rgba(15,23,42,0.88);
+  display: flex; align-items: center; justify-content: center; padding: 32px;
+}
+.msgr-lightbox img { max-width: 92vw; max-height: 88vh; border-radius: 8px; box-shadow: 0 20px 60px rgba(0,0,0,0.5); }
+.msgr-lightbox-close, .msgr-lightbox-dl {
+  position: absolute; top: 20px; width: 44px; height: 44px; border-radius: 999px;
+  background: rgba(255,255,255,0.15); color: #fff; border: none; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; font-size: 18px; text-decoration: none;
+}
+.msgr-lightbox-close { right: 20px; }
+.msgr-lightbox-dl { right: 74px; }
+.msgr-lightbox-close:hover, .msgr-lightbox-dl:hover { background: rgba(255,255,255,0.3); }
+/* Листание в лайтбоксе */
+.msgr-lb-nav {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  width: 48px; height: 48px; border-radius: 999px; border: none; cursor: pointer;
+  background: rgba(255,255,255,0.15); color: #fff; font-size: 20px;
+  display: flex; align-items: center; justify-content: center; z-index: 2;
+}
+.msgr-lb-nav:hover { background: rgba(255,255,255,0.3); }
+.msgr-lb-prev { left: 20px; }
+.msgr-lb-next { right: 20px; }
+.msgr-lb-count { position: absolute; bottom: 22px; left: 50%; transform: translateX(-50%); color: #fff; font-size: 14px; background: rgba(0,0,0,0.4); padding: 4px 12px; border-radius: 999px; }
+@media (max-width: 640px) { .msgr-lb-nav { display: none; } }
+
+/* Превью документа (iframe в лайтбоксе) */
+.msgr-doc-frame { width: 88vw; height: 86vh; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.5); }
+.msgr-doc-frame iframe { width: 100%; height: 100%; border: 0; }
+.msgr-doc-frame img { width: 100%; height: 100%; object-fit: contain; }
+
+/* Подсветка сообщения при переходе по ответу */
+/* Перестройка узла (реакция/статус/закрепление/правка) — без анимации появления. */
+.msgr-messages .message.msgr-noanim { animation: none !important; }
+
+/* Подсветка самого пузырька при переходе — осветление (у своих сильнее). */
+@keyframes msgrFlashSoft {
+  0%   { box-shadow: 0 0 0 0 rgba(59,130,246,0); filter: none; }
+  22%  { box-shadow: 0 0 0 2px rgba(59,130,246,0.3); filter: brightness(1.12) saturate(0.85); }
+  60%  { filter: brightness(1.12) saturate(0.85); }
+  100% { box-shadow: 0 0 0 0 rgba(59,130,246,0); filter: none; }
+}
+@keyframes msgrFlashStrong {
+  0%   { box-shadow: 0 0 0 0 rgba(147,197,253,0); filter: none; }
+  22%  { box-shadow: 0 0 0 3px rgba(147,197,253,0.8); filter: brightness(1.8) saturate(0.5); }
+  60%  { filter: brightness(1.8) saturate(0.5); }
+  100% { box-shadow: 0 0 0 0 rgba(147,197,253,0); filter: none; }
+}
+.msgr-messages .message-content.msgr-flash-anim { animation: msgrFlashSoft 1.4s ease; }
+.msgr-messages .message.mine .message-content.msgr-flash-anim { animation: msgrFlashStrong 1.4s ease; }
+
+/* Плавная подсветка ВСЕЙ СТРОКИ (голубая полоса на всю ширину). Фон появляется и
+   исчезает через transition; ширина остаётся 100% до конца исчезания, чтобы гасло
+   плавно. background меняется transition'ом — не задевает fadeIn самого сообщения. */
+.msgr-messages .message { transition: background-color 0.35s ease, box-shadow 0.35s ease; }
+/* Фон подсветки шире пузырька на 1px сверху и на 1px снизу (симметрично, box-shadow). */
+.msgr-messages .message.msgr-flash-select { width: 100%; max-width: 100%; background-color: rgba(59,130,246,0.18); box-shadow: 0 -1px 0 0 rgba(59,130,246,0.18), 0 1px 0 0 rgba(59,130,246,0.18); }
+.msgr-messages .message.msgr-flash-select.msgr-flash-out { background-color: transparent; box-shadow: 0 -1px 0 0 rgba(59,130,246,0), 0 1px 0 0 rgba(59,130,246,0); }
+
+/* Системная строка «X закрепил(а) сообщение» — серым по центру. */
+.message.msgr-system { align-self: center; max-width: 100%; }
+.message.msgr-system .msgr-select-check, .message.msgr-system .message-avatar { display: none; }
+.msgr-system-line {
+  font-size: 12px; color: var(--tyuiu-gray-medium, #94a3b8); text-align: center;
+  background: rgba(148,163,184,0.15); padding: 3px 12px; border-radius: 999px;
+}
+
+/* Пометка «(изм.)» рядом со временем. */
+.msgr-edited { opacity: 0.8; margin-right: 2px; }
+
+/* Оверлей при перетаскивании файлов (drag-and-drop). */
+.msgr-drop-active { position: relative; }
+.msgr-drop-active::after {
+  content: "Отпустите, чтобы прикрепить"; position: absolute; inset: 8px; z-index: 60;
+  border: 2px dashed var(--tyuiu-blue-light, #3b82f6); border-radius: 14px;
+  background: rgba(59,130,246,0.1); color: var(--tyuiu-blue, #1e40af);
+  display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 15px;
+  pointer-events: none;
+}
+
+/* Кликабельные области шапки (открывают вложения диалога). */
+.msgr-head-titles { cursor: pointer; }
+.page-messenger .chat-header-text, .page-messenger .bot-avatar { cursor: pointer; }
+
+/* Модалка «Вложения диалога» с вкладками (широкая, крупные карточки). */
+.msgr-att-modal { width: 860px; max-width: 96vw; padding: 0; overflow: hidden; }
+.msgr-att-tabs { display: flex; align-items: center; gap: 6px; padding: 12px 16px; border-bottom: 1px solid var(--border-color, #e2e8f0); }
+.msgr-att-tab { border: none; background: none; cursor: pointer; font-size: 15px; font-weight: 600; color: var(--text-secondary); padding: 8px 14px; border-radius: 10px; }
+.msgr-att-tab:hover { background: var(--bg-secondary, #f1f5f9); }
+.msgr-att-tab.active { color: var(--tyuiu-blue, #1e40af); background: rgba(59,130,246,0.1); }
+.msgr-att-close { margin-left: auto; border: none; background: none; cursor: pointer; font-size: 20px; color: var(--tyuiu-gray-medium, #94a3b8); width: 34px; height: 34px; border-radius: 8px; }
+.msgr-att-close:hover { background: var(--bg-secondary, #f1f5f9); color: var(--text-primary); }
+/* Поиск по документам/ссылкам во вложениях */
+.msgr-att-search { position: relative; padding: 12px 16px 0; }
+.msgr-att-search[hidden] { display: none; }
+.msgr-att-search i { position: absolute; left: 30px; top: 32px; transform: translateY(-50%); color: var(--tyuiu-gray-medium, #94a3b8); font-size: 14px; pointer-events: none; }
+.msgr-att-search input {
+  width: 100%; box-sizing: border-box; padding: 10px 14px 10px 38px;
+  border: 1px solid var(--border-color, #e2e8f0); border-radius: 10px;
+  font-size: 14px; outline: none; background: var(--bg-secondary, #f8fafc); color: var(--text-primary);
+}
+.msgr-att-search input:focus { border-color: var(--tyuiu-blue-light, #3b82f6); background: var(--bg-primary, #fff); }
+.msgr-att-body { max-height: 72vh; overflow-y: auto; padding: 18px; }
+/* Заголовок месяца */
+.msgr-att-month { font-size: 13px; font-weight: 700; color: var(--text-secondary); text-transform: capitalize; margin: 14px 2px 8px; }
+.msgr-att-month:first-child { margin-top: 0; }
+/* Медиа — 4 в ряд, плотно */
+.msgr-att-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; margin-bottom: 6px; }
+.msgr-att-grid .msgr-att-img { max-width: none; border-radius: 0; border: none; }
+.msgr-att-grid .msgr-att-img img { width: 100%; aspect-ratio: 1 / 1; max-height: none; object-fit: cover; }
+
+/* ─────────── Мобильные устройства ─────────── */
+@media (max-width: 640px) {
+  /* Модалка вложений — на весь экран, крупнее миниатюры */
+  .msgr-modal-ov:has(.msgr-att-modal) { padding: 0; }
+  .msgr-att-modal {
+    width: 100vw; max-width: 100vw;
+    height: 100vh; height: 100dvh; max-height: 100dvh;
+    border-radius: 0; display: flex; flex-direction: column;
+  }
+  .msgr-att-body { max-height: none; flex: 1 1 auto; }
+  /* Вкладки — строго в одну строку, компактнее (без обрезки «Ссылки») */
+  .msgr-att-tabs { gap: 2px; padding: 10px 8px; flex-wrap: nowrap; }
+  .msgr-att-tab { font-size: 13.5px; padding: 7px 8px; white-space: nowrap; }
+  .msgr-att-close { flex: 0 0 auto; }
+  /* Медиа — 3 в ряд (крупнее, чем 4) */
+  .msgr-att-grid { grid-template-columns: repeat(3, 1fr); }
+  /* Шапка: короткое ФИО в одну строку, должность скрыта */
+  .page-messenger .chat-header-text h2 { font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .page-messenger .mp-position { display: none; }
+}
+/* Документы — крупные карточки */
+.msgr-att-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 6px; }
+.msgr-att-list .chat-attachment { width: 100%; padding: 12px 14px; }
+.msgr-att-list .chat-attachment-icon { font-size: 22px; }
+.msgr-att-list .chat-attachment-title { font-size: 15px; }
+.msgr-att-link { display: flex; align-items: center; gap: 11px; padding: 12px 14px; border: 1px solid var(--border-color, #e2e8f0); border-radius: 12px; text-decoration: none; color: var(--tyuiu-blue, #1e40af); font-size: 14px; word-break: break-all; }
+.msgr-att-link:hover { background: var(--bg-secondary, #f8fafc); }
+.msgr-att-link i { flex: 0 0 auto; font-size: 16px; }
+.msgr-att-empty { text-align: center; color: var(--text-secondary); padding: 40px 10px; font-size: 15px; }
+
+/* Модалка подтверждения удаления */
+.msgr-modal-ov {
+  position: fixed; inset: 0; z-index: 4100; background: rgba(15,23,42,0.55);
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+}
+.msgr-modal {
+  background: var(--bg-primary, #fff); border-radius: 16px; padding: 22px;
+  width: 540px; max-width: 100%; box-shadow: 0 24px 60px rgba(15,23,42,0.3);
+}
+.msgr-modal-title { font-size: 16px; font-weight: 700; color: var(--text-primary); margin-bottom: 14px; }
+.msgr-modal-check { display: flex; align-items: center; gap: 9px; font-size: 14px; color: var(--text-primary); cursor: pointer; margin-bottom: 18px; }
+.msgr-modal-check input { width: 17px; height: 17px; cursor: pointer; }
+.msgr-modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.msgr-modal-actions button { padding: 9px 18px; border-radius: 10px; font-size: 14px; font-weight: 600; cursor: pointer; border: none; }
+.msgr-modal-cancel { background: var(--bg-secondary, #f1f5f9); color: var(--text-primary); }
+.msgr-modal-cancel:hover { background: var(--bg-tertiary, #e2e8f0); }
+.msgr-modal-ok { background: var(--tyuiu-error, #ef4444); color: #fff; }
+.msgr-modal-ok:hover { filter: brightness(1.05); }
+.msgr-modal-note { font-size: 13px; color: var(--text-secondary); margin-bottom: 16px; }
+
+/* ── Реакции под сообщением ── */
+.msgr-reactions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: -1px; margin-bottom: 3px; }
+.message.mine .msgr-reactions { justify-content: flex-end; }
+.msgr-reaction {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; border-radius: 999px; cursor: pointer;
+  background: var(--bg-secondary, #f1f5f9); border: 1px solid var(--border-color, #e2e8f0);
+  font-size: 13px; transition: background 0.12s, border-color 0.12s;
+}
+.msgr-reaction:hover { background: var(--bg-tertiary, #e2e8f0); }
+.msgr-reaction.mine { background: rgba(59,130,246,0.16); border-color: var(--tyuiu-blue-light, #3b82f6); }
+.msgr-reaction-emoji { font-size: 14px; line-height: 1; }
+.msgr-reaction-count { font-size: 12px; font-weight: 600; color: var(--text-secondary); }
+.msgr-reaction.mine .msgr-reaction-count { color: var(--tyuiu-blue, #1e40af); }
+
+/* ── Голосование ── */
+.msgr-poll { min-width: 250px; }
+.msgr-poll-q { font-weight: 700; font-size: 15px; margin-bottom: 2px; }
+.msgr-poll-desc { font-size: 13px; color: var(--text-secondary); margin-bottom: 8px; }
+.message.mine .msgr-poll-desc { color: rgba(255,255,255,0.8); }
+/* Поля голосования — в белой карточке с боковой полосой (стиль ответов). */
+.msgr-poll-card {
+  margin-top: 8px; padding: 10px 12px; background: #fff; color: var(--text-primary);
+  border: 1px solid var(--border-color, #e2e8f0); border-left: 4px solid var(--tyuiu-blue, #1e40af);
+  border-radius: 10px;
+}
+:root[data-theme="dark"] .msgr-poll-card { background: #0f172a; color: #e2e8f0; }
+.msgr-poll-opts { display: flex; flex-direction: column; gap: 10px; }
+.msgr-poll-opt { display: block; width: 100%; text-align: left; cursor: pointer; background: none; border: none; padding: 0; color: inherit; }
+.msgr-poll-opt-head { display: flex; align-items: center; gap: 8px; font-size: 13.5px; margin-bottom: 4px; }
+.msgr-poll-opt-text { flex: 1; }
+.msgr-poll-opt-cnt { font-weight: 700; font-size: 12px; color: var(--tyuiu-blue, #1e40af); white-space: nowrap; }
+.msgr-poll-check { color: var(--tyuiu-gray-medium, #94a3b8); }
+.msgr-poll-opt.mine .msgr-poll-check { color: var(--tyuiu-blue-light, #3b82f6); }
+.msgr-poll-bar { height: 6px; border-radius: 999px; background: rgba(148,163,184,0.25); overflow: hidden; }
+.msgr-poll-bar-fill { height: 100%; background: var(--tyuiu-blue-light, #3b82f6); border-radius: 999px; transition: width 0.3s ease; }
+.msgr-poll-avatars { display: flex; margin-top: 5px; }
+.msgr-poll-avatars .msgr-voter-ava { margin-left: -6px; box-shadow: 0 0 0 2px #fff; }
+.msgr-poll-avatars .msgr-voter-ava:first-child { margin-left: 0; }
+.msgr-poll-sub { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 11.5px; color: var(--text-secondary); margin-top: 8px; }
+.message.mine .msgr-poll-sub { color: rgba(255,255,255,0.72); }
+.msgr-poll-results { background: none; border: none; cursor: pointer; color: var(--tyuiu-blue, #1e40af); font-weight: 700; font-size: 12px; padding: 0; }
+.message.mine .msgr-poll-results { color: #dbeafe; }
+.msgr-poll-results:hover { text-decoration: underline; }
+
+/* Аватарка голосующего (кружок с инициалами). */
+.msgr-voter-ava {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border-radius: 999px; flex: 0 0 auto;
+  background: linear-gradient(135deg, var(--tyuiu-blue-light, #3b82f6), var(--tyuiu-info, #06b6d4));
+  color: #fff; font-size: 11px; font-weight: 700;
+}
+.msgr-voter-ava.sm { width: 22px; height: 22px; font-size: 9px; }
+.msgr-voter-more { display: inline-flex; align-items: center; font-size: 11px; color: var(--text-secondary); margin-left: 4px; }
+
+/* Модалка результатов голосования */
+.msgr-res-modal { width: 420px; }
+.msgr-res-body { max-height: 60vh; overflow-y: auto; }
+.msgr-res-opt { padding: 10px 0; border-bottom: 1px solid var(--border-color, #e2e8f0); }
+.msgr-res-opt:last-child { border-bottom: none; }
+.msgr-res-head { display: flex; justify-content: space-between; font-weight: 600; font-size: 14px; margin-bottom: 8px; }
+.msgr-res-cnt { color: var(--tyuiu-blue, #1e40af); }
+.msgr-res-voters { display: flex; flex-direction: column; gap: 8px; }
+.msgr-res-voter { display: flex; align-items: center; gap: 10px; font-size: 13.5px; }
+.msgr-res-empty { font-size: 12.5px; color: var(--text-secondary); }
+
+/* Должность рядом с ФИО в шапке чата. */
+.mp-position { font-size: 13px; font-weight: 400; color: rgba(255,255,255,0.75); }
+
+/* Аватар в шапке /messenger — полностью как .msgr-conv-avatar. */
+.page-messenger .bot-avatar {
+  width: 42px; height: 42px; border-radius: 999px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 14px; color: #fff; border: none;
+  background: linear-gradient(135deg, var(--tyuiu-blue-light) 0%, var(--tyuiu-info) 100%);
+  box-shadow: none;
+}
+.page-messenger .bot-avatar.general { background: linear-gradient(135deg, var(--tyuiu-warning, #f59e0b) 0%, #fb923c 100%); }
+
+/* Кнопка «назад» перенесена в шапку сайдбара. */
+.chat-sidebar-back {
+  flex: 0 0 auto; width: 32px; height: 32px; margin-right: 4px;
+  border: 1px solid var(--border-color, #e2e8f0); background: var(--bg-secondary, #f8fafc);
+  color: var(--tyuiu-blue, #1e40af); border-radius: 9px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; transition: background 0.15s, transform 0.12s;
+}
+.chat-sidebar-back:hover { background: var(--tyuiu-gray, #e2e8f0); transform: translateX(-2px); }
+.page-messenger .chat-sidebar-head { display: flex; align-items: center; gap: 4px; }
+/* Заголовок «Чаты» — по центру шапки сайдбара (компенсируем кнопку «назад» слева). */
+.page-messenger .chat-sidebar-title { flex: 1; justify-content: center; padding-right: 36px; }
+
+/* Переключатель сайдбара теперь в шапке чата (на месте кнопки «назад»). */
+.chat-header-toggle .tgl-expand { display: none; }
+.chat-layout.sidebar-collapsed .chat-header-toggle .tgl-collapse { display: none; }
+.chat-layout.sidebar-collapsed .chat-header-toggle .tgl-expand { display: inline; }
+
+/* Кнопка-переключатель режима ввода — тот же стиль, что скрепка. */
+.msgr-mode-btn {
+  flex: 0 0 auto; width: 40px; height: 40px; border-radius: 999px;
+  border: none; background: none; color: var(--tyuiu-gray-dark, #475569); cursor: pointer; font-size: 16px;
+  display: flex; align-items: center; justify-content: center; transition: background 0.15s, color 0.15s;
+}
+.msgr-mode-btn:hover { background: var(--bg-secondary, #f1f5f9); color: var(--tyuiu-blue, #1e40af); }
+/* В режиме ИИ подсвечен синим ТОЛЬКО значок (без заливки кнопки). */
+.msgr-mode-btn[data-mode="ai"] { color: var(--tyuiu-blue, #1e40af); }
+.msgr-mode-btn[data-mode="ai"] i { color: var(--tyuiu-blue, #1e40af); }
+
+/* Стрим ответа ИИ в диалоге. */
+.message.ai-streaming .msgr-ai-live { font-size: 13.5px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+.message.ai-streaming .bot-thinking { margin: 4px 0 0; }
+.message.ai-streaming .bot-thinking-status { color: var(--tyuiu-blue, #1e40af); }
+
+/* ── Модалка создания голосования ── */
+.msgr-poll-modal { width: 420px; }
+.msgr-poll-inp {
+  width: 100%; box-sizing: border-box; margin-bottom: 10px; padding: 9px 11px;
+  border: 1px solid var(--border-color, #e2e8f0); border-radius: 10px; font-size: 14px;
+  font-family: inherit; outline: none; resize: vertical;
+}
+.msgr-poll-inp:focus { border-color: var(--tyuiu-blue-light, #3b82f6); }
+.msgr-poll-opts-edit { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
+.msgr-poll-opt-edit { display: flex; gap: 6px; align-items: center; }
+.msgr-poll-opt-edit .msgr-poll-inp { margin-bottom: 0; }
+.msgr-poll-rm { flex: 0 0 auto; background: none; border: none; cursor: pointer; font-size: 20px; line-height: 1; color: var(--tyuiu-gray-medium, #94a3b8); }
+.msgr-poll-rm:hover { color: var(--tyuiu-error, #ef4444); }
+.msgr-poll-add { background: none; border: none; cursor: pointer; color: var(--tyuiu-blue, #1e40af); font-size: 13.5px; font-weight: 600; display: flex; align-items: center; gap: 7px; padding: 4px 0; margin-bottom: 12px; }
+.msgr-poll-settings { display: flex; flex-direction: column; gap: 9px; margin-bottom: 18px; }
+.msgr-poll-settings label { display: flex; align-items: center; gap: 9px; font-size: 13.5px; cursor: pointer; }
+.msgr-poll-settings input { width: 16px; height: 16px; cursor: pointer; }
+.msgr-poll-create { background: var(--tyuiu-blue-gradient) !important; }
+
+/* Ручки изменения размера мини-панели — по всем 4 углам. */
+.msgr-resize {
+  position: absolute;
+  width: 16px; height: 16px;
+  z-index: 6;
+}
+.msgr-resize[data-dir="nw"] { top: 0; left: 0; cursor: nwse-resize; }
+.msgr-resize[data-dir="ne"] { top: 0; right: 0; cursor: nesw-resize; }
+.msgr-resize[data-dir="sw"] { bottom: 0; left: 0; cursor: nesw-resize; }
+.msgr-resize[data-dir="se"] { bottom: 0; right: 0; cursor: nwse-resize; }
+/* Уголок-маркер только у верхнего-левого (исторический вид), остальные — невидимые зоны. */
+.msgr-resize[data-dir="nw"]::before {
+  content: "";
+  position: absolute; top: 5px; left: 5px;
+  width: 7px; height: 7px;
+  border-top: 2px solid rgba(255, 255, 255, 0.7);
+  border-left: 2px solid rgba(255, 255, 255, 0.7);
+  border-top-left-radius: 3px;
+}
+
+@media (max-width: 520px) {
+  .msgr-resize { display: none; }
+  .msgr-panel {
+    right: 0; bottom: 0; left: 0;
+    width: 100%; max-width: 100%;
+    height: 100%; max-height: 100%;
+    border-radius: 0;
+  }
+  .msgr-fab { right: 16px; bottom: 16px; }
+}
+
+/* ─────────── Кнопка «вниз» ─────────── */
+.msgr-thread { position: relative; }
+.msgr-compose { position: relative; }
+.msgr-scrolldown {
+  position: absolute;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: 1px solid var(--border-color, #e2e8f0);
+  background: var(--card-bg, #fff);
+  color: var(--tyuiu-gray-dark, #475569);
+  box-shadow: 0 4px 14px rgba(15,23,42,0.18);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  z-index: 40;
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.9);
+  transition: opacity 0.18s ease, transform 0.18s ease, background 0.15s;
+}
+.msgr-scrolldown[hidden] { display: flex; }   /* оставляем в потоке ради плавного исчезновения */
+.msgr-scrolldown:not([hidden]) { opacity: 1; transform: scale(1); pointer-events: auto; }
+/* Ховер — только на устройствах с мышью; на тач-экранах синий цвет не «залипает». */
+@media (hover: hover) {
+  .msgr-scrolldown:hover { background: var(--tyuiu-blue, #2563eb); color: #fff; border-color: transparent; }
+  .msgr-scrolldown:hover .msgr-sd-badge { box-shadow: 0 0 0 2px var(--tyuiu-blue, #2563eb); }
+}
+/* Бейдж «новые сообщения» на стрелке */
+.msgr-scrolldown .msgr-sd-badge {
+  position: absolute; top: -4px; right: -4px; min-width: 18px; height: 18px; padding: 0 5px;
+  border-radius: 9px; background: var(--tyuiu-blue, #2563eb); color: #fff;
+  font-size: 11px; font-weight: 700; line-height: 18px; text-align: center;
+  box-shadow: 0 0 0 2px var(--card-bg, #fff);
+}
+.msgr-scrolldown .msgr-sd-badge[hidden] { display: none; }
+
+/* Мини-панель: над полем ввода, у правого края. */
+.msgr-compose > .msgr-scrolldown { right: 14px; bottom: 100%; margin-bottom: 10px; }
+
+/* Полная страница: вне chat-box, в правом промежутке контейнера (см. img.png). */
+#mpScrollDown { right: -58px; bottom: 44px; width: 42px; height: 42px; }
+@media (max-width: 1330px) {
+  /* На узких экранах справа места нет — прижимаем к правому краю над полем ввода. */
+  #mpScrollDown { right: 14px; bottom: 92px; }
+}
+
+/* ─────────── Подгрузка старых сообщений (анимация партии) ─────────── */
+.msgr-load-more { display: flex; justify-content: center; align-items: center; padding: 10px 0 6px; min-height: 34px; animation: msgrFadeIn 0.2s ease; }
+.msgr-load-spin {
+  width: 22px; height: 22px; border-radius: 50%;
+  border: 2.5px solid var(--border-color, #e2e8f0);
+  border-top-color: var(--tyuiu-blue, #2563eb);
+  animation: msgrSpin 0.7s linear infinite;
+}
+@keyframes msgrSpin { to { transform: rotate(360deg); } }
+@keyframes msgrFadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+/* ─────────── Разделитель «Новые сообщения» ─────────── */
+.msgr-new-divider {
+  display: flex; align-items: center; gap: 10px;
+  margin: 12px 4px 8px; animation: msgrFadeIn 0.25s ease;
+}
+.msgr-new-divider::before, .msgr-new-divider::after {
+  content: ""; flex: 1; height: 1px; background: rgba(37, 99, 235, 0.30);
+}
+.msgr-new-divider span {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase;
+  color: var(--tyuiu-blue, #2563eb); white-space: nowrap;
+}
+:root[data-theme="dark"] .msgr-new-divider::before,
+:root[data-theme="dark"] .msgr-new-divider::after { background: rgba(96, 165, 250, 0.35); }
+:root[data-theme="dark"] .msgr-new-divider span { color: var(--tyuiu-blue-light, #60a5fa); }

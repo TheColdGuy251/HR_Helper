@@ -1,0 +1,1375 @@
+/* chat.css — стили страницы чата. Глобальные компоненты — в styles.css. */
+
+/* ===== КОНТЕЙНЕР ЧАТА ===== */
+.chat-box {
+  position: relative;   /* якорь для плавающего поля ввода-оверлея */
+  background-color: var(--bg-primary);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-xl);
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 10px);
+  min-height: 640px;
+  max-height: 1320px;
+  border: 1px solid var(--border-color);
+  overflow: hidden;
+}
+
+/* Меньше пустоты снизу от чата до конца body (на /chat и /messenger);
+   на мобильных — совсем без нижнего отступа. */
+.page-chat .container { padding-bottom: 5px; }
+@media (max-width: 768px) {
+  .page-chat .container { padding-bottom: 0; }
+}
+/* Место слева под «язычок», когда панель свёрнута и чат во всю ширину: язычок
+   выступает наружу влево, и без запаса его край обрезался бы у края экрана. */
+@media (min-width: 901px) {
+  .page-chat .container { padding-left: 24px; }
+}
+
+.chat-header {
+  background: var(--tyuiu-blue-gradient);
+  padding: var(--space-md) var(--space-lg);
+  border-bottom: 2px solid var(--tyuiu-blue-dark);
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+/* Кнопка «← Назад» в шапке чата */
+.chat-back-btn {
+  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+  border-radius: var(--radius-full);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-light);
+  font-size: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.15s, border-color 0.15s;
+}
+.chat-back-btn:hover {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.7);
+  transform: translateX(-2px);
+}
+
+/* Inline-поле названия диалога — теперь живёт прямо в .chat-header */
+.dialogue-title-row {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  margin-bottom: 2px;
+  max-width: 100%;
+}
+.dialogue-title-icon {
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 12px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.dialogue-title-row:hover .dialogue-title-icon,
+.dialogue-title-row:focus-within .dialogue-title-icon {
+  opacity: 1;
+}
+.dialogue-title-input {
+  flex: 0 1 auto;
+  width: auto;
+  min-width: 160px;
+  max-width: 460px;
+  padding: 2px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-light);
+  text-align: left;
+  outline: none;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+  text-overflow: ellipsis;
+}
+.dialogue-title-input::placeholder {
+  color: rgba(255, 255, 255, 0.6);
+  font-weight: 500;
+  font-style: italic;
+}
+.dialogue-title-input:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+.dialogue-title-input:focus {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.55);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.12);
+}
+.dialogue-title-status {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.7);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.dialogue-title-status.saved { color: #bbf7d0; }
+.dialogue-title-status.error { color: #fecaca; }
+.bot-avatar {
+  width: 40px;
+  height: 40px;
+  background: linear-gradient(135deg, var(--tyuiu-blue-light) 0%, var(--tyuiu-info) 100%);
+  border-radius: var(--radius-full);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  color: var(--text-light);
+  border: 2px solid var(--tyuiu-white);
+  box-shadow: var(--shadow-sm);
+  flex-shrink: 0;
+}
+.chat-header-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;   /* заголовок и статус — по левому краю, ближе к аватару */
+  justify-content: center;
+  gap: 0;
+  text-align: left;
+}
+.chat-header-text h2 {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-light);
+  margin: 0 0 2px;
+  text-align: left;
+  padding-left: 9px;   /* выравниваем с текстом title-input (border 1px + padding 8px) */
+}
+.chat-header-text p {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.85);
+  font-weight: 500;
+  margin: 0;
+  text-align: left;
+  padding-left: 9px;   /* «Онлайн» выравнивается с заголовком (учёт паддинга input) */
+}
+
+/* ===== СООБЩЕНИЯ ===== */
+.messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-xl);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  background-color: var(--bg-secondary);
+  scroll-behavior: smooth;
+}
+.message {
+  display: flex;
+  gap: var(--space-md);
+  animation: fadeIn 0.3s ease-in;
+  max-width: 85%;
+}
+.message.user { align-self: flex-end; flex-direction: row-reverse; }
+.message.bot { align-self: flex-start; }
+.message.assistant.unread { animation: pulseUnread 2s infinite; }
+
+.message-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-full);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  flex-shrink: 0;
+  border: 2px solid var(--tyuiu-white);
+}
+.message.bot .message-avatar {
+  background: linear-gradient(135deg, var(--tyuiu-blue-light) 0%, var(--tyuiu-info) 100%);
+  color: var(--text-light);
+}
+.message.user .message-avatar {
+  background: rgba(59, 130, 246, 0.15);
+  color: var(--tyuiu-blue-dark);
+}
+
+.message-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  max-width: 100%;
+}
+.message-content {
+  padding: var(--space-md) var(--space-lg);
+  border-radius: var(--radius-lg);
+  font-size: 15px;
+  line-height: 1.6;
+  word-break: break-word;
+  border: 1px solid;
+}
+.message.bot .message-content {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  border-color: var(--border-color);
+  border-top-left-radius: var(--radius-sm);
+}
+.message.user .message-content {
+  background-color: var(--tyuiu-blue);
+  color: var(--text-light);
+  border-color: var(--tyuiu-blue-dark);
+  border-top-right-radius: var(--radius-sm);
+}
+.message.assistant.unread .message-content {
+  border-color: var(--tyuiu-blue);
+  box-shadow: 0 0 0 1px rgba(30, 64, 175, 0.3);
+}
+
+/* ===== ИНДИКАТОР НАБОРА ===== */
+.typing-indicator {
+  display: flex;
+  gap: var(--space-xs);
+  padding: var(--space-md);
+  align-items: center;
+  background-color: var(--bg-primary);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-color);
+  width: fit-content;
+}
+.typing-dot {
+  width: 8px;
+  height: 8px;
+  background-color: var(--tyuiu-blue);
+  border-radius: var(--radius-full);
+  animation: typing 1.4s infinite;
+}
+.typing-dot:nth-child(2) { animation-delay: 0.2s; }
+.typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+/* ===== АНИМАЦИЯ «БОТ ДУМАЕТ» ===== */
+.bot-thinking {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  min-height: 28px;
+}
+.bot-thinking .typing-indicator {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+.bot-thinking-status {
+  font-size: 13px;
+  color: var(--tyuiu-blue-dark);
+  font-weight: 500;
+  animation: bot-thinking-pulse 1.4s ease-in-out infinite;
+}
+@keyframes bot-thinking-pulse {
+  0%, 100% { opacity: 0.6; }
+  50%      { opacity: 1; }
+}
+
+/* ===== ОБЛАСТЬ ВВОДА ===== */
+/* На страницах /chat и /messenger (.chat-box) поле ввода — плавающий прозрачный
+   оверлей: сама область без фона, лента сообщений идёт на всю высоту ПОД ней и
+   просвечивает сквозь пустые места. Кликабельны только «пилюля» и её соседи;
+   остальное пропускает прокрутку ленты за ней. Мини-виджет (.msgr-panel) не трогаем. */
+.input-area {
+  padding: var(--space-md) var(--space-xl) var(--space-md);
+  background-color: var(--bg-secondary);
+  border-top: none;
+  display: flex;
+  flex-direction: column;
+}
+.chat-box .input-area {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: transparent;
+  pointer-events: none;
+}
+.chat-box .input-area > * { pointer-events: auto; }
+/* Лента заполняет весь бокс; снизу — запас, чтобы последнее сообщение не пряталось
+   под «пилюлей», а при прокрутке сообщения проходили за ней и были видны. */
+.chat-box .messages { padding-bottom: 108px; }
+.attached-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  padding: 0 0 8px;
+}
+/* Мини-карточка прикреплённого к диалогу файла: цветной значок типа файла,
+   имя + размер в две строки, кнопка открепления справа. */
+.attached-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  background: linear-gradient(180deg, var(--bg-primary) 0%, var(--bg-secondary) 100%);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 6px 8px 6px 6px;
+  max-width: 260px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
+}
+.attached-file:hover {
+  border-color: rgba(30, 64, 175, 0.35);
+  box-shadow: 0 3px 10px rgba(30, 64, 175, 0.1);
+  transform: translateY(-1px);
+}
+.attached-file .att-ic {
+  flex: 0 0 auto;
+  width: 30px; height: 30px;
+  border-radius: 9px;
+  background: var(--tyuiu-blue-gradient);
+  color: #fff;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 14px;
+}
+.attached-file .att-info { min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+.attached-file .att-name {
+  font-size: 12.5px; font-weight: 600; color: var(--text-primary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 170px;
+}
+.attached-file .att-meta { font-size: 10.5px; color: var(--text-secondary); }
+.attached-file .att-remove {
+  flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 50%;
+  background: none;
+  border: 0;
+  color: var(--tyuiu-gray-medium);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  transition: background 0.15s, color 0.15s;
+  padding: 0;
+}
+.attached-file .att-remove:hover { background: rgba(239, 68, 68, 0.12); color: var(--tyuiu-error); }
+
+/* Единый скруглённый контейнер поля ввода (стиль ChatGPT): скрепка слева,
+   textarea без рамки в центре, круглая кнопка-стрелка справа. */
+.input-controls {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+  /* Кнопки прижаты к низу — поле растёт вверх, они остаются в углах. */
+  align-items: flex-end;
+  background-color: var(--bg-primary);
+  border: 2px solid var(--border-color);
+  border-radius: 24px;
+  padding: 5px 6px 5px 8px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.input-controls:focus-within {
+  border-color: var(--tyuiu-blue);
+  box-shadow: 0 0 0 3px rgba(30, 64, 175, 0.1);
+}
+/* Скрепка — прозрачная иконка внутри поля */
+.attach-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  color: var(--tyuiu-gray-dark);
+  cursor: pointer;
+  flex: 0 0 auto;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.attach-button:hover {
+  background-color: var(--bg-secondary);
+  color: var(--tyuiu-blue);
+}
+.attach-button:has(input:disabled) { opacity: 0.5; cursor: not-allowed; }
+
+/* Поле ввода — авто-растущий textarea без собственной рамки/фона (рамку рисует
+   контейнер .input-controls). Текст переносится и виден целиком (без горизонтальной
+   прокрутки). Высота — до 5 строк (задаётся из JS), дальше — вертикальный скролл.
+   overflow по умолчанию скрыт, чтобы полоса не мелькала при одной строке. */
+.input-area .msg-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 8px 4px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 15px;
+  font-family: inherit;
+  line-height: 1.4;
+  outline: none;
+  resize: none;
+  overflow-y: hidden;
+  white-space: pre-wrap;
+  word-break: break-word;
+  box-sizing: border-box;
+}
+.input-area .msg-input:focus { border: none; box-shadow: none; outline: none; }
+
+/* Кнопка отправки — круглая иконка-стрелка внутри поля */
+.send-button {
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  padding: 0;
+  background: var(--tyuiu-blue-gradient);
+  color: var(--text-light);
+  border: none;
+  border-radius: 50%;
+  font-size: 15px;
+  cursor: pointer;
+  transition: background 0.2s ease, opacity 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+.send-button:hover {
+  background: linear-gradient(135deg, var(--tyuiu-blue-dark) 0%, var(--tyuiu-blue) 100%);
+}
+.send-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background: var(--bg-tertiary);
+  color: var(--tyuiu-gray-medium);
+}
+.send-button.abort {
+  background: linear-gradient(135deg, var(--tyuiu-error) 0%, #b91c1c 100%);
+}
+
+.upload-status {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--tyuiu-blue-dark);
+}
+.upload-status.success { background: #ecfdf5; border-color: #6ee7b7; color: #047857; }
+.upload-status.error   { background: #fef2f2; border-color: #fca5a5; color: #b91c1c; }
+.upload-progress {
+  height: 3px;
+  background: rgba(30, 64, 175, 0.15);
+  border-radius: 2px;
+  margin-top: 6px;
+  overflow: hidden;
+}
+.upload-progress-bar {
+  height: 100%;
+  width: 0;
+  background: var(--tyuiu-blue);
+  transition: width 0.4s ease;
+}
+
+/* ===== ПЛАВАЮЩИЙ ИНДИКАТОР НЕПРОЧИТАННЫХ ===== */
+.floating-unread-indicator {
+  position: fixed;
+  bottom: 100px;
+  right: var(--space-xl);
+  background: var(--tyuiu-blue-gradient);
+  color: var(--text-light);
+  padding: var(--space-md) var(--space-lg);
+  border-radius: var(--radius-full);
+  box-shadow: var(--shadow-xl);
+  cursor: pointer;
+  display: none;
+  align-items: center;
+  gap: var(--space-sm);
+  font-weight: 600;
+  z-index: 999;
+  transition: all 0.2s ease;
+  animation: slideUp 0.3s ease-out;
+}
+.floating-unread-indicator.visible { display: flex; }
+/* Если внутри пусто (#floatingUnreadCount = '') — не показываем число */
+.floating-unread-indicator #floatingUnreadCount:empty { display: none; }
+.floating-unread-indicator:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-blue);
+}
+
+/* ===== АВТОФОРМАТИРОВАНИЕ MARKDOWN ВНУТРИ СООБЩЕНИЯ ===== */
+.message-content p { margin: 0 0 12px 0; }
+.message-content p:last-child { margin-bottom: 0; }
+
+.message-content h1,
+.message-content h2,
+.message-content h3,
+.message-content h4 {
+  margin: 18px 0 8px 0;
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--tyuiu-blue-dark);
+}
+.message-content h1:first-child,
+.message-content h2:first-child,
+.message-content h3:first-child { margin-top: 0; }
+.message-content h1 { font-size: 20px; }
+.message-content h2 { font-size: 17px; }
+.message-content h3 { font-size: 15px; color: var(--text-primary); }
+.message-content h4 { font-size: 14px; color: var(--text-primary); }
+
+.message-content ul,
+.message-content ol { margin: 4px 0 12px 0; padding-left: 22px; }
+.message-content li { margin: 4px 0; padding-left: 4px; }
+.message-content ul li::marker { color: var(--tyuiu-blue); }
+.message-content ol li::marker { color: var(--tyuiu-blue); font-weight: 600; }
+
+.message-content blockquote {
+  margin: 12px 0;
+  padding: 10px 14px;
+  background: rgba(30, 64, 175, 0.06);
+  border-left: 3px solid var(--tyuiu-blue);
+  border-radius: 6px;
+}
+.message.user .message-content blockquote {
+  background: rgba(255, 255, 255, 0.18);
+  border-left-color: rgba(255, 255, 255, 0.6);
+  color: var(--text-light);
+}
+
+.message-content hr {
+  border: 0;
+  height: 1px;
+  background: var(--border-color);
+  margin: 14px 0;
+}
+
+.message-content code.md-inline-code,
+.message-content :not(pre) > code {
+  background: rgba(30, 64, 175, 0.08);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-family: 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 0.9em;
+  color: var(--tyuiu-blue-dark);
+}
+.message-content pre {
+  background: var(--tyuiu-black);
+  color: #e2e8f0;
+  border-radius: 8px;
+  padding: 12px 14px;
+  overflow-x: auto;
+  margin: 10px 0;
+  font-size: 13px;
+}
+.message-content pre code { background: transparent; color: inherit; padding: 0; }
+
+.message-content a {
+  color: var(--tyuiu-blue);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.message.user .message-content a {
+  color: var(--text-light);
+  text-decoration-color: rgba(255, 255, 255, 0.7);
+}
+
+/* Сноска-источник [N] */
+.message-content sup.md-src-ref,
+.sources-modal-body sup.md-src-ref {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: 0.35em;          /* лёгкий подъём вместо super — ровно по строке */
+  min-width: 16px;
+  height: 16px;
+  box-sizing: border-box;
+  padding: 0 5px;
+  font-size: 10px;
+  line-height: 1;
+  font-weight: 700;
+  background: var(--tyuiu-blue);
+  color: var(--text-light);
+  border-radius: 999px;
+  margin: 0 2px;
+  cursor: default;
+}
+.message.user .message-content sup.md-src-ref {
+  background: rgba(255, 255, 255, 0.85);
+  color: var(--tyuiu-blue-dark);
+}
+
+/* Блок «Источники» */
+.message-content .md-sources {
+  margin-top: 16px;
+  padding: 12px 14px;
+  background: rgba(30, 64, 175, 0.04);
+  border: 1px solid rgba(30, 64, 175, 0.12);
+  border-radius: 8px;
+}
+.message-content .md-sources-title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--tyuiu-blue-dark);
+  margin-bottom: 6px;
+}
+.message-content .md-sources ul { margin: 0; padding-left: 18px; font-size: 13px; }
+.message-content .md-sources li { margin: 2px 0; color: var(--text-primary); }
+
+/* Ссылки-статьи: компактный ряд бейдж+название (показываем все) */
+.message-content .md-sources .md-refs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+.message-content .md-sources .md-ref {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-primary);
+}
+
+/* Документы-источники: карточки .chat-attachment, излишек прячем (виден в модалке) */
+.message-content .md-sources .md-docs { display: flex; flex-direction: column; }
+.message-content .md-sources .md-docs.is-collapsible > .chat-attachment:nth-of-type(n+4) { display: none; }
+.sources-modal-body .md-docs-modal { display: flex; flex-direction: column; }
+.sources-modal-body .md-docs-modal .chat-attachment { margin-top: 10px; }
+.sources-modal-body .md-docs-modal .chat-attachment:first-child { margin-top: 0; }
+
+/* Свёрнутый список: видно первые 3 источника, остальное — в модалке */
+.message-content .md-sources.is-collapsible ul > li:nth-child(n+4) { display: none; }
+.message-content .md-sources-more {
+  margin-top: 8px;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--tyuiu-blue-dark);
+  background: rgba(30, 64, 175, 0.08);
+  border: 1px solid rgba(30, 64, 175, 0.18);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.message-content .md-sources-more:hover { background: rgba(30, 64, 175, 0.16); }
+
+/* ===== Модалка «все источники» ===== */
+.sources-modal-overlay {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.45);
+  z-index: 1300;              /* выше миничата (msgr-panel: 1200) */
+  padding: 20px;
+}
+.sources-modal-overlay.is-open { display: flex; }
+.sources-modal {
+  background: #fff;
+  width: min(640px, 100%);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+}
+.sources-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid rgba(30, 64, 175, 0.12);
+}
+.sources-modal-title {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 13px;
+  color: var(--tyuiu-blue-dark);
+}
+.sources-modal-close {
+  border: none;
+  background: none;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--text-secondary, #64748b);
+}
+.sources-modal-close:hover { color: var(--text-primary, #0f172a); }
+.sources-modal-body { padding: 14px 18px; overflow-y: auto; }
+.sources-modal-body ul.md-sources-fulllist { margin: 0; padding-left: 18px; font-size: 13px; }
+.sources-modal-body ul.md-sources-fulllist li { margin: 6px 0; color: var(--text-primary); }
+.message.user .message-content .md-sources {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+.message.user .message-content .md-sources-title,
+.message.user .message-content .md-sources li { color: var(--text-light); }
+
+/* ===== АДАПТИВ ===== */
+@media (max-width: 768px) {
+  .chat-box {
+    height: calc(100vh - 110px);
+    min-height: 520px;
+    border-radius: var(--radius-lg);
+  }
+  .messages { padding: var(--space-lg); }
+  .message { max-width: 90%; }
+  .input-area { padding: var(--space-md); }
+  /* Раскладку поля ввода (pill: скрепка • textarea • стрелка) задаёт mobile.css. */
+  .dialogue-title-input { font-size: 16px; }
+  .chat-back-btn { width: 34px; height: 34px; }
+  /* Плашка достоверности ответа («Не подкреплено»/«Частично») не помещается в один
+     ряд с кнопками и временем — переносим её на отдельную строку под футером. */
+  .message-footer .chat-factcheck { order: 10; flex: 0 0 100%; margin-top: 4px; }
+}
+
+/* ===== Выделение сообщений (логика /messenger) ===== */
+/* Базовые стили .msgr-select-check / .message.is-selected приходят из messenger.css;
+   здесь только триггер для контейнера ленты /chat (класс .messages, не .msgr-messages). */
+.messages.selecting { user-select: none; }
+.messages.selecting .msgr-select-check { display: flex; }
+.messages.selecting .message { cursor: pointer; }
+/* Галочку у своих сообщений (справа, ряд перевёрнут) прижимаем к пузырю. */
+.messages.selecting .message.user { align-items: center; }
+
+/* ===== ВЛОЖЕНИЕ-ДОКУМЕНТ В ОТВЕТЕ БОТА ===== */
+.chat-attachment {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+  padding: 12px 14px;
+  background: var(--bg-primary);
+  border: 1px solid rgba(30, 64, 175, 0.18);
+  border-left: 4px solid var(--tyuiu-blue);
+  border-radius: var(--radius-lg);
+  text-decoration: none;
+  color: var(--text-primary);
+  transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
+  max-width: 100%;
+}
+.chat-attachment:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+  border-color: var(--tyuiu-blue);
+}
+/* Прикреплённый в чате документ (источник-вложение) — отличаем от документов БЗ */
+.chat-attachment-pinned {
+  border-left-color: var(--tyuiu-success);
+}
+.chat-attachment-pinned:hover {
+  transform: none;
+  border-color: rgba(30, 64, 175, 0.18);
+  border-left-color: var(--tyuiu-success);
+  box-shadow: none;
+}
+.chat-attachment-pinned .chat-attachment-icon {
+  background: var(--tyuiu-success);
+}
+
+/* Чипы файлов, прикреплённых пользователем к конкретному сообщению (#8) */
+.msg-attachments {
+  display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px;
+}
+.msg-attach-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px; font-size: 12px; font-weight: 600;
+  background: var(--bg-secondary); color: var(--tyuiu-blue-dark);
+  border: 1px solid var(--border-color); border-radius: var(--radius-full);
+  max-width: 240px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.message.user .msg-attachments { justify-content: flex-end; }
+.chat-attachment-icon {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  background: var(--tyuiu-blue-gradient);
+  color: var(--text-light);
+  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.chat-attachment-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+  text-decoration: none;
+  color: inherit;
+  border-radius: var(--radius-md);
+  padding: 2px;
+  margin: -2px;
+  transition: background 0.15s;
+}
+.chat-attachment-main:hover { background: rgba(30, 64, 175, 0.06); }
+.chat-attachment-body {
+  flex: 1;
+  min-width: 0;
+}
+.chat-attachment-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--tyuiu-blue-dark);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chat-attachment-name {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chat-attachment-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: var(--tyuiu-blue-gradient);
+  color: var(--text-light);
+  font-size: 15px;
+  font-weight: 600;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  flex-shrink: 0;
+  text-decoration: none;
+  transition: filter 0.15s, transform 0.15s;
+}
+a.chat-attachment-action:hover {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+
+/* ===== Self-check badge (надёжность ответа) ===== */
+.chat-factcheck {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 999px;
+  border: 1px solid;
+  white-space: nowrap;
+}
+.chat-factcheck i { font-size: 11px; }
+.chat-factcheck-warn {
+  background: rgba(239, 68, 68, 0.08);
+  border-color: rgba(239, 68, 68, 0.35);
+  color: #b91c1c;
+}
+.chat-factcheck-partial {
+  background: rgba(245, 158, 11, 0.08);
+  border-color: rgba(245, 158, 11, 0.4);
+  color: #92400e;
+}
+
+/* ===== Feedback ✓/✗ под ответом бота ===== */
+.chat-feedback {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 0 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.chat-feedback-label { opacity: 0.7; }
+.chat-feedback-btn {
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--tyuiu-gray-medium);
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  transition: all 0.15s;
+}
+.chat-feedback-btn:hover {
+  border-color: var(--tyuiu-blue);
+  color: var(--tyuiu-blue);
+}
+.chat-feedback-btn.is-active {
+  background: var(--tyuiu-blue);
+  color: var(--text-light);
+  border-color: var(--tyuiu-blue);
+}
+.chat-feedback-btn.is-active.is-negative {
+  background: var(--tyuiu-error);
+  border-color: var(--tyuiu-error);
+}
+
+/* ===== Мета сообщения (пользователь): копирование + время ===== */
+.message-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: -2px;       /* ближе к пузырю (поверх gap враппера) */
+  padding: 0 2px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+/* У пользователя (сообщение справа) — мета к правому краю */
+.message.user .message-meta { justify-content: flex-end; }
+.msg-time { opacity: 0.75; white-space: nowrap; font-size: 11px; color: var(--text-secondary); }
+
+/* ===== Футер ответа ассистента: [‹ i/n ›] копир·лайк·дизлайк·повтор … время ===== */
+.message-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: -2px;       /* кнопки ближе к пузырю */
+  flex-wrap: wrap;
+}
+.message-footer .msg-time { margin-left: auto; }  /* время — к правому краю */
+.msg-actions { display: flex; align-items: center; gap: 4px; }
+
+/* Футер пользователя — кнопки у ЛЕВОГО края, ВРЕМЯ прижато к правому краю пузыря. */
+.message-footer-user { justify-content: flex-start; }
+.message-footer-user .msg-time { margin-left: auto; }
+
+/* Во время правки пузырь широкий (редактор в ~0.7–0.94 ширины ленты) — снимаем лимит. */
+.message.editing { max-width: 98%; }
+.message.user.editing { align-self: flex-end; }
+
+/* Редактор сообщения — в стиле ChatGPT: мягкая заливка, крупное скругление,
+   без жёсткой рамки; поле ввода прозрачное внутри; кнопки-пилюли снизу справа. */
+.msg-edit-box {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 100%;
+  padding: 14px 16px;
+  border: none;
+  border-radius: 20px;
+  background: var(--bg-tertiary, #eef1f6);
+}
+.msg-edit-input {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 40px;
+  resize: none;
+  overflow-y: hidden;
+  padding: 2px 2px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 15px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  outline: none;
+}
+.msg-edit-input:focus { border: none; box-shadow: none; outline: none; }
+.msg-edit-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.msg-edit-actions button {
+  padding: 8px 16px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  transition: background 0.15s, color 0.15s, filter 0.15s;
+}
+.msg-edit-cancel { background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color); }
+.msg-edit-cancel:hover { background: var(--bg-secondary); }
+.msg-edit-save { background: var(--tyuiu-blue-gradient); color: var(--text-light); }
+.msg-edit-save:hover { filter: brightness(1.05); }
+
+/* Единый размер ВСЕХ кнопок футера (копирование/лайк/дизлайк/повтор) и их иконок */
+.msg-action-btn {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  color: var(--tyuiu-gray-medium);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  flex: 0 0 auto;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.msg-action-btn > i { font-size: 13px; }
+.msg-action-btn:hover {
+  border-color: var(--tyuiu-blue);
+  color: var(--tyuiu-blue);
+  background: rgba(30, 64, 175, 0.05);
+}
+.msg-action-btn.copied { border-color: var(--tyuiu-success); color: var(--tyuiu-success); }
+/* Активная реакция (лайк/дизлайк) */
+.chat-feedback-btn.is-active { background: var(--tyuiu-blue); color: #fff; border-color: var(--tyuiu-blue); }
+.chat-feedback-btn.is-active.is-negative { background: var(--tyuiu-error); border-color: var(--tyuiu-error); color: #fff; }
+
+/* Навигация по вариантам ответа ‹ i/n › */
+.msg-variant-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.msg-variant-btn {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--tyuiu-gray-medium);
+  cursor: pointer;
+  font-size: 11px;
+  transition: background 0.15s, color 0.15s;
+}
+.msg-variant-btn:hover:not(:disabled) { color: var(--tyuiu-blue); background: rgba(30, 64, 175, 0.06); }
+.msg-variant-btn:disabled { opacity: 0.4; cursor: default; }
+.msg-variant-count { min-width: 30px; text-align: center; font-variant-numeric: tabular-nums; }
+
+/* ===== Markdown task list (- [ ] / - [x]) ===== */
+.message-content .md-tasklist {
+  list-style: none;
+  padding-left: 4px;
+  margin: 8px 0 12px;
+}
+.message-content .md-task {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 4px 0;
+}
+.message-content .md-task-box {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid var(--tyuiu-blue);
+  border-radius: 4px;
+  background: var(--bg-primary);
+  margin-top: 3px;
+  display: inline-block;
+  position: relative;
+}
+.message-content .md-task-box.is-checked {
+  background: var(--tyuiu-blue);
+}
+.message-content .md-task-box.is-checked::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 0;
+  width: 5px;
+  height: 10px;
+  border: solid var(--text-light);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+.message.user .message-content .md-task-box {
+  border-color: rgba(255, 255, 255, 0.85);
+  background: transparent;
+}
+.message.user .message-content .md-task-box.is-checked {
+  background: rgba(255, 255, 255, 0.92);
+}
+.message.user .message-content .md-task-box.is-checked::after {
+  border-color: var(--tyuiu-blue-dark);
+}
+
+/* ===== Боковая панель чатов (/chat) ===== */
+/* Увеличенный зазор между панелью и чатом — чтобы «язычок» помещался в него
+   целиком и панель его не перекрывала (см. .chat-sidebar-toggle). */
+.chat-layout { display: flex; gap: 28px; align-items: stretch; position: relative; }
+.chat-layout .chat-box { flex: 1 1 auto; min-width: 0; position: relative; }
+
+.chat-sidebar {
+  flex: 0 0 280px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-xl);
+  overflow: hidden;
+  height: calc(100vh - 10px);
+  min-height: 640px;
+  max-height: 1320px;
+  transition: flex-basis 0.28s ease, opacity 0.22s ease, border-width 0.28s ease;
+}
+
+/* Свёрнутое состояние — панель «уезжает» к чату, чат расширяется */
+.chat-layout.sidebar-collapsed { gap: 0; }
+.chat-layout.sidebar-collapsed .chat-sidebar {
+  flex-basis: 0;
+  opacity: 0;
+  pointer-events: none;
+  border-width: 0;
+}
+.chat-sidebar-head-actions { display: flex; align-items: center; gap: 6px; }
+
+/* ЕДИНЫЙ переключатель — «язычок» в зазоре между панелью и чатом, у ВНЕШНЕГО левого
+   края chat-box (сам chat-box с overflow:hidden обрезал бы вкладку, поэтому язычок
+   вынесен на уровень .chat-layout). Позиция считается от левого края chat-box:
+   ширина панели (280px) + gap (16px). Меняется только иконка (⟪ скрыть / ⟫ показать). */
+.chat-sidebar-toggle {
+  position: absolute;
+  top: 50%; left: calc(280px + 28px); transform: translate(-100%, -50%);
+  z-index: 7;
+  width: 22px; height: 54px;
+  border: 1px solid var(--border-color); border-right: none;
+  background: var(--bg-primary); color: var(--tyuiu-blue);
+  border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+  cursor: pointer; box-shadow: -2px 0 6px rgba(15, 23, 42, 0.06);
+  display: flex; align-items: center; justify-content: center;
+  transition: left 0.28s ease;
+}
+/* Панель свёрнута → chat-box во всю ширину; язычок остаётся СНАРУЖИ, у левого края
+   чата (выступает влево). Внутрь chat-box не заходит ни в одном состоянии. */
+.chat-layout.sidebar-collapsed .chat-sidebar-toggle { left: 0; }
+.chat-sidebar-toggle:hover { background: var(--bg-secondary); }
+.chat-sidebar-toggle .tgl-expand { display: none; }
+.chat-layout.sidebar-collapsed .chat-sidebar-toggle .tgl-collapse { display: none; }
+.chat-layout.sidebar-collapsed .chat-sidebar-toggle .tgl-expand { display: inline; }
+.chat-sidebar-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 16px; border-bottom: 1px solid var(--border-color);
+}
+.chat-sidebar-title { font-weight: 700; color: var(--tyuiu-blue-dark); display: flex; align-items: center; gap: 8px; font-size: 15px; }
+.chat-sidebar-new {
+  width: 30px; height: 30px; border-radius: 50%; border: none;
+  background: var(--tyuiu-blue); color: #fff; cursor: pointer; flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.chat-sidebar-new:hover { background: var(--tyuiu-blue-dark); }
+.chat-sidebar-search {
+  display: flex; align-items: center; gap: 8px; margin: 10px 12px 0;
+  padding: 6px 10px; border: 1px solid var(--border-color);
+  border-radius: var(--radius-full); color: var(--tyuiu-gray-dark);
+}
+.chat-sidebar-search input { border: none; outline: none; background: transparent; width: 100%; font-size: 13px; color: var(--text-primary); }
+.chat-sidebar-filters { display: flex; gap: 4px; padding: 10px 12px; }
+.sb-filter-btn {
+  flex: 1; padding: 5px 4px; font-size: 12px; border: none; cursor: pointer;
+  background: var(--bg-secondary); color: var(--tyuiu-gray-dark); border-radius: var(--radius-full);
+}
+.sb-filter-btn.active { background: var(--tyuiu-blue); color: #fff; }
+.chat-sidebar-list { flex: 1; overflow-y: auto; padding: 6px; }
+.chat-sidebar-item {
+  display: flex; align-items: center; gap: 8px; padding: 9px 10px;
+  border-radius: var(--radius-lg); text-decoration: none; color: var(--text-primary); font-size: 13px;
+}
+.chat-sidebar-item:hover { background: var(--bg-secondary); }
+.chat-sidebar-item.is-current { background: rgba(30, 64, 175, 0.10); font-weight: 600; }
+/* Точка — только при непрочитанном ответе (синяя) */
+.csi-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; background: var(--tyuiu-blue-light); }
+.csi-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1 1 auto; min-width: 0; }
+.chat-sidebar-item.has-unread .csi-title { font-weight: 600; }
+.chat-sidebar-empty { padding: 16px; text-align: center; color: var(--tyuiu-gray-dark); font-size: 13px; }
+.chat-sidebar-more {
+  display: block; width: calc(100% - 8px); margin: 6px 4px 4px;
+  padding: 9px 10px; border: 1px dashed var(--border-color);
+  background: var(--bg-secondary); color: var(--tyuiu-blue);
+  border-radius: var(--radius-lg); cursor: pointer;
+  font-size: 13px; font-weight: 600; transition: all 0.15s ease;
+}
+.chat-sidebar-more:hover { background: rgba(30, 64, 175, 0.08); border-color: var(--tyuiu-blue-light); }
+
+@media (max-width: 900px) {
+  .chat-sidebar { display: none; }
+}
+
+/* Оверлей при перетаскивании файлов на область чата (drag-and-drop). */
+.chat-drop-active::after {
+  content: "Отпустите, чтобы прикрепить файл";
+  position: absolute; inset: 10px; z-index: 60;
+  border: 2px dashed var(--tyuiu-blue-light, #3b82f6); border-radius: 16px;
+  background: rgba(59,130,246,0.1); color: var(--tyuiu-blue, #1e40af);
+  display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 16px;
+  pointer-events: none;
+}
+
+/* ===== Пересланные из мессенджера сообщения (диалог с ассистентом) ===== */
+.chat-fwd-block { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
+.chat-fwd-item {
+  border-left: 3px solid var(--tyuiu-blue-light, #3b82f6);
+  background: rgba(59, 130, 246, 0.08);
+  border-radius: 8px;
+  padding: 8px 10px;
+  max-width: 100%;
+}
+.chat-fwd-chat { font-size: 12px; color: var(--text-secondary, #64748b); }
+.chat-fwd-text { margin-top: 4px; white-space: pre-wrap; word-break: break-word; }
+.chat-fwd-imgs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.chat-fwd-imgs img { max-width: 220px; max-height: 260px; border-radius: 8px; display: block; }
+.chat-fwd-hint {
+  margin-top: 8px; font-size: 12.5px; color: var(--text-secondary, #64748b);
+  display: flex; align-items: center; gap: 6px;
+}
+.message.chat-fwd-pending .message-content { border: 1px dashed rgba(30, 64, 175, 0.35); }
+
+/* Пересланный блок внутри СИНЕГО пузыря пользователя (/chat): тёмно-синие цвета
+   мессенджера сливаются с фоном — переводим подпись и текст в светлую гамму. */
+.message.user .chat-fwd-item {
+  border-left-color: rgba(255, 255, 255, 0.75);
+  background: rgba(255, 255, 255, 0.14);
+}
+.message.user .chat-fwd-item .msgr-fwd-from-label { color: #bfdbfe; }
+.message.user .chat-fwd-item .msgr-fwd-from-name { color: #ffffff; }
+.message.user .chat-fwd-item .msgr-fwd-from-ava {
+  background: rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+}
+.message.user .chat-fwd-item .chat-fwd-chat { color: rgba(255, 255, 255, 0.75); }
+.message.user .chat-fwd-item .chat-fwd-text { color: #f8fafc; }
+.message.user .chat-fwd-hint { color: rgba(255, 255, 255, 0.8); }
+
+/* ===== А2/А3: уточняющий вопрос FAQ + пометка-дисклеймер с контактом ===== */
+.chat-clarify-opts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.chat-clarify-opt {
+  padding: 7px 14px;
+  border: 1px solid var(--tyuiu-blue, #1E40AF);
+  border-radius: 999px;
+  background: var(--bg-primary, #fff);
+  color: var(--tyuiu-blue, #1E40AF);
+  font-size: 0.88rem;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.1s ease;
+}
+.chat-clarify-opt:hover:not(:disabled) {
+  background: var(--tyuiu-blue, #1E40AF);
+  color: #fff;
+  transform: translateY(-1px);
+}
+.chat-clarify-opt:disabled { opacity: 0.5; cursor: default; }
+
+.chat-answer-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 8px 12px;
+  border-left: 3px solid var(--border-color, #d7dce3);
+  border-radius: 6px;
+  background: var(--bg-tertiary, #f2f4f7);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--text-secondary, #5b6472);
+  max-width: 640px;
+}
+.chat-answer-note > i {
+  margin-top: 2px;
+  opacity: 0.6;
+}
+.chat-answer-note .chat-note-contact {
+  display: block;
+  margin-top: 4px;
+  font-weight: 600;
+  color: var(--text-primary, #23272f);
+}
+.chat-answer-note .chat-note-contact i { margin-right: 4px; opacity: 0.7; }
+
+/* А2: связанные бланки/документы под ответом (карточки .chat-attachment) */
+.chat-related-files { margin-top: 12px; max-width: 640px; }
+.chat-related-title {
+  font-size: 12.5px; font-weight: 700; color: var(--text-secondary, #5b6472);
+  display: flex; align-items: center; gap: 6px; margin-bottom: 4px;
+}
+.chat-related-files .chat-attachment { margin-top: 6px; }
+
+/* ===== Быстрый набор частых вопросов (FAQ) над полем ввода ===== */
+.faq-quick { margin: 0 0 6px; }
+.faq-quick-toggle {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 6px 14px; border-radius: 999px;
+  border: 1px solid rgba(30, 64, 175, 0.22);
+  background: linear-gradient(135deg, rgba(30, 64, 175, 0.08) 0%, rgba(59, 130, 246, 0.08) 100%);
+  color: var(--tyuiu-blue-dark, #1E3A8A);
+  font-size: 0.82rem; font-weight: 600; cursor: pointer;
+  box-shadow: 0 1px 2px rgba(30, 64, 175, 0.06);
+  transition: background .15s, border-color .15s, box-shadow .15s, transform .15s;
+}
+.faq-quick-toggle:hover {
+  border-color: var(--tyuiu-blue, #1E40AF);
+  box-shadow: 0 3px 10px rgba(30, 64, 175, 0.12);
+  transform: translateY(-1px);
+}
+.faq-quick-toggle > .fa-bolt { color: var(--tyuiu-blue, #1E40AF); }
+.faq-quick-toggle .faq-chevron { font-size: 0.7rem; opacity: 0.7; transition: transform .15s; }
+.faq-quick-toggle.open .faq-chevron { transform: rotate(180deg); }
+/* Панель — карточка с мягкой заливкой и тонкой рамкой */
+.faq-quick-panel {
+  margin-top: 8px;
+  padding: 12px;
+  max-height: 240px; overflow-y: auto;
+  background: var(--bg-secondary, #f8fafc);
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 14px;
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.03);
+}
+.faq-quick-path {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  margin-bottom: 10px; padding-bottom: 8px;
+  border-bottom: 1px dashed var(--border-color, #e2e8f0);
+}
+.faq-quick-path:empty { display: none; }
+.faq-path-text {
+  font-size: 0.76rem; font-weight: 600; color: var(--tyuiu-blue-dark, #1E3A8A);
+  background: #eff6ff; border: 1px solid #dbeafe;
+  padding: 2px 9px; border-radius: 999px;
+}
+.faq-quick-chips { display: flex; flex-wrap: wrap; gap: 7px; }
+.faq-chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 7px 13px; border-radius: 12px;
+  border: 1px solid var(--border-color, #d7dce3);
+  background: var(--bg-primary, #fff);
+  color: var(--text-primary, #23272f);
+  font-size: 0.82rem; cursor: pointer; text-align: left;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  transition: border-color .15s, background .15s, box-shadow .15s, transform .15s;
+}
+.faq-chip:hover {
+  border-color: var(--tyuiu-blue, #1E40AF); background: #eff6ff;
+  box-shadow: 0 3px 8px rgba(30, 64, 175, 0.12); transform: translateY(-1px);
+}
+.faq-chip-cat {
+  font-weight: 600; border-color: #bfdbfe;
+  background: linear-gradient(135deg, #eff6ff 0%, #e0edff 100%);
+  color: var(--tyuiu-blue-dark, #1E3A8A);
+}
+.faq-chip-cat::before { content: "\f0da"; font: 900 0.7rem 'Font Awesome 6 Free'; opacity: 0.55; }
+.faq-chip-branch::after { content: ""; }
+.faq-chip-back {
+  border: 1px solid transparent; background: none;
+  color: var(--tyuiu-blue, #1E40AF); font-weight: 600; box-shadow: none;
+}
+.faq-chip-back:hover { background: rgba(30, 64, 175, 0.06); box-shadow: none; }
+.faq-quick-loading { font-size: 0.8rem; color: var(--text-secondary, #64748b); }

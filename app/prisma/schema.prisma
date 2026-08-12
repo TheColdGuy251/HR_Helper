@@ -1,0 +1,533 @@
+// Схема БД HR-помощника, полученная интроспекцией (`npx prisma db pull`)
+// боевой базы PostgreSQL. Таблицы создаются SQLAlchemy-моделями бэкенда
+// (backend/data/*.py) — здесь их структуру менять НЕЛЬЗЯ, пока часть
+// эндпоинтов ещё обслуживает FastAPI.
+//
+// DATABASE_URL в app/.env и backend/.env должны указывать на одну базу,
+// иначе Next.js и FastAPI разъедутся по данным.
+//
+// Имена моделей и полей — snake_case, как в БД: переименовывать через @map
+// не стали, чтобы схема оставалась воспроизводимой после каждого db pull.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model chat_feedback {
+  id            Int           @id @default(autoincrement())
+  message_id    Int
+  user_id       Int?
+  rating        Int
+  comment       String?
+  created_at    DateTime      @default(now()) @db.Timestamp(6)
+  chat_messages chat_messages @relation(fields: [message_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users         users?        @relation(fields: [user_id], references: [id], onUpdate: NoAction)
+
+  @@unique([message_id, user_id], map: "uq_chat_feedback_per_user")
+  @@index([message_id], map: "ix_chat_feedback_message_id")
+}
+
+model chat_messages {
+  id                     Int                 @id @default(autoincrement())
+  session_id             String              @db.VarChar(32)
+  role                   String              @db.VarChar(16)
+  content                String
+  is_read                Boolean
+  is_finished            Boolean
+  is_cancelled           Boolean
+  sources                Json?               @db.Json
+  subqueries             Json?               @db.Json
+  fact_check             Json?               @db.Json
+  attachment_document_id Int?
+  meta                   Json?               @db.Json
+  forwarded_meta         Json?               @db.Json
+  last_seq               Int
+  created_at             DateTime            @default(now()) @db.Timestamp(6)
+  finished_at            DateTime?           @db.Timestamp(6)
+  variant_group          Int?
+  variant_active         Boolean
+  reply_to               Int?
+  branch_of              Int?
+  chat_feedback          chat_feedback[]
+  chat_sessions          chat_sessions       @relation(fields: [session_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  session_documents      session_documents[]
+
+  @@index([session_id], map: "ix_chat_messages_session_id")
+  @@index([variant_group], map: "ix_chat_messages_variant_group")
+}
+
+model chat_sessions {
+  id                String              @id @db.VarChar(32)
+  dialogue_id       Int
+  created_at        DateTime            @default(now()) @db.Timestamp(6)
+  last_activity     DateTime            @default(now()) @db.Timestamp(6)
+  chat_messages     chat_messages[]
+  dialogues         dialogues           @relation(fields: [dialogue_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  session_documents session_documents[]
+
+  @@index([dialogue_id], map: "ix_chat_sessions_dialogue_id")
+}
+
+model dialogues {
+  id                  Int             @id @default(autoincrement())
+  user_id             Int
+  title               String          @db.VarChar(255)
+  description         String?
+  is_finished         Boolean
+  memory_summary      String?
+  memory_covers_up_to Int
+  draft               String?
+  pending_forward     Json?           @db.Json
+  created_at          DateTime        @default(now()) @db.Timestamp(6)
+  last_activity       DateTime        @default(now()) @db.Timestamp(6)
+  chat_sessions       chat_sessions[]
+  users               users           @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([user_id], map: "ix_dialogues_user_id")
+}
+
+model doc_templates {
+  id                                                                 Int                   @id @default(autoincrement())
+  key                                                                String                @unique(map: "ix_doc_templates_key") @db.VarChar(64)
+  title                                                              String                @db.VarChar(255)
+  description                                                        String?
+  file_path                                                          String                @db.VarChar(500)
+  fields_schema                                                      Json?                 @db.Json
+  extraction_prompt                                                  String?
+  is_enabled                                                         Boolean
+  category_id                                                        Int?
+  created_at                                                         DateTime              @default(now()) @db.Timestamp(6)
+  template_categories_doc_templates_category_idTotemplate_categories template_categories?  @relation("doc_templates_category_idTotemplate_categories", fields: [category_id], references: [id], onUpdate: NoAction)
+  template_categories                                                template_categories[]
+
+  @@index([category_id], map: "ix_doc_templates_category_id")
+}
+
+model faq_entries {
+  id               Int      @id @default(autoincrement())
+  group_key        String   @db.VarChar(64)
+  position         Int
+  source_file      String?  @db.VarChar(255)
+  block            String   @db.VarChar(255)
+  variants         Json?    @db.Json
+  clarify_question String?
+  option_label     String?  @db.VarChar(500)
+  answer           String
+  doc_refs         Json?    @db.Json
+  contact          String?
+  is_active        Boolean
+  created_at       DateTime @default(now()) @db.Timestamp(6)
+  updated_at       DateTime @default(now()) @db.Timestamp(6)
+
+  @@index([group_key], map: "ix_faq_entries_group_key")
+}
+
+model kb_documents {
+  id             Int        @id @default(autoincrement())
+  title          String     @db.VarChar(500)
+  source_type    String     @db.VarChar(32)
+  source_uri     String     @db.VarChar(1000)
+  file_hash      String?    @db.VarChar(64)
+  mime_type      String?    @db.VarChar(128)
+  status         String     @db.VarChar(32)
+  priority       Int
+  document_kind  String?    @db.VarChar(32)
+  issuer         String?    @db.VarChar(255)
+  effective_from DateTime?  @db.Date
+  effective_to   DateTime?  @db.Date
+  tags           Json?      @db.Json
+  is_archived    Boolean
+  chunks_count   Int
+  content        String?
+  extra          Json?      @db.Json
+  error          String?
+  created_at     DateTime   @default(now()) @db.Timestamp(6)
+  indexed_at     DateTime?  @db.Timestamp(6)
+  kb_links       kb_links[]
+
+  @@index([file_hash], map: "ix_kb_documents_file_hash")
+}
+
+model kb_links {
+  id               Int          @id @default(autoincrement())
+  from_doc_id      Int
+  from_chunk_index Int?
+  target_kind      String       @db.VarChar(16)
+  target_number    String       @db.VarChar(16)
+  target_doc_hint  String?      @db.VarChar(64)
+  created_at       DateTime     @default(now()) @db.Timestamp(6)
+  kb_documents     kb_documents @relation(fields: [from_doc_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([from_doc_id], map: "ix_kb_links_from_doc_id")
+  @@index([target_kind, target_number], map: "ix_kb_link_target")
+}
+
+model kb_sources {
+  id                     Int       @id @default(autoincrement())
+  name                   String    @db.VarChar(255)
+  url                    String    @unique @db.VarChar(1000)
+  is_enabled             Boolean
+  refresh_interval_hours Int
+  priority               Int
+  last_crawled_at        DateTime? @db.Timestamp(6)
+  last_status            String?   @db.VarChar(32)
+  created_at             DateTime  @default(now()) @db.Timestamp(6)
+}
+
+model messenger_reads {
+  id           Int       @id @default(autoincrement())
+  user_id      Int
+  peer_key     String    @db.VarChar(32)
+  last_read_id Int
+  last_read_at DateTime? @db.Timestamp(6)
+  users        users     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([peer_key], map: "ix_messenger_reads_peer_key")
+  @@index([user_id], map: "ix_messenger_reads_user_id")
+}
+
+model my_documents {
+  id            Int      @id @default(autoincrement())
+  user_id       Int
+  title         String   @db.VarChar(255)
+  template_key  String?  @db.VarChar(64)
+  file_path     String?  @db.VarChar(500)
+  progress      Int
+  status        String   @db.VarChar(32)
+  fields        Json?    @db.Json
+  is_pii        Boolean
+  created_at    DateTime @default(now()) @db.Timestamp(6)
+  last_activity DateTime @default(now()) @db.Timestamp(6)
+  users         users    @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([user_id], map: "ix_my_documents_user_id")
+}
+
+model news_media {
+  id            Int         @id @default(autoincrement())
+  post_id       Int?
+  original_name String      @db.VarChar(500)
+  stored_path   String      @db.VarChar(1000)
+  mime_type     String?     @db.VarChar(128)
+  size          Int
+  is_image      Boolean
+  uploaded_by   Int?
+  created_at    DateTime    @default(now()) @db.Timestamp(6)
+  news_posts    news_posts? @relation(fields: [post_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users         users?      @relation(fields: [uploaded_by], references: [id], onUpdate: NoAction)
+
+  @@index([post_id], map: "ix_news_media_post_id")
+}
+
+model news_poll_options {
+  id              Int               @id @default(autoincrement())
+  poll_id         Int
+  text            String            @db.VarChar(300)
+  position        Int
+  news_polls      news_polls        @relation(fields: [poll_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  news_poll_votes news_poll_votes[]
+
+  @@index([poll_id], map: "ix_news_poll_options_poll_id")
+}
+
+model news_poll_votes {
+  id                Int               @id @default(autoincrement())
+  poll_id           Int
+  option_id         Int
+  user_id           Int
+  created_at        DateTime          @default(now()) @db.Timestamp(6)
+  news_poll_options news_poll_options @relation(fields: [option_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  news_polls        news_polls        @relation(fields: [poll_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users             users             @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([user_id], map: "ix_news_poll_votes_user_id")
+  @@index([option_id], map: "ix_news_poll_votes_option_id")
+  @@index([poll_id], map: "ix_news_poll_votes_poll_id")
+}
+
+model news_polls {
+  id                Int                 @id @default(autoincrement())
+  post_id           Int
+  question          String              @db.VarChar(300)
+  description       String?
+  allow_multiple    Boolean
+  show_voters       Boolean
+  created_at        DateTime            @default(now()) @db.Timestamp(6)
+  news_poll_options news_poll_options[]
+  news_poll_votes   news_poll_votes[]
+  news_posts        news_posts          @relation(fields: [post_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([post_id], map: "ix_news_polls_post_id")
+}
+
+model news_posts {
+  id           Int          @id @default(autoincrement())
+  title        String       @db.VarChar(500)
+  body_html    String
+  attachments  Json?        @db.Json
+  author_id    Int?
+  is_published Boolean
+  is_pinned    Boolean
+  created_at   DateTime     @default(now()) @db.Timestamp(6)
+  updated_at   DateTime?    @db.Timestamp(6)
+  news_media   news_media[]
+  news_polls   news_polls[]
+  users        users?       @relation(fields: [author_id], references: [id], onUpdate: NoAction)
+
+  @@index([author_id], map: "ix_news_posts_author_id")
+}
+
+model notification_reads {
+  id              Int           @id @default(autoincrement())
+  notification_id Int
+  user_id         Int
+  read_at         DateTime      @default(now()) @db.Timestamp(6)
+  notifications   notifications @relation(fields: [notification_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users           users         @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([notification_id, user_id], map: "uq_notification_read")
+  @@index([notification_id], map: "ix_notification_reads_notification_id")
+  @@index([user_id], map: "ix_notification_reads_user_id")
+}
+
+model notifications {
+  id                 Int                  @id @default(autoincrement())
+  kind               String               @db.VarChar(32)
+  user_id            Int?
+  title              String               @db.VarChar(500)
+  body               String?
+  document_id        Int?
+  extra              Json?                @db.Json
+  created_at         DateTime             @default(now()) @db.Timestamp(6)
+  notification_reads notification_reads[]
+
+  @@index([kind], map: "ix_notifications_kind")
+  @@index([document_id], map: "ix_notifications_document_id")
+  @@index([user_id], map: "ix_notifications_user_id")
+}
+
+model pii_audit {
+  id        Int      @id @default(autoincrement())
+  user_id   Int?
+  action    String   @db.VarChar(32)
+  entity    String?  @db.VarChar(64)
+  entity_id Int?
+  extra     Json?    @db.Json
+  at        DateTime @default(now()) @db.Timestamp(6)
+  users     users?   @relation(fields: [user_id], references: [id], onUpdate: NoAction)
+}
+
+model pii_documents {
+  id                Int         @id @default(autoincrement())
+  person_id         Int
+  original_filename String      @db.VarChar(500)
+  storage_filename  String      @unique @db.VarChar(80)
+  mime_type         String?     @db.VarChar(128)
+  size_bytes        Int
+  note              String?
+  uploaded_by       Int?
+  uploaded_at       DateTime    @default(now()) @db.Timestamp(6)
+  pii_persons       pii_persons @relation(fields: [person_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users             users?      @relation(fields: [uploaded_by], references: [id], onUpdate: NoAction)
+
+  @@index([person_id], map: "ix_pii_documents_person_id")
+}
+
+model pii_persons {
+  id            Int             @id @default(autoincrement())
+  surname       String          @db.VarChar(128)
+  name          String          @db.VarChar(128)
+  patronymic    String?         @db.VarChar(128)
+  birth_date    DateTime?       @db.Date
+  meta          Json?           @db.Json
+  created_at    DateTime        @default(now()) @db.Timestamp(6)
+  updated_at    DateTime        @default(now()) @db.Timestamp(6)
+  pii_documents pii_documents[]
+
+  @@unique([surname, name, patronymic, birth_date], map: "uq_pii_person_fio_dob")
+  @@index([surname], map: "ix_pii_persons_surname")
+}
+
+model poll_options {
+  id         Int          @id @default(autoincrement())
+  poll_id    Int
+  text       String       @db.VarChar(300)
+  position   Int
+  polls      polls        @relation(fields: [poll_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  poll_votes poll_votes[]
+
+  @@index([poll_id], map: "ix_poll_options_poll_id")
+}
+
+model poll_votes {
+  id           Int          @id @default(autoincrement())
+  poll_id      Int
+  option_id    Int
+  user_id      Int
+  created_at   DateTime     @default(now()) @db.Timestamp(6)
+  poll_options poll_options @relation(fields: [option_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  polls        polls        @relation(fields: [poll_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users        users        @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([option_id], map: "ix_poll_votes_option_id")
+  @@index([user_id], map: "ix_poll_votes_user_id")
+  @@index([poll_id], map: "ix_poll_votes_poll_id")
+}
+
+model polls {
+  id             Int            @id @default(autoincrement())
+  message_id     Int
+  question       String         @db.VarChar(300)
+  description    String?
+  allow_multiple Boolean
+  show_voters    Boolean
+  allow_change   Boolean
+  allow_bot      Boolean
+  created_at     DateTime       @default(now()) @db.Timestamp(6)
+  poll_options   poll_options[]
+  poll_votes     poll_votes[]
+  user_messages  user_messages  @relation(fields: [message_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([message_id], map: "ix_polls_message_id")
+}
+
+model push_subscriptions {
+  id         Int      @id @default(autoincrement())
+  user_id    Int
+  endpoint   String   @unique
+  p256dh     String   @db.VarChar(255)
+  auth       String   @db.VarChar(255)
+  user_agent String?  @db.VarChar(400)
+  created_at DateTime @default(now()) @db.Timestamp(6)
+  users      users    @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([user_id], map: "ix_push_subscriptions_user_id")
+}
+
+model session_documents {
+  id            Int            @id @default(autoincrement())
+  session_id    String         @db.VarChar(32)
+  message_id    Int?
+  filename      String         @db.VarChar(500)
+  mime_type     String?        @db.VarChar(128)
+  size_bytes    Int
+  stored_path   String?        @db.VarChar(1000)
+  content       String
+  char_count    Int
+  created_at    DateTime       @default(now()) @db.Timestamp(6)
+  chat_messages chat_messages? @relation(fields: [message_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  chat_sessions chat_sessions  @relation(fields: [session_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([session_id], map: "ix_session_documents_session_id")
+  @@index([message_id], map: "ix_session_documents_message_id")
+}
+
+model template_categories {
+  id                                                           Int             @id @default(autoincrement())
+  slug                                                         String          @unique(map: "ix_template_categories_slug") @db.VarChar(64)
+  name                                                         String          @db.VarChar(128)
+  description                                                  String?         @db.VarChar(500)
+  icon                                                         String?         @db.VarChar(64)
+  sort_order                                                   Int
+  default_template_id                                          Int?
+  created_at                                                   DateTime        @default(now()) @db.Timestamp(6)
+  doc_templates_doc_templates_category_idTotemplate_categories doc_templates[] @relation("doc_templates_category_idTotemplate_categories")
+  doc_templates                                                doc_templates?  @relation(fields: [default_template_id], references: [id], onUpdate: NoAction)
+}
+
+model user_message_files {
+  id            Int            @id @default(autoincrement())
+  message_id    Int?
+  owner_id      Int
+  original_name String         @db.VarChar(500)
+  stored_path   String         @db.VarChar(1000)
+  content_type  String?        @db.VarChar(128)
+  size_bytes    Int
+  is_image      Boolean
+  img_w         Int?
+  img_h         Int?
+  created_at    DateTime       @default(now()) @db.Timestamp(6)
+  user_messages user_messages? @relation(fields: [message_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users         users          @relation(fields: [owner_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([message_id], map: "ix_user_message_files_message_id")
+  @@index([owner_id], map: "ix_user_message_files_owner_id")
+}
+
+model user_message_reactions {
+  id            Int           @id @default(autoincrement())
+  message_id    Int
+  user_id       Int
+  emoji         String        @db.VarChar(16)
+  created_at    DateTime      @default(now()) @db.Timestamp(6)
+  user_messages user_messages @relation(fields: [message_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users         users         @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([message_id], map: "ix_user_message_reactions_message_id")
+  @@index([user_id], map: "ix_user_message_reactions_user_id")
+}
+
+model user_messages {
+  id                                      Int                      @id @default(autoincrement())
+  sender_id                               Int
+  recipient_id                            Int?
+  is_general                              Boolean
+  content                                 String
+  forwarded_meta                          Json?                    @db.Json
+  reply_to_id                             Int?
+  is_pinned                               Boolean
+  is_edited                               Boolean
+  is_ai_query                             Boolean
+  hidden_for                              Json?                    @db.Json
+  created_at                              DateTime                 @default(now()) @db.Timestamp(6)
+  polls                                   polls[]
+  user_message_files                      user_message_files[]
+  user_message_reactions                  user_message_reactions[]
+  users_user_messages_recipient_idTousers users?                   @relation("user_messages_recipient_idTousers", fields: [recipient_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  user_messages                           user_messages?           @relation("user_messagesTouser_messages", fields: [reply_to_id], references: [id], onUpdate: NoAction)
+  other_user_messages                     user_messages[]          @relation("user_messagesTouser_messages")
+  users_user_messages_sender_idTousers    users                    @relation("user_messages_sender_idTousers", fields: [sender_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([recipient_id], map: "ix_user_messages_recipient_id")
+  @@index([sender_id], map: "ix_user_messages_sender_id")
+  @@index([is_general], map: "ix_user_messages_is_general")
+  @@index([is_pinned], map: "ix_user_messages_is_pinned")
+}
+
+model users {
+  id                                              Int                      @id @default(autoincrement())
+  username                                        String                   @unique(map: "ix_users_username") @db.VarChar(64)
+  email                                           String                   @unique(map: "ix_users_email") @db.VarChar(255)
+  password_hash                                   String                   @db.VarChar(255)
+  surname                                         String                   @db.VarChar(64)
+  name                                            String                   @db.VarChar(64)
+  patronymic                                      String?                  @db.VarChar(64)
+  position                                        String                   @db.VarChar(128)
+  sex                                             String?                  @db.VarChar(16)
+  is_active                                       Boolean
+  is_admin                                        Boolean
+  is_kb_editor                                    Boolean
+  can_access_pii                                  Boolean
+  created_at                                      DateTime                 @default(now()) @db.Timestamp(6)
+  chat_feedback                                   chat_feedback[]
+  dialogues                                       dialogues[]
+  messenger_reads                                 messenger_reads[]
+  my_documents                                    my_documents[]
+  news_media                                      news_media[]
+  news_poll_votes                                 news_poll_votes[]
+  news_posts                                      news_posts[]
+  notification_reads                              notification_reads[]
+  pii_audit                                       pii_audit[]
+  pii_documents                                   pii_documents[]
+  poll_votes                                      poll_votes[]
+  push_subscriptions                              push_subscriptions[]
+  user_message_files                              user_message_files[]
+  user_message_reactions                          user_message_reactions[]
+  user_messages_user_messages_recipient_idTousers user_messages[]          @relation("user_messages_recipient_idTousers")
+  user_messages_user_messages_sender_idTousers    user_messages[]          @relation("user_messages_sender_idTousers")
+}

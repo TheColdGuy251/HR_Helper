@@ -1,0 +1,336 @@
+@import "tailwindcss";
+
+/* Дизайн-токены платформы ТИУ (перенесены из Tyuiu.bot-main как переменные,
+   значения не менялись: корпоративный синий, тёмно-синий "чернильный", канвас). */
+:root {
+  --background: #f4f7fc;
+  --foreground: #171717;
+  --brand-ink: #0f1c3f;
+  --brand-blue: #2563eb;
+  --brand-blue-deep: #1e40af;
+  --canvas-feed: #fcfdfe;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-ink: var(--brand-ink);
+  --color-brand: var(--brand-blue);
+  --color-brand-deep: var(--brand-blue-deep);
+  --color-feed: var(--canvas-feed);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+@layer utilities {
+  .text-gradient {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-[#0f1c3f] via-[#1e40af] to-[#2563eb];
+  }
+
+  /* Использовалась в Tyuiu.bot-main, но не была определена — добавляем. */
+  .animate-fade-in {
+    animation: fade-in 0.25s ease-out both;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ─────────────────────────────── Скроллбары ──────────────────────────────────
+   Форма и цвет — из легаси (static/css/styles.css:696-706): тонкая синяя
+   «пилюля» с прозрачной рамкой-отступом. Отличие одно: по умолчанию ползунок
+   невидим и проявляется, только когда страницу листают или курсор подходит к
+   правому краю окна (класс scroll-visible вешает components/scrollbar.tsx).
+
+   Ширина дорожки при этом не меняется — иначе контент дёргался бы на каждом
+   появлении ползунка. По той же причине у html стоит scrollbar-gutter: stable:
+   место под скроллбар зарезервировано всегда, и страницы без прокрутки не
+   съезжают по горизонтали относительно страниц с прокруткой. */
+
+html {
+  scrollbar-gutter: stable;
+  /* Firefox: своих псевдоэлементов нет, управляем цветом целиком. */
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 0.25s ease;
+}
+html.scroll-visible {
+  scrollbar-color: rgba(37, 99, 235, 0.45) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  /* Рамка + background-clip дают ползунку «воздух» по краям дорожки. */
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: 99px;
+  transition: background-color 0.25s ease;
+}
+/* Правило намеренно общее: так подхватываются и вложенные прокручиваемые
+   области — лента чата, список бесед, модалки. */
+html.scroll-visible ::-webkit-scrollbar-thumb,
+html.scroll-visible::-webkit-scrollbar-thumb {
+  background-color: rgba(37, 99, 235, 0.45);
+}
+html.scroll-visible ::-webkit-scrollbar-thumb:hover,
+html.scroll-visible::-webkit-scrollbar-thumb:hover {
+  background-color: #1e40af;
+}
+
+/* Пользователь просил меньше движения — показываем ползунок постоянно. */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scrollbar-color: rgba(37, 99, 235, 0.45) transparent;
+    transition: none;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: rgba(37, 99, 235, 0.45);
+    transition: none;
+  }
+}
+
+/* ───────────────────────── Контент сообщений ассистента ─────────────────────
+   Рендерится lib/msgfmt.ts (порт message_format.js) внутри контейнера .msg-md.
+   Оформление — в духе Tyuiu.bot-main: белые карточки, синие акценты. */
+
+.msg-md {
+  line-height: 1.6;
+  word-break: break-word;
+}
+.msg-md p {
+  margin: 0.4em 0;
+}
+.msg-md h1,
+.msg-md h2,
+.msg-md h3,
+.msg-md h4,
+.msg-md h5,
+.msg-md h6 {
+  font-weight: 700;
+  color: #0f1c3f;
+  margin: 0.8em 0 0.35em;
+  line-height: 1.3;
+}
+.msg-md h1 { font-size: 1.15em; }
+.msg-md h2 { font-size: 1.1em; }
+.msg-md h3 { font-size: 1.05em; }
+.msg-md h4, .msg-md h5, .msg-md h6 { font-size: 1em; }
+.msg-md ul,
+.msg-md ol {
+  margin: 0.4em 0;
+  padding-left: 1.4em;
+}
+.msg-md ul { list-style: disc; }
+.msg-md ol { list-style: decimal; }
+.msg-md li { margin: 0.15em 0; }
+.msg-md blockquote {
+  border-left: 3px solid #2563eb;
+  background: #eff6ff;
+  border-radius: 0 0.5rem 0.5rem 0;
+  padding: 0.4em 0.8em;
+  margin: 0.5em 0;
+  color: #334155;
+}
+.msg-md hr {
+  border: none;
+  border-top: 1px solid #e5e7eb;
+  margin: 0.8em 0;
+}
+.msg-md pre {
+  background: #0f172a;
+  color: #e2e8f0;
+  border-radius: 0.75rem;
+  padding: 0.75em 1em;
+  overflow-x: auto;
+  font-size: 0.85em;
+  margin: 0.5em 0;
+}
+.msg-md .md-inline-code {
+  background: #eef2f7;
+  color: #0f1c3f;
+  border-radius: 0.35rem;
+  padding: 0.1em 0.35em;
+  font-size: 0.9em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.msg-md a {
+  color: #2563eb;
+  text-decoration: underline;
+}
+.msg-md .md-src-ref {
+  display: inline-block;
+  min-width: 1.15em;
+  padding: 0 0.25em;
+  margin: 0 0.1em;
+  background: #dbeafe;
+  color: #1e40af;
+  border-radius: 0.4rem;
+  font-size: 0.68em;
+  font-weight: 700;
+  text-align: center;
+  line-height: 1.5;
+  vertical-align: super;
+}
+.msg-md .md-tasklist { list-style: none; padding-left: 0.2em; }
+.msg-md .md-task { display: flex; align-items: flex-start; gap: 0.5em; }
+.msg-md .md-task-box {
+  width: 0.95em;
+  height: 0.95em;
+  margin-top: 0.25em;
+  border: 1.5px solid #94a3b8;
+  border-radius: 0.25rem;
+  flex-shrink: 0;
+}
+.msg-md .md-task-box.is-checked {
+  background: #2563eb;
+  border-color: #2563eb;
+}
+
+/* Блок «Источники» */
+.msg-md .md-sources {
+  margin-top: 0.8em;
+  padding-top: 0.6em;
+  border-top: 1px dashed #e2e8f0;
+  font-size: 0.85em;
+}
+.msg-md .md-sources-title {
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.8em;
+  margin-bottom: 0.4em;
+}
+.msg-md .md-sources ul {
+  list-style: none;
+  padding-left: 0;
+  margin: 0;
+}
+.msg-md .md-refs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4em 0.9em;
+  margin-bottom: 0.5em;
+}
+.msg-md .md-ref {
+  color: #475569;
+}
+.msg-md .md-sources.is-collapsible ul li:nth-child(n + 4),
+.msg-md .md-docs.is-collapsible .chat-attachment:nth-child(n + 4) {
+  display: none;
+}
+.msg-md .md-sources.is-expanded ul li,
+.msg-md .md-docs.is-expanded .chat-attachment {
+  display: flex !important;
+}
+.msg-md .md-sources-more {
+  margin-top: 0.4em;
+  font-size: 0.85em;
+  font-weight: 600;
+  color: #2563eb;
+  cursor: pointer;
+}
+.msg-md .md-sources-more:hover { text-decoration: underline; }
+
+/* Карточка документа (источник/вложение) */
+.msg-md .md-docs {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4em;
+  margin-top: 0.4em;
+}
+.chat-attachment {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.75rem;
+  padding: 0.5em 0.7em;
+  color: inherit;
+  text-decoration: none;
+  max-width: 100%;
+}
+.chat-attachment-main {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  flex: 1;
+  min-width: 0;
+  color: inherit;
+  text-decoration: none;
+}
+.chat-attachment-icon {
+  width: 2em;
+  height: 2em;
+  border-radius: 0.6rem;
+  background: #dbeafe;
+  color: #2563eb;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.chat-attachment-body { flex: 1; min-width: 0; }
+.chat-attachment-title {
+  font-weight: 600;
+  font-size: 0.85em;
+  color: #0f1c3f;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chat-attachment-name {
+  font-size: 0.75em;
+  color: #94a3b8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chat-attachment-action {
+  padding: 0.4em;
+  border-radius: 0.5rem;
+  color: #64748b;
+  flex-shrink: 0;
+}
+.chat-attachment-action:hover {
+  background: #e2e8f0;
+  color: #0f1c3f;
+}
+
+/* Блок связанных бланков/документов FAQ — порт .chat-related-* из chat.css */
+.chat-related-files {
+  margin-top: 0.75em;
+  max-width: 640px;
+}
+.chat-related-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  font-size: 0.8em;
+  font-weight: 700;
+  color: #5b6472;
+}
+.chat-related-files .chat-attachment {
+  margin-top: 6px;
+}

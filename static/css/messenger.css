@@ -139,7 +139,17 @@ body.has-toasts .msgr-fab { bottom: calc(24px + var(--toast-lift, 0px) + 14px); 
 .msgr-panel.msgr-in-pip .msgr-resize,
 .msgr-panel.msgr-in-pip .msgr-popout,
 .msgr-panel.msgr-in-pip .msgr-expand,
+.msgr-panel.msgr-in-pip .msgr-pin,
 .msgr-panel.msgr-in-pip .msgr-close { display: none !important; }
+
+/* Кнопка «закрепить»: активная булавка — белая с синей иконкой и лёгким наклоном. */
+.msgr-head .msgr-pin.active {
+  background: #fff;
+  color: var(--tyuiu-blue, #1E40AF);
+}
+.msgr-head .msgr-pin.active:hover { background: rgba(255, 255, 255, 0.88); }
+.msgr-head .msgr-pin i { transition: transform 0.15s; }
+.msgr-head .msgr-pin.active i { transform: rotate(-45deg); }
 
 .msgr-view { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 

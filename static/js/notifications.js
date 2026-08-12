@@ -190,8 +190,9 @@
 
   function systemItemHtml(i) {
     // Иконка и подсказка по типу: web_update — изменение веб-страницы (diff),
-    // doc_expired — автоархив по сроку действия, doc_stale — проверка актуальности.
-    const icons = { web_update: "fa-globe", doc_expired: "fa-box-archive", doc_stale: "fa-clock" };
+    // doc_expired — автоархив по сроку действия, doc_stale — проверка актуальности,
+    // pii_autodeleted — автоудаление данных с ПДн.
+    const icons = { web_update: "fa-globe", doc_expired: "fa-box-archive", doc_stale: "fa-clock", pii_autodeleted: "fa-user-shield" };
     const icon = icons[i.kind] || "fa-gear";
     const hint = i.diff_url
       ? (i.kind === "web_update"

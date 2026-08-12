@@ -39,6 +39,17 @@ class Settings(BaseSettings):
     vapid_private_key: str = ""
     vapid_subject: str = "mailto:admin@localhost"
 
+    # Фоновые задания. Их ведёт Next.js (`npm run worker`), поэтому здесь
+    # планировщик по умолчанию выключен: два одновременно работающих
+    # планировщика выполняли бы задания дважды.
+    scheduler_enabled: bool = False
+
+    # БД. Если задан database_url — используется он (PostgreSQL), иначе SQLite
+    # из db_file. Формат: postgresql+psycopg://user:pass@host:5432/dbname
+    # Тот же адрес должен стоять в DATABASE_URL фронтенда (Prisma), иначе
+    # Next.js и FastAPI будут работать с разными базами.
+    database_url: str = ""
+
     # Paths
     base_dir: Path = BASE_DIR
     db_dir: Path = BASE_DIR / "db"
@@ -78,6 +89,23 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 2048  # максимум токенов ответа (≈ 1500 слов на русском)
     llm_lazy_load: bool = True  # модель грузится при первом запросе
     llm_enabled: bool = True    # False => mock-ответы для тестов без модели
+
+    # Очередь запросов к ассистенту (services/assistant_queue.py). Многопользовательский
+    # режим: без ограничения каждый запрос сразу поднимал свой поток, десятки пайплайнов
+    # конкурировали за единственный лок LLM, а память и порядок обслуживания были
+    # неуправляемы. Теперь — честная (FIFO) очередь с настраиваемым параллелизмом.
+    #  • assistant_max_concurrent — сколько запросов обрабатывается ОДНОВРЕМЕННО (по
+    #    умолчанию 2). ВАЖНО: сама генерация токенов всё равно сериализуется локом
+    #    модели (llama-cpp не потокобезопасен) — этот лимит распараллеливает этапы RAG
+    #    (поиск/реранк) и служит admission control, ограничивая нагрузку. Значение
+    #    читается динамически, так что его можно менять на лету (напр. из /admin).
+    #  • assistant_queue_maxsize — предел длины очереди ОЖИДАНИЯ; сверх него новые
+    #    запросы отклоняются с понятным сообщением (backpressure), а не копятся вечно.
+    #  • assistant_max_per_user — сколько запросов одного пользователя могут ждать
+    #    одновременно (анти-флуд: одна вкладка-спамер не займёт всю очередь).
+    assistant_max_concurrent: int = 2
+    assistant_queue_maxsize: int = 50
+    assistant_max_per_user: int = 3
 
     # Кэш моделей FastEmbed. По умолчанию FastEmbed кладёт модели в %TEMP%/fastembed_cache,
     # который Windows и утилиты очистки Temp могут удалить — тогда при следующем старте

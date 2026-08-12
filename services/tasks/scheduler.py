@@ -161,6 +161,17 @@ def start_scheduler() -> None:
         max_instances=1,
         coalesce=True,
     )
+    # ПДн: автоудаление сообщений/документов с персональными данными по TTL
+    from services.tasks.pii_cleanup import pii_autodelete_job
+
+    _scheduler.add_job(
+        pii_autodelete_job,
+        trigger=IntervalTrigger(minutes=10),
+        next_run_time=datetime.utcnow() + timedelta(minutes=2),
+        id="pii_autodelete",
+        max_instances=1,
+        coalesce=True,
+    )
     _scheduler.start()
     logger.info("Планировщик запущен")
 

@@ -13,7 +13,7 @@ from data.db_session import global_init
 from routes import auth as auth_router
 from routes import chat as chat_router
 from routes import dialogues as dialogues_router
-from routes import documents as docs_router
+from routes import documents as docs_router 
 from routes import events as events_router
 from routes import kb as kb_router
 from routes import messenger as messenger_router
@@ -33,7 +33,7 @@ from utils.logger import logger, setup_logger
 async def lifespan(app: FastAPI):
     setup_logger()
     ensure_dirs()
-    global_init(settings.db_file)
+    global_init(settings.db_file, settings.database_url)
     logger.info("Приложение {} запускается", settings.app_name)
 
     # Сохраняем event loop для пуша SSE-уведомлений из фоновых потоков (#16).
@@ -116,11 +116,19 @@ async def lifespan(app: FastAPI):
 
     threading.Thread(target=_warmup, daemon=True).start()
 
-    start_scheduler()
+    # Фоновые задания (веб-источники, свежесть документов, автоудаление ПДн)
+    # перенесены в Next.js — там их запускает `npm run worker`. Если оба
+    # планировщика работают одновременно, задания выполняются дважды и
+    # уведомления дублируются, поэтому здесь их можно выключить.
+    if settings.scheduler_enabled:
+        start_scheduler()
+    else:
+        logger.info("Планировщик отключён (SCHEDULER_ENABLED=false) — задания ведёт Next.js")
     try:
         yield
     finally:
-        stop_scheduler()
+        if settings.scheduler_enabled:
+            stop_scheduler()
         logger.info("Приложение остановлено")
 
 
@@ -156,13 +164,15 @@ class CurrentUserMiddleware:
         await self.app(scope, receive, send)
 
 
-# Content-Security-Policy: скрипты только свои (внешних <script> нет), inline-обработчики
-# и <style> разрешены (их в шаблонах много); шрифты/иконки — с известных CDN; кадрирование
-# сайта чужими доменами запрещено (анти-clickjacking). Строгие директивы можно отключить
-# security_csp=false в .env, если что-то в предпросмотре документов заблокируется.
+# Content-Security-Policy: скрипты — свои + storage.tyuiu.ru (страницы входа и
+# регистрации грузят оттуда Tailwind-runtime; без него они остаются без стилей),
+# inline-обработчики и <style> разрешены (их в шаблонах много); шрифты/иконки — с
+# известных CDN; кадрирование сайта чужими доменами запрещено (анти-clickjacking).
+# Строгие директивы можно отключить security_csp=false в .env, если что-то в
+# предпросмотре документов заблокируется.
 _CSP = (
     "default-src 'self'; "
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://storage.tyuiu.ru; "
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; "
     "font-src 'self' data: https://fonts.gstatic.com https://cdnjs.cloudflare.com; "
     "img-src 'self' data: blob: https://storage.tyuiu.ru; "
@@ -197,14 +207,27 @@ class SecurityHeadersMiddleware:
                 def seth(name, value):
                     headers.append((name.encode("latin-1"), value.encode("latin-1")))
 
+                # X-Frame-Options/CSP вешаем ТОЛЬКО на HTML-страницы: на файлах
+                # (application/pdf и пр.) эти заголовки ломают встроенный просмотрщик
+                # Edge/Chrome — PDF открывается во внутреннем фрейме браузера, и он
+                # блокируется с «Этот контент заблокирован». Кликджекинг актуален
+                # только для HTML-документов, файлы скриптов не исполняют.
+                ctype = b""
+                for hk, hv in headers:
+                    if hk.lower() == b"content-type":
+                        ctype = hv.lower()
+                        break
+                is_html = ctype.startswith(b"text/html")
+
                 seth("X-Content-Type-Options", "nosniff")
-                seth("X-Frame-Options", "SAMEORIGIN")
                 seth("Referrer-Policy", "strict-origin-when-cross-origin")
                 seth("Permissions-Policy", "camera=(), microphone=(), geolocation=(), interest-cohort=()")
                 if is_https:
                     seth("Strict-Transport-Security", f"max-age={settings.hsts_max_age}; includeSubDomains")
-                if settings.security_csp:
-                    seth("Content-Security-Policy", _CSP)
+                if is_html:
+                    seth("X-Frame-Options", "SAMEORIGIN")
+                    if settings.security_csp:
+                        seth("Content-Security-Policy", _CSP)
             await send(message)
 
         await self.app(scope, receive, send_wrapper)
@@ -235,6 +258,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 app.include_router(pages_router.router)
 app.include_router(auth_router.router)
+app.include_router(auth_router.api_router)
 app.include_router(dialogues_router.router)
 app.include_router(chat_router.router)
 app.include_router(events_router.router)

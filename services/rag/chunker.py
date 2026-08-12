@@ -133,7 +133,26 @@ _HEADING_KEYWORD_RE = re.compile(
     r"^(раздел|глава|подраздел|часть|параграф|§|приложение)\b", re.IGNORECASE
 )
 # Нумерованный заголовок: «1. …», «2.3 …», «3.1.2 …» (короткая строка-титул).
-_HEADING_NUM_RE = re.compile(r"^(\d+(?:\.\d+)*)\.?\s+\S")
+_HEADING_NUM_RE = re.compile(r"^(\d+(?:\.\d+)*)([.)])?\s+(\S)")
+
+
+def _numbered_heading(s: str) -> str | None:
+    """Номер нумерованного заголовка («3.2») или None. Два фильтра ложных
+    срабатываний, из-за которых сотни чанков таблиц/перечислений получали
+    unit_no и путь-префикс чужого «заголовка»:
+    - одиночному числу обязателен разделитель: «2. Название» — заголовок,
+      «2 смена:» (строка таблицы) — нет; составные («3.2 Название») — можно без точки;
+    - после номера должна идти НЕ строчная буква: «2.\tобъявление недоверия…» —
+      элемент перечисления, а не заголовок."""
+    m = _HEADING_NUM_RE.match(s)
+    if not m:
+        return None
+    num, sep, first = m.group(1), m.group(2), m.group(3)
+    if "." not in num and sep is None:
+        return None
+    if first.islower():
+        return None
+    return num
 
 
 def _heading_level(line: str) -> int | None:
@@ -148,9 +167,15 @@ def _heading_level(line: str) -> int | None:
         if low.startswith("глава"):
             return 2
         return 3  # подраздел / параграф / §
-    m = _HEADING_NUM_RE.match(s)
-    if m and len(s) <= 100:
-        return m.group(1).count(".") + 1  # глубина нумерации = уровень
+    if len(s) <= 100:
+        num = _numbered_heading(s)
+        if num is not None:
+            return num.count(".") + 1  # глубина нумерации = уровень
+    # Строка, начинающаяся с числа, но не признанная нумерованным заголовком
+    # («2 смена:», «2. перечисление…»), — не заголовок; КАПС-эвристику к ней
+    # не применяем, иначе «2 СМЕНА:» станет разделом.
+    if s[0].isdigit():
+        return None
     # Короткий заголовок КАПСОМ («ОБЩИЕ ПОЛОЖЕНИЯ»)
     letters = [c for c in s if c.isalpha()]
     if len(letters) >= 4 and len(s.split()) >= 2 and len(s) <= 80:
@@ -216,9 +241,11 @@ def _parse_unit(heading: str | None) -> tuple[str | None, str | None, float | No
             token = rest.split()[0] if rest.split() else ""
             no, ordv = _canon_and_ord(token)
             return (typ, no, ordv) if no else (None, None, None)
-    m = _HEADING_NUM_RE.match(s)
-    if m:
-        no, ordv = _canon_and_ord(m.group(1))
+    # Единые с _heading_level правила: ложные «заголовки» (перечисления,
+    # строки таблиц) не должны получать unit-метаданные.
+    num = _numbered_heading(s)
+    if num is not None:
+        no, ordv = _canon_and_ord(num)
         return ("clause", no, ordv) if no else (None, None, None)
     return (None, None, None)
 

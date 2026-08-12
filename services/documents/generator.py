@@ -126,6 +126,8 @@ def generate_document(
         logger.error("Ошибка рендера шаблона {}: {}", template_key, e)
         raise
 
+    from services.documents.pii_policy import detect_pii_document
+
     doc = MyDocuments(
         user_id=user.id,
         title=title or tpl.title,
@@ -134,6 +136,9 @@ def generate_document(
         progress=100,
         status="ready",
         fields=fields,
+        # ПДн-документы не храним: пометка включает скрытие из «Моих документов»
+        # и автоудаление по TTL (pii_cleanup).
+        is_pii=detect_pii_document(template_key, *(fields or {}).values()),
     )
     db.add(doc)
     db.commit()

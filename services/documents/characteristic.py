@@ -202,6 +202,7 @@ def create_characteristic(
         progress=100,
         status="ready",
         fields={k: fields.get(k) for k in (*_FIELD_KEYS, "category")},
+        is_pii=True,  # ПДн работника — документ не хранится (автоудаление)
     )
     db.add(rec)
     db.commit()

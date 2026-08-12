@@ -1,7 +1,11 @@
 /* База знаний */
+/* Страница шире общего лимита (.container 1200px): блоки-группы в 3 колонки
+   требуют простора, иначе карточки внутри давятся. Нижний отступ ~полэкрана —
+   чтобы раскрытый снизу блок и прокрутка имели запас. */
+.page-kb .container { max-width: 1680px; }
 .kb-root {
-  max-width: 1100px;
-  margin: 24px auto;
+  max-width: 1560px;
+  margin: 24px auto 50vh;
   padding: 0 24px;
 }
 
@@ -849,3 +853,191 @@
   cursor: help;
 }
 .kb-badge-pii i { margin-right: 3px; }
+
+/* ============== Группы-блоки: параллельные блоки с раскрытием поверх ==============
+   Документы/источники/шаблоны/FAQ сгруппированы в блоки по 3 в ряд. Свернутый
+   блок ограничен фиксированной высотой (стрелка внизу); раскрытый растёт вниз
+   ПОВЕРХ нижних групп (absolute + z-index), не сдвигая раскладку. */
+.kb-list.kb-groups {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+@media (max-width: 1100px) { .kb-list.kb-groups { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 720px)  { .kb-list.kb-groups { grid-template-columns: 1fr; } }
+
+.kb-groups-note { grid-column: 1 / -1; }
+.kb-groups-note:empty { display: none; }
+
+.kb-group { position: relative; height: 640px; }
+.kb-group-card {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-primary, #fff);
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: box-shadow 0.15s, border-color 0.15s;
+}
+.kb-group-card:hover { border-color: #cbd5e1; }
+.kb-group-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px 10px;
+  font-size: 12.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--tyuiu-blue-dark, #1E3A8A);
+}
+.kb-group-head i { color: var(--tyuiu-blue, #1E40AF); }
+.kb-group-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kb-group-count {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--text-secondary, #64748b);
+  background: #eff6ff;
+  border-radius: 999px;
+  padding: 1px 9px;
+}
+/* Крестик «свернуть» в шапке раскрытого блока — показывается на мобильных. */
+.kb-group-close {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: var(--tyuiu-blue, #1E40AF);
+  font-size: 14px;
+  cursor: pointer;
+}
+.kb-group-items {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 10px 8px;
+  /* Свернутый блок листается, не раскрываясь: стрелка нужна только для
+     разворота поверх соседей. */
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.kb-group-arrow {
+  border: 0;
+  background: transparent;
+  padding: 6px 0 9px;
+  cursor: pointer;
+  color: var(--tyuiu-blue, #1E40AF);
+  font-size: 14px;
+}
+.kb-group-arrow:hover { color: var(--tyuiu-blue-dark, #1E3A8A); }
+.kb-group-arrow i { transition: transform 0.2s; display: inline-block; }
+.kb-group.kb-group-fit .kb-group-arrow { visibility: hidden; }
+.kb-group.is-open .kb-group-arrow i { transform: rotate(180deg); }
+
+/* Раскрытие: карточка растёт вниз поверх нижних групп. */
+.kb-group.is-open { z-index: 40; }
+.kb-group.is-open .kb-group-card {
+  inset: 0 0 auto 0;          /* низ отвязан — высота по содержимому */
+  height: auto;
+  min-height: 100%;
+  max-height: 84vh;
+  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.22);
+  border-color: var(--tyuiu-blue-light, #93c5fd);
+}
+.kb-group.is-open .kb-group-items { overflow: auto; }
+
+/* Карточки внутри узких блоков: кнопки управления переносятся на вторую строку. */
+.kb-group .kb-item { flex-wrap: wrap; padding: 10px; row-gap: 6px; }
+.kb-group .kb-item > .kb-item-body { flex: 1 1 calc(100% - 48px); }
+
+/* ===== Мобильные: блок ниже, листание только после раскрытия ===== */
+@media (max-width: 720px) {
+  /* Свернутый блок компактнее — иначе раскрытие (потолок ~86vh) почти не
+     отличалось от свернутых 640px и стрелка «ничего не делала». */
+  .kb-group { height: 340px; }
+  /* Листать документы, не раскрывая карточку, нельзя: прокрутка появляется
+     только у раскрытого блока; затухание намекает на продолжение списка. */
+  .kb-group:not(.is-open) .kb-group-items { overflow: hidden; }
+  .kb-group:not(.is-open):not(.kb-group-fit) .kb-group-items {
+    -webkit-mask-image: linear-gradient(180deg, #000 70%, transparent 98%);
+            mask-image: linear-gradient(180deg, #000 70%, transparent 98%);
+  }
+  /* Раскрытый блок — почти как модалка: затемнение вокруг (тап по нему
+     закрывает — срабатывает документный обработчик «клик вне карточки»)
+     и крестик «свернуть» в шапке. */
+  .kb-group.is-open::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.45);
+  }
+  .kb-group.is-open .kb-group-card { z-index: 1; max-height: 86vh; }
+  .kb-group.is-open .kb-group-close { display: inline-flex; }
+}
+
+/* Модалка «Фильтры»: панель активной вкладки, параметры столбиком. */
+.kb-filters-modal { max-width: 460px; }
+.kb-filters-modal h3 i { color: var(--tyuiu-blue, #1E40AF); margin-right: 6px; }
+.kb-filter-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 14px;
+}
+.kb-filter-bar > label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-secondary, #64748b);
+}
+.kb-filter-bar .kb-select { width: 100%; font-size: 13.5px; }
+.kb-filter-reset {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border-color, #e2e8f0);
+  background: var(--bg-primary, #fff);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--text-secondary, #64748b);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.kb-filter-reset:hover { color: var(--tyuiu-blue, #1E40AF); border-color: var(--tyuiu-blue-light, #93c5fd); }
+
+/* Кнопка «Фильтры» в строке действий + бейдж числа активных параметров. */
+.kb-filter-open { position: relative; }
+.kb-filter-open.has-filters {
+  color: var(--tyuiu-blue, #1E40AF);
+  border-color: var(--tyuiu-blue-light, #93c5fd);
+}
+.kb-filter-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--tyuiu-blue, #1E40AF);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}

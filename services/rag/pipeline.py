@@ -22,7 +22,7 @@ from services.llm.prompts import (
     build_rag_prompt,
 )
 from services.rag.aliases import expand_abbreviations, expand_synonyms
-from services.rag.planner import plan_query
+from services.rag.planner import needs_planner, plan_query
 from services.rag.spellfix import correct_typos
 from services.rag.reranker import get_reranker
 from services.rag.retriever import RetrievedChunk, get_retriever
@@ -127,8 +127,9 @@ _GREET_RE = re.compile(
 # отказ «в выдержках нет информации» вместо живого ответа.
 _INFO_RE = re.compile(
     r"\b(расскажи|объясни|подскажи|сравни|покажи|найди|перечисли|опиши|дай|"
-    r"сформулируй|как |какой|какая|какие|сколько|когда|где|почему|зачем|"
-    r"можно ли|нужно|вправе|обязан|стать|пункт|раздел|глав|договор|отпуск|"
+    r"сформулируй|назов\w*|привед\w*|процитир\w*|как |какой|какая|какие|сколько|когда|где|почему|зачем|"
+    r"можно ли|нужно|вправе|обязан|стать|пункт\w*|подпункт\w*|положени\w*|раздел|глав|"
+    r"номер\w*|текст\w*|выдержк\w*|договор|отпуск|"
     r"увольн|уволи|приём|прием|зарплат|оклад|преми|кодекс|закон|норм|срок|"
     r"документ|оформ|порядок|право|гарант)\b",
     re.IGNORECASE,
@@ -175,7 +176,8 @@ def _is_smalltalk(query: str) -> bool:
 # ссылается на статьи «по памяти» из прошлых реплик (баг: ответ со ссылками, но без
 # блока «Источники»). Здесь требуем явный маркер продолжения, а не просто короткую длину.
 _FOLLOWUP_MARKER_RE = re.compile(
-    r"\b(её|ее|неё|нее|его|них|это|этот|эту|этой|этом|там|туда|выше|тут|здесь)\b"
+    r"\b(её|ее|неё|нее|его|них|это|этот|эту|этой|этом|там|туда|оттуда|отсюда|выше|тут|здесь)\b"
+    r"|из\s+н(?:его|её|ее|их)\b"
     r"|подробн|целиком|полност|дальше|продолж|процитир|разверн|раскрой"
     r"|\bа\s+(что|как|где|когда|почему|зачем|если)\b|ещё|\bеще\b",
     re.IGNORECASE,
@@ -206,6 +208,10 @@ def _looks_nonknowledge(query: str) -> bool:
     if _INFO_RE.search(q):
         return False
     if _extract_article_numbers(q):
+        return False
+    # Число в HR-запросе почти всегда адресное («положение 3.2», «пункт 5»):
+    # чистая арифметика уже отсечена выше, остальное мусором не считаем.
+    if re.search(r"\d", q):
         return False
     # Короткая фраза без единого осмысленного сигнала → болтовня/мусор → обычный чат.
     if len(q) <= 40:
@@ -680,34 +686,52 @@ class RAGPipeline:
 
     @staticmethod
     def _resolve_doc_hint(doc_hint: str | None) -> int | None:
-        """«ТК»/«ГК»/«Трудовой кодекс» → document_id. Аббревиатуру расширяем через
-        aliases, затем ищем по title/source_uri индексированного документа.
-        Если совпадения нет — None (диспетчер откатится к семантическому выбору)."""
+        """«ТК»/«коллективного договора» → document_id. Аббревиатуру расширяем через
+        aliases, затем сопоставляем ЛЕММЫ подсказки с леммами названий документов
+        в Python: SQLite lower()/LIKE не понижают кириллицу и не знают падежей
+        («коллективного договора» ≠ подстрока «Коллективный договор»). Документов
+        десятки, так что полный проход дёшев. Совпадение — все леммы подсказки
+        входят в леммы названия; при нескольких кандидатах берём самое короткое
+        (наиболее точное) название. Нет совпадения — None (диспетчер откатится
+        к семантическому выбору документа)."""
         if not doc_hint:
             return None
         try:
-            from sqlalchemy import func, or_
-
             from data.db_session import create_session
             from data.kb_documents import KBDocument
             from services.rag.aliases import ABBREVIATIONS
+            from services.rag.retriever import _tokenize
 
             hint = doc_hint.strip()
             full = ABBREVIATIONS.get(hint.upper()) or ABBREVIATIONS.get(hint) or hint
-            needles = {hint.lower(), full.lower()}
+            variants = [set(_tokenize(v)) for v in {hint, full}]
+            variants = [v for v in variants if v]
+            if not variants:
+                return None
 
             db = create_session()
             try:
-                q = db.query(KBDocument).filter(KBDocument.status == "indexed")
-                conds = []
-                for n in needles:
-                    like = f"%{n}%"
-                    conds.append(func.lower(KBDocument.title).like(like))
-                    conds.append(func.lower(KBDocument.source_uri).like(like))
-                doc = q.filter(or_(*conds)).first()
-                return doc.id if doc else None
+                docs = (
+                    db.query(KBDocument.id, KBDocument.title, KBDocument.source_uri)
+                    .filter(KBDocument.status == "indexed")
+                    .all()
+                )
             finally:
                 db.close()
+
+            best_id: int | None = None
+            best_extra: int | None = None
+            for did, title, uri in docs:
+                title_lemmas = set(_tokenize(title or "")) | set(_tokenize(uri or ""))
+                if not title_lemmas:
+                    continue
+                for cand in variants:
+                    if cand <= title_lemmas:
+                        extra = len(title_lemmas - cand)
+                        if best_extra is None or extra < best_extra:
+                            best_id, best_extra = did, extra
+                        break
+            return best_id
         except Exception as e:
             logger.warning("doc-hint resolve failed: {}", e)
             return None
@@ -964,15 +988,26 @@ class RAGPipeline:
         # --- exact: «статья 81», «раздел 3», «пункт 5» ---
         if plan.mode == "exact_article" and plan.article_nos:
             t = perf_counter()
+            # Привязка к документу: сперва явная подсказка («ТК», «коллективный
+            # договор»), иначе семантическое голосование — как в extreme/range.
+            # Без неё «пункт 3» выбирался по ВСЕЙ базе и контекст заполняли
+            # пункты 3 чужих документов. При пустом результате в выбранном
+            # документе откатываемся к глобальному поиску (recall не теряем).
             doc_id = self._resolve_doc_hint(plan.doc_hint)
+            if doc_id is None:
+                doc_id = self._pick_relevant_document(plan.search_text or query)
             if is_article:
                 chunks = self._exact_article_by_meta(plan.article_nos, document_id=doc_id)
+                if not chunks and doc_id is not None:
+                    chunks = self._exact_article_by_meta(plan.article_nos, document_id=None)
                 if not chunks:  # старые данные без article_no — текстовый fallback
                     chunks = self._exact_article_retrieve(
                         [self._fmt_article_no(n) for n in plan.article_nos]
                     )
             else:
                 chunks = self._exact_units_by_meta(plan.unit, plan.article_nos, document_id=doc_id)
+                if not chunks and doc_id is not None:
+                    chunks = self._exact_units_by_meta(plan.unit, plan.article_nos, document_id=None)
             logger.info(
                 "[RAG] plan=exact unit={} nos={} returned={} in {:.2f}s",
                 plan.unit, plan.article_nos, len(chunks), perf_counter() - t,
@@ -1341,7 +1376,17 @@ class RAGPipeline:
                 (intent_hint == "smalltalk" or _is_smalltalk(routed))
                 and not has_info_signal
             )
-            if is_small or _looks_nonknowledge(routed):
+            # Гейт мусора НЕ перебивает классификатор и планировщик: если интент —
+            # содержательный вопрос (kb_question) или в запросе есть структурные
+            # сигналы (цифры, «пункт/статья/первый…»), поиск обязателен. Иначе
+            # «Назови оттуда положение номер 3.2» уходил в чистый чат и модель
+            # выдумывала текст пункта (галлюцинация с фейковым «Источником»).
+            looks_trash = (
+                intent_hint != "kb_question"
+                and not needs_planner(routed)
+                and _looks_nonknowledge(routed)
+            )
+            if is_small or looks_trash:
                 logger.info("[RAG] нет смысла искать (болтовня/тривиальный запрос) — обычный ответ")
                 use_rag = False
                 casual = is_small

@@ -1296,6 +1296,23 @@ a.chat-attachment-action:hover {
 }
 .chat-answer-note .chat-note-contact i { margin-right: 4px; opacity: 0.7; }
 
+/* ПДн: предупреждение об автоудалении сообщения и документа */
+.chat-pii-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 8px 12px;
+  border-left: 3px solid #f59e0b;
+  border-radius: 8px;
+  background: #fffbeb;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: #92400e;
+  max-width: 640px;
+}
+.chat-pii-note > i { margin-top: 2px; color: #d97706; }
+
 /* А2: связанные бланки/документы под ответом (карточки .chat-attachment) */
 .chat-related-files { margin-top: 12px; max-width: 640px; }
 .chat-related-title {
@@ -1328,7 +1345,7 @@ a.chat-attachment-action:hover {
 .faq-quick-panel {
   margin-top: 8px;
   padding: 12px;
-  max-height: 240px; overflow-y: auto;
+  max-height: 320px; overflow-y: auto;
   background: var(--bg-secondary, #f8fafc);
   border: 1px solid var(--border-color, #e2e8f0);
   border-radius: 14px;
@@ -1346,6 +1363,26 @@ a.chat-attachment-action:hover {
   padding: 2px 9px; border-radius: 999px;
 }
 .faq-quick-chips { display: flex; flex-wrap: wrap; gap: 7px; }
+/* Уровень вопросов/веток: вертикальный список во всю ширину — длинные
+   формулировки не давятся в «таблетки» и легко пробегаются глазами. */
+.faq-quick-chips.faq-chips-list { flex-direction: column; align-items: stretch; gap: 6px; }
+.faq-quick-chips.faq-chips-list .faq-chip {
+  width: 100%; justify-content: flex-start;
+  padding: 9px 12px; border-radius: 10px;
+  font-size: 0.88rem; line-height: 1.35;
+  color: var(--text-primary, #0f172a);
+  white-space: normal; text-align: left;
+}
+.faq-chip-q::before {
+  content: "\f059";                          /* fa-circle-question */
+  font: 400 0.85rem 'Font Awesome 6 Free';
+  color: var(--tyuiu-blue, #1E40AF); opacity: 0.65; flex-shrink: 0;
+}
+.faq-chip-branch::before {
+  content: "\f126";                          /* fa-code-branch */
+  font: 900 0.8rem 'Font Awesome 6 Free';
+  color: var(--tyuiu-blue, #1E40AF); opacity: 0.65; flex-shrink: 0;
+}
 .faq-chip {
   display: inline-flex; align-items: center; gap: 7px;
   padding: 7px 13px; border-radius: 12px;

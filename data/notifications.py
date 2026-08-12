@@ -9,11 +9,14 @@ from data.db_session import SqlAlchemyBase
 
 
 class Notification(SqlAlchemyBase):
-    """Системное уведомление (broadcast — видно всем пользователям).
+    """Системное уведомление. user_id=NULL — broadcast (видно всем), иначе —
+    адресное (видно только этому пользователю).
 
     kind:
       web_update — парсер обнаружил изменение веб-страницы в базе знаний;
-                    extra = {"old_content": <прежний текст>} для diff-просмотра.
+                    extra = {"old_content": <прежний текст>} для diff-просмотра;
+      doc_expired / doc_stale — контроль актуальности БЗ (А7);
+      pii_autodeleted — автоудаление сообщений/документов с ПДн (адресное).
     Системные уведомления НЕ удаляются после прочтения — прочтение лишь гасит
     бейдж (см. NotificationRead)."""
 
@@ -21,6 +24,8 @@ class Notification(SqlAlchemyBase):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     kind: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    # NULL = широковещательное; иначе — только для этого пользователя
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     title: Mapped[str] = mapped_column(String(500), nullable=False, default="")
     body: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Связанный документ БЗ (для web_update — новая версия страницы)

@@ -26,24 +26,42 @@ def _apply_sqlite_pragmas(dbapi_connection, _connection_record):
     cur.close()
 
 
-def global_init(db_file: str | Path) -> sa.Engine:
+def is_sqlite() -> bool:
+    """True, если приложение работает на SQLite (а не на PostgreSQL)."""
+    return _engine is None or _engine.dialect.name == "sqlite"
+
+
+def global_init(db_file: str | Path, database_url: str | None = None) -> sa.Engine:
+    """Инициализация БД. Если передан database_url (PostgreSQL) — используется он,
+    иначе SQLite-файл db_file."""
     global _engine, _factory
     if _engine is not None:
         return _engine
 
-    db_file = str(db_file).strip()
-    if not db_file:
-        raise ValueError("Необходимо указать файл базы данных.")
+    database_url = (database_url or "").strip()
 
-    conn_str = f"sqlite:///{db_file}?check_same_thread=False"
-    _engine = sa.create_engine(
-        conn_str,
-        echo=False,
-        future=True,
-        pool_pre_ping=True,
-    )
-
-    event.listens_for(_engine, "connect")(_apply_sqlite_pragmas)
+    if database_url:
+        conn_str = database_url
+        _engine = sa.create_engine(
+            conn_str,
+            echo=False,
+            future=True,
+            pool_pre_ping=True,
+            pool_size=10,
+            max_overflow=20,
+        )
+    else:
+        db_file = str(db_file).strip()
+        if not db_file:
+            raise ValueError("Необходимо указать файл базы данных.")
+        conn_str = f"sqlite:///{db_file}?check_same_thread=False"
+        _engine = sa.create_engine(
+            conn_str,
+            echo=False,
+            future=True,
+            pool_pre_ping=True,
+        )
+        event.listens_for(_engine, "connect")(_apply_sqlite_pragmas)
 
     # Импорт всех моделей для регистрации в metadata
     from data import __all_models  # noqa: F401
@@ -51,7 +69,10 @@ def global_init(db_file: str | Path) -> sa.Engine:
     SqlAlchemyBase.metadata.create_all(_engine)
     _factory = sessionmaker(bind=_engine, expire_on_commit=False, autoflush=False)
 
-    _apply_light_migrations(_engine)
+    # Лёгкие миграции нужны только SQLite: там таблицы могли быть созданы
+    # старой версией приложения. В PostgreSQL схему создаёт create_all выше.
+    if _engine.dialect.name == "sqlite":
+        _apply_light_migrations(_engine)
     _seed_template_categories()
     return _engine
 
@@ -122,6 +143,9 @@ def _apply_light_migrations(engine: sa.Engine) -> None:
         # Мессенджер: размеры изображений для плейсхолдера
         ("user_message_files", "img_w", "INTEGER"),
         ("user_message_files", "img_h", "INTEGER"),
+        # ПДн: эфемерные сгенерированные документы + адресные уведомления
+        ("my_documents", "is_pii", "BOOLEAN NOT NULL DEFAULT 0"),
+        ("notifications", "user_id", "INTEGER"),
     ]
     with engine.begin() as conn:
         for table, column, ddl in columns:

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from config import settings
@@ -54,7 +54,8 @@ async def home(
 ):
     docs = (
         db.query(MyDocuments)
-        .filter(MyDocuments.user_id == user.id)
+        # ПДн-документы не храним — на главной их не показываем.
+        .filter(MyDocuments.user_id == user.id, MyDocuments.is_pii.is_(False))
         .order_by(MyDocuments.last_activity.desc())
         .limit(12)
         .all()
@@ -107,13 +108,11 @@ async def news_media_view(
     m = db.get(NewsMedia, media_id)
     base = f"/api/news/media/{media_id}"
     if not m:
-        return render(request, "document_view.html",
-                      {"title": "Файл", "download_url": base, "mode": "missing"})
+        return _view_response(request,
+                              {"title": "Файл", "download_url": base, "mode": "missing"})
     ctx = _build_view_ctx(m.stored_path, m.original_name, base)
     ctx["download_url"] = f"{base}?download=1"
-    if ctx.get("mode") == "pdf":
-        return RedirectResponse(url=ctx["inline_url"], status_code=302)
-    return render(request, "document_view.html", ctx)
+    return _view_response(request, ctx)
 
 
 @router.get("/news/{post_id}", name="page_news_article")
@@ -164,10 +163,19 @@ async def messenger_file_view(
     rec = db.get(UserMessageFile, file_id)
     base = f"/api/messenger/files/{file_id}"
     if not rec:
-        return render(request, "document_view.html",
-                      {"title": "Файл", "download_url": base, "mode": "missing"})
+        return _view_response(request,
+                              {"title": "Файл", "download_url": base, "mode": "missing"})
     ctx = _build_view_ctx(rec.stored_path, rec.original_name, base)
     ctx["download_url"] = f"{base}?download=1"          # кнопка «Скачать» — принудительно
+    return _view_response(request, ctx)
+
+
+def _view_response(request: Request, ctx: dict):
+    """Ответ страницы просмотра документа: HTML-шаблон (легаси) или JSON-контекст
+    для SPA-фронтенда (?format=json). Для pdf легаси-вариант делает нативный
+    redirect, SPA получает mode=pdf + inline_url и переходит сам."""
+    if request.query_params.get("format") == "json":
+        return JSONResponse(ctx)
     if ctx.get("mode") == "pdf":
         return RedirectResponse(url=ctx["inline_url"], status_code=302)
     return render(request, "document_view.html", ctx)
@@ -278,8 +286,8 @@ async def document_view(
     doc = db.get(KBDocument, doc_id)
     download_url = f"/api/kb/documents/{doc_id}/download"
     if not doc:
-        return render(request, "document_view.html",
-                      {"title": "Документ", "download_url": download_url, "mode": "missing"})
+        return _view_response(request,
+                              {"title": "Документ", "download_url": download_url, "mode": "missing"})
 
     # А6: редактор БЗ может править извлечённый текст прямо со страницы просмотра
     can_edit = bool(
@@ -292,7 +300,7 @@ async def document_view(
     # ?text=1 — текстовая версия любого документа (извлечённый текст всегда
     # отображается, в отличие от тяжёлых/сложных оригиналов).
     if text and (doc.content or "").strip():
-        return render(request, "document_view.html", {
+        return _view_response(request, {
             "title": doc.title or "Документ",
             "download_url": download_url,
             "mode": "text",
@@ -308,7 +316,7 @@ async def document_view(
         n = db.get(Notification, diff)
         old_content = (n.extra or {}).get("old_content") if n else None
         if n and n.document_id == doc.id and old_content is not None:
-            return render(request, "document_view.html", {
+            return _view_response(request, {
                 "title": f"Обновление: {doc.title or 'Документ'}",
                 "download_url": download_url,
                 "mode": "diff",
@@ -320,7 +328,7 @@ async def document_view(
     # Файла на диске нет; если текст ещё не сохранён (старые записи) — открываем оригинал.
     if doc.source_type == "web":
         if doc.content:
-            return render(request, "document_view.html", {
+            return _view_response(request, {
                 "title": doc.title or "Документ",
                 "download_url": download_url,  # для web → редирект на оригинал
                 "mode": "markdown",
@@ -336,7 +344,7 @@ async def document_view(
     # слева оригинал (PDF/скан), справа извлечённый (распознанный) текст.
     if (doc.extra or {}).get("ocr_applied") and (doc.content or "").strip():
         ext = Path(doc.source_uri).suffix.lower() if doc.source_uri else ""
-        return render(request, "document_view.html", {
+        return _view_response(request, {
             "title": doc.title or "Документ",
             "download_url": download_url,
             "mode": "ocr_split",
@@ -348,9 +356,6 @@ async def document_view(
         })
 
     ctx = _build_view_ctx(doc.source_uri, doc.title or "Документ", download_url)
-    # PDF — чистый нативный просмотр без обёртки приложения
-    if ctx.get("mode") == "pdf":
-        return RedirectResponse(url=ctx["inline_url"], status_code=302)
     ctx.update(edit_ctx)
 
     if ctx.get("mode") == "docx" and (doc.content or "").strip():
@@ -372,7 +377,7 @@ async def document_view(
                 ),
                 "original_url": f"/kb/documents/{doc_id}/view?original=1",
             })
-    return render(request, "document_view.html", ctx)
+    return _view_response(request, ctx)
 
 
 @router.get("/kb/templates/{template_id}/view", name="page_template_view")
@@ -388,16 +393,14 @@ async def template_view(
     tpl = db.get(DocTemplate, template_id)
     download_url = f"/api/kb/templates/{template_id}/download"
     if not tpl:
-        return render(request, "document_view.html",
-                      {"title": "Шаблон", "download_url": download_url, "mode": "missing"})
+        return _view_response(request,
+                              {"title": "Шаблон", "download_url": download_url, "mode": "missing"})
     # Для бланка без переменных показываем версию с подставленными названиями авто-полей.
     from services.documents.generator import template_display_path
 
     display = str(template_display_path(tpl))
     ctx = _build_view_ctx(display, tpl.title or "Шаблон", download_url)
-    if ctx.get("mode") == "pdf":
-        return RedirectResponse(url=ctx["inline_url"], status_code=302)
-    return render(request, "document_view.html", ctx)
+    return _view_response(request, ctx)
 
 
 @router.get("/documents/{doc_id}/view", name="page_my_doc_view")
@@ -412,13 +415,10 @@ async def my_document_view(
     doc = db.get(MyDocuments, doc_id)
     download_url = f"/api/documents/{doc_id}/download"
     if not doc:
-        return render(request, "document_view.html",
-                      {"title": "Документ", "download_url": download_url, "mode": "missing"})
+        return _view_response(request,
+                              {"title": "Документ", "download_url": download_url, "mode": "missing"})
     ctx = _build_view_ctx(doc.file_path, doc.title or "Документ", download_url)
-    # PDF — чистый нативный просмотр без обёртки приложения
-    if ctx.get("mode") == "pdf":
-        return RedirectResponse(url=ctx["inline_url"], status_code=302)
-    return render(request, "document_view.html", ctx)
+    return _view_response(request, ctx)
 
 
 @router.get("/chat/{session_id}", name="page_chat")

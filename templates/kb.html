@@ -2,6 +2,8 @@
 
 {% block title %}База знаний{% endblock %}
 
+{% block body_class %}page-kb{% endblock %}
+
 {% block extra_css %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/kb.css') }}">
 {% endblock %}
@@ -56,6 +58,9 @@
         <input type="file" id="kb1cFileInput" accept=".zip" hidden>
       </label>
       <input type="search" class="kb-search-input" id="kbDocsSearch" placeholder="Поиск по документам…">
+      <button class="kb-btn-secondary kb-filter-open" type="button" data-filter-for="documents" title="Открыть фильтры">
+        <i class="fas fa-filter"></i> Фильтры <span class="kb-filter-count" hidden>0</span>
+      </button>
     </div>
     <div class="kb-upload-hint">Поддерживаются: PDF (сканы — авто-OCR), DOCX/DOC, XLSX/XLS, RTF, ODT/ODS, TXT, MD. «Импорт из 1С» — ZIP с файлами.</div>
 
@@ -90,6 +95,9 @@
 
     <div class="kb-actions">
       <input type="search" class="kb-search-input" id="kbSourcesSearch" placeholder="Поиск по источникам…">
+      <button class="kb-btn-secondary kb-filter-open" type="button" data-filter-for="sources" title="Открыть фильтры">
+        <i class="fas fa-filter"></i> Фильтры <span class="kb-filter-count" hidden>0</span>
+      </button>
     </div>
 
     <div class="kb-list" id="kbSourcesList">
@@ -132,6 +140,9 @@
 
     <div class="kb-actions">
       <input type="search" class="kb-search-input" id="kbTplSearch" placeholder="Поиск по шаблонам…">
+      <button class="kb-btn-secondary kb-filter-open" type="button" data-filter-for="templates" title="Открыть фильтры">
+        <i class="fas fa-filter"></i> Фильтры <span class="kb-filter-count" hidden>0</span>
+      </button>
     </div>
 
     <div class="kb-list" id="kbTemplatesList">
@@ -201,6 +212,9 @@
         <input type="file" id="kbFaqImportInput" accept=".docx,.doc" multiple hidden>
       </label>
       <input type="search" class="kb-search-input" id="kbFaqSearch" placeholder="Поиск по вопросам и ответам…">
+      <button class="kb-btn-secondary kb-filter-open" type="button" data-filter-for="faq" title="Открыть фильтры">
+        <i class="fas fa-filter"></i> Фильтры <span class="kb-filter-count" hidden>0</span>
+      </button>
     </div>
     <div class="kb-upload-hint">
       Записи FAQ подмешиваются в ответы бота при совпадении формулировок; у ветвящихся блоков
@@ -223,6 +237,121 @@
     </div>
   </section>
   {% endif %}
+</div>
+
+<!-- Модалка: фильтры активной вкладки (открывается кнопкой «Фильтры») -->
+<div class="kb-modal" id="kbFiltersModal" style="display:none;">
+  <div class="kb-modal-overlay"></div>
+  <div class="kb-modal-content kb-filters-modal">
+    <button class="kb-modal-close" id="kbFiltersClose">&times;</button>
+    <h3><i class="fas fa-filter"></i> Фильтры</h3>
+
+    <div class="kb-filter-bar" id="kbDocsFilterBar" data-filter-panel="documents">
+      <label>Группа
+        <select id="kbDocsGroupFilter" class="kb-select"></select></label>
+      <label>Статус индексации
+        <select id="kbDocsStatusFilter" class="kb-select">
+          <option value="">Любой</option>
+          <option value="indexed">Готов</option>
+          <option value="busy">В обработке</option>
+          <option value="failed">Ошибка</option>
+        </select></label>
+      <label>Приоритет в поиске
+        <select id="kbDocsPriorityFilter" class="kb-select">
+          <option value="">Любой</option>
+          <option value="3">Высокий</option>
+          <option value="2">Средний</option>
+          <option value="1">Низкий</option>
+        </select></label>
+      <label>Актуальность
+        <select id="kbDocsReviewFilter" class="kb-select">
+          <option value="">Любая</option>
+          <option value="expired">Устаревшие</option>
+          <option value="review_due">Пора пересмотреть</option>
+          <option value="fresh">Актуальные</option>
+        </select></label>
+      <label>Особенности
+        <select id="kbDocsFeatureFilter" class="kb-select">
+          <option value="">Все</option>
+          <option value="archived">Архивные</option>
+          <option value="noarchive">Без архивных</option>
+          <option value="ocr">Распознаны (OCR)</option>
+          <option value="pii">С меткой «ПДн?»</option>
+        </select></label>
+      <button class="kb-filter-reset" id="kbDocsFilterReset" type="button" title="Сбросить фильтры и поиск">
+        <i class="fas fa-rotate-left"></i> Сбросить
+      </button>
+    </div>
+
+    <div class="kb-filter-bar" id="kbSourcesFilterBar" data-filter-panel="sources">
+      <label>Сайт
+        <select id="kbSourcesGroupFilter" class="kb-select"></select></label>
+      <label>Состояние источника
+        <select id="kbSourcesStateFilter" class="kb-select">
+          <option value="">Любое</option>
+          <option value="on">Активен</option>
+          <option value="off">Отключён</option>
+        </select></label>
+      <label>Индексация содержимого
+        <select id="kbSourcesIdxFilter" class="kb-select">
+          <option value="">Любая</option>
+          <option value="indexed">Готов</option>
+          <option value="progress">Индексируется</option>
+          <option value="failed">Ошибка</option>
+        </select></label>
+      <label>Приоритет в поиске
+        <select id="kbSourcesPriorityFilter" class="kb-select">
+          <option value="">Любой</option>
+          <option value="3">Высокий</option>
+          <option value="2">Средний</option>
+          <option value="1">Низкий</option>
+        </select></label>
+      <button class="kb-filter-reset" id="kbSourcesFilterReset" type="button" title="Сбросить фильтры и поиск">
+        <i class="fas fa-rotate-left"></i> Сбросить
+      </button>
+    </div>
+
+    <div class="kb-filter-bar" id="kbTplFilterBar" data-filter-panel="templates">
+      <label>Категория
+        <select id="kbTplGroupFilter" class="kb-select"></select></label>
+      <label>Тип шаблона
+        <select id="kbTplKindFilter" class="kb-select">
+          <option value="">Любой</option>
+          <option value="fillable">С полями формы</option>
+          <option value="reference">Справочные (без полей)</option>
+          <option value="default">По умолчанию в категории</option>
+        </select></label>
+      <button class="kb-filter-reset" id="kbTplFilterReset" type="button" title="Сбросить фильтры и поиск">
+        <i class="fas fa-rotate-left"></i> Сбросить
+      </button>
+    </div>
+
+    <div class="kb-filter-bar" id="kbFaqFilterBar" data-filter-panel="faq">
+      <label>Тематика
+        <select id="kbFaqGroupFilter" class="kb-select"></select></label>
+      <label>Участие в ответах бота
+        <select id="kbFaqStateFilter" class="kb-select">
+          <option value="">Любое</option>
+          <option value="on">Активные</option>
+          <option value="off">Выключенные</option>
+        </select></label>
+      <label>Тип записи
+        <select id="kbFaqTypeFilter" class="kb-select">
+          <option value="">Любой</option>
+          <option value="branch">Ветвящиеся (с уточнением)</option>
+          <option value="simple">Простые</option>
+          <option value="contact">С контактом</option>
+          <option value="docs">Со ссылками на документы</option>
+        </select></label>
+      <button class="kb-filter-reset" id="kbFaqFilterReset" type="button" title="Сбросить фильтры и поиск">
+        <i class="fas fa-rotate-left"></i> Сбросить
+      </button>
+    </div>
+
+    <div class="kb-modal-actions">
+      <button class="kb-btn-primary" id="kbFiltersDone" type="button">Готово</button>
+    </div>
+  </div>
 </div>
 
 <!-- Модалка: подтверждение результата распознавания при быстрой загрузке -->

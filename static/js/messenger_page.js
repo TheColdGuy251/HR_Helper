@@ -7,7 +7,9 @@
   if (!layout) return;
 
   // Открыт как отдельное окно (вынос миничата) — прячем шапку сайта, чат на весь экран.
-  try { if (new URLSearchParams(location.search).has("popup")) document.body.classList.add("msgr-popup"); } catch (e) {}
+  let isPopup = false;
+  try { isPopup = new URLSearchParams(location.search).has("popup"); } catch (e) {}
+  if (isPopup) document.body.classList.add("msgr-popup");
 
   const ME = parseInt(layout.dataset.me || "0", 10);
   const $ = (id) => document.getElementById(id);
@@ -51,8 +53,11 @@
 
   // «Назад» → сначала гасим контекстное меню/выделение (если открыты), и только
   // если ничего не было открыто — уходим на страницу, с которой развернули чат.
+  // В отдельном окне (popup) уходить некуда: кнопка вместо выхода раскрывает
+  // и прячет список диалогов — в окне доступен только сам чат.
   $("mpPageBack").addEventListener("click", () => {
     if (interactions && interactions.closeOverlays && interactions.closeOverlays()) return;
+    if (isPopup) { layout.classList.toggle("sidebar-collapsed"); return; }
     let url = "/";
     try { url = sessionStorage.getItem("msgrReturnUrl") || "/"; } catch (e) {}
     if (url === location.pathname + location.search) url = "/";
@@ -60,6 +65,12 @@
   });
   // На телефоне стартуем со списком чатов (шторка открыта), на десктопе сайдбар раскрыт.
   if (isMobile()) showSidebar();
+  if (isPopup) {
+    const back = $("mpPageBack");
+    back.title = "Диалоги";
+    back.innerHTML = '<i class="fa-solid fa-bars"></i>';
+    hideSidebar();   // стартуем со свёрнутым списком — только сам чат
+  }
 
   // ─────────── список диалогов ───────────
   let searchTimer = null;
@@ -181,7 +192,7 @@
     fwdChip.hidden = !state.pendingForward;
     if (state.pendingForward) fwdChipText.textContent = "Переслать: " + state.pendingForward.preview;
     convsEl.querySelectorAll(".msgr-conv").forEach((el) => el.classList.remove("active"));
-    if (isMobile()) hideSidebar();
+    if (isMobile() || isPopup) hideSidebar();   // в popup после выбора диалога — только чат
 
     // Есть кеш → мгновенно показываем и синхронизируем новое в фоне.
     const cached = cache[c.key];
@@ -605,7 +616,8 @@
       insertOrdered(node, d.id);   // ниже вопроса (у вопроса id меньше)
       aiNodes[d.id] = node; scrollBottom();
     }
-    if (d.phase === "status") U.setAiStatus(node, d.status);
+    if (d.phase === "queued") U.setAiQueue(node, d.queue_position, d.queue_total);
+    else if (d.phase === "status") U.setAiStatus(node, d.status);
     else if (d.phase === "sources") node._srcs = d.sources || [];
     else if (d.phase === "chunk") { node._acc += d.chunk; U.setAiText(node, node._acc); if (isNearBottom()) scrollBottom(); }
     else if (d.phase === "done") {

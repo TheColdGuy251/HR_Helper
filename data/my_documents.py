@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from sqlalchemy import String, DateTime, ForeignKey, Integer, JSON, func
+from sqlalchemy import Boolean, String, DateTime, ForeignKey, Integer, JSON, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from data.db_session import SqlAlchemyBase
@@ -24,6 +24,11 @@ class MyDocuments(SqlAlchemyBase):
 
     # Заполненные поля шаблона
     fields: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    # Документ содержит персональные данные (ТЗ: такие документы не храним) —
+    # скрыт из «Моих документов» и автоматически удаляется по TTL вместе
+    # с сообщениями чата (services/tasks/pii_cleanup.py).
+    is_pii: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.current_timestamp())
     last_activity: Mapped[datetime] = mapped_column(

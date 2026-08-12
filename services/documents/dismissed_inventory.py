@@ -268,6 +268,7 @@ def create_inventory(
         progress=100,
         status="ready",
         fields={"year": result["year"], "count": len(result["items"])},
+        is_pii=True,  # ФИО уволенных работников — документ не хранится
     )
     db.add(rec)
     db.commit()

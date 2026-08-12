@@ -204,6 +204,7 @@ def create_certificate(db: Session, user: User, xls_path: str | Path) -> tuple[M
         progress=100,
         status="ready",
         fields={"fio": fio},
+        is_pii=True,  # ПДн работника — документ не хранится (автоудаление)
     )
     db.add(rec)
     db.commit()

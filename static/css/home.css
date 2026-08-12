@@ -62,16 +62,19 @@
 }
 
 /* ===== КАРТОЧКИ HR-СЦЕНАРИЕВ ===== */
+/* В каждой группе 2–3 карточки: auto-fit схлопывает пустые колонки, а
+   justify-content центрирует ряд — карточки одинаковой ширины и без «дыры»
+   справа (раньше жёсткие 4 колонки прижимали 2–3 карточки влево). */
 .home-cards .card-grid {
   display: grid;
   grid-template-columns: 1fr;
   gap: 18px;
 }
 @media (min-width: 720px) {
-  .home-cards .card-grid { grid-template-columns: repeat(3, 1fr); }
-}
-@media (min-width: 1024px) {
-  .home-cards .card-grid { grid-template-columns: repeat(4, 1fr); }
+  .home-cards .card-grid {
+    grid-template-columns: repeat(auto-fit, minmax(240px, 320px));
+    justify-content: center;
+  }
 }
 
 .card {

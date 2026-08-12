@@ -733,6 +733,7 @@ def _forward_snapshot(db: Session, chat_message_id: int) -> Optional[dict]:
     if cm is None:
         return None
     attachment = None
+    is_pii = bool((cm.meta or {}).get("pii_doc"))
     if cm.attachment_document_id:
         doc = db.get(MyDocuments, cm.attachment_document_id)
         if doc:
@@ -741,11 +742,17 @@ def _forward_snapshot(db: Session, chat_message_id: int) -> Optional[dict]:
                 "title": doc.title or "Документ",
                 "filename": (doc.file_path.rsplit("\\", 1)[-1].rsplit("/", 1)[-1]) if doc.file_path else "",
             }
-    return {
+            is_pii = is_pii or bool(doc.is_pii)
+    snap = {
         "content": cm.content or "",
         "attachment": attachment,
         "sources": cm.sources or [],
     }
+    # ПДн-содержимое не хранится: пересылка помечается и автоудаляется по TTL
+    # (services/tasks/pii_cleanup.py).
+    if is_pii:
+        snap["pii"] = True
+    return snap
 
 
 def _recipients_of(db: Session, msg: UserMessage) -> list[int]:
@@ -1194,8 +1201,6 @@ async def ask_ai(
         for uid in recipients:
             notify.publish(uid, dict(extra, type="ai_stream", id=ai_id, peer_key=pk_map[uid], asker_id=asker))
 
-    _publish({"phase": "start", "status": "search"})
-
     def _worker() -> None:
         from data.db_session import create_session
         from services.rag.pipeline import get_pipeline
@@ -1232,7 +1237,28 @@ async def ask_ai(
             s.close()
         _publish({"phase": "done", "content": display, "sources": srcs})
 
-    threading.Thread(target=_worker, daemon=True).start()
+    # Через общую очередь ассистента: тот же лимит параллелизма и честный порядок,
+    # что и у /chat (см. services/assistant_queue.py). Пока запрос ждёт — шлём
+    # позицию в очереди; при старте — привычное «start». При переполнении/лимите
+    # отдаём отказ прямо в плейсхолдер ответа ИИ.
+    from services.assistant_queue import QueueRejected, get_assistant_queue
+
+    def _on_position(pos: int, total: int) -> None:
+        _publish({"phase": "queued", "queue_position": pos, "queue_total": total})
+
+    def _on_start() -> None:
+        _publish({"phase": "start", "status": "search"})
+
+    try:
+        get_assistant_queue().submit(
+            _worker, user_id=asker, on_position=_on_position, on_start=_on_start
+        )
+    except QueueRejected as e:
+        db.query(UserMessage).filter(UserMessage.id == ai_id).update(
+            {UserMessage.forwarded_meta: {"content": e.user_message, "sources": [], "ai": True}}
+        )
+        db.commit()
+        _publish({"phase": "done", "content": e.user_message, "sources": []})
     return {"question": _serialize(q, user.id, user, db), "ai_message_id": ai_id}
 
 

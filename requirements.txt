@@ -21,6 +21,7 @@ pydantic[email]              # EmailStr в схемах регистрации
 sqlalchemy>=2.0
 alembic>=1.13               # миграции (каталог migrations/)
 bcrypt>=4.1                 # хеширование паролей
+psycopg[binary]>=3.2        # драйвер PostgreSQL (боевая БД; SQLite — только фолбэк)
 
 # --- Шифрование ПДн (AES-GCM) -------------------------------------------------
 cryptography>=42.0          # services/pii/crypto.py — шифрование персональных данных

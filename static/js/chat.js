@@ -610,12 +610,14 @@ if (elem) {
                 // Heartbeat — игнорируем
                 if (payload && payload.noop) continue;
 
-                // Статусы pipeline («Поиск…», «Реранкинг…», «Генерация…»)
+                // Статусы pipeline («В очереди…», «Поиск…», «Реранкинг…», «Генерация…»)
                 if (payload && payload.status) {
-                    const headerMap = { search: 'Поиск в базе знаний…', rerank: 'Анализ найденного…', generate: 'Генерация ответа…' };
-                    if (chatStatus) chatStatus.textContent = headerMap[payload.status] || 'Обработка…';
+                    const headerMap = { queued: 'Ожидание в очереди…', search: 'Поиск в базе знаний…', rerank: 'Анализ найденного…', generate: 'Генерация ответа…' };
+                    let label = headerMap[payload.status] || 'Обработка…';
+                    if (payload.status === 'queued') label = queueLabel(payload.queue_position, payload.queue_total);
+                    if (chatStatus) chatStatus.textContent = label;
                     // Обновляем индикатор внутри пузырька, если ответ ещё не начат
-                    if (assistantContentEl) setThinkingStatus(assistantContentEl, payload.status);
+                    if (assistantContentEl) setThinkingStatus(assistantContentEl, payload.status, payload.queue_position, payload.queue_total);
                     // initial-payload может тоже нести status — продолжаем обработку
                     if (payload.initial !== true) continue;
                 }
@@ -762,7 +764,7 @@ if (elem) {
                         // Мета ответа: clarify-чипы + дисклеймер/контакт (А2/А3)
                         {
                             const wrapEl = el.querySelector('.message-wrapper');
-                            if (wrapEl && !wrapEl.querySelector('.chat-answer-note, .chat-clarify-opts')) {
+                            if (wrapEl && !wrapEl.querySelector('.chat-answer-note, .chat-clarify-opts, .chat-pii-note')) {
                                 const cEl = el.querySelector('.message-content');
                                 const srcsMeta = (payload.sources && payload.sources.length)
                                     ? payload.sources
@@ -1250,10 +1252,16 @@ function rebuildAssistantMessage(el, msg) {
         chipsEl.innerHTML = '';
         pathEl.innerHTML = '';
         if (!menu) return;
+        // Категории — компактные «таблетки» в ряд; вопросы и ветки — вертикальный
+        // список на всю ширину: длинные формулировки так читаются заметно легче.
+        chipsEl.classList.toggle('faq-chips-list', stack.length > 0);
         if (stack.length) {
             pathEl.appendChild(chip('← Назад', 'faq-chip-back', () => { stack.pop(); render(); }));
             const crumbs = [menu[stack[0]].label];
-            if (stack.length > 1) crumbs.push(menu[stack[0]].items[stack[1]].block);
+            if (stack.length > 1) {
+                const it = menu[stack[0]].items[stack[1]];
+                crumbs.push(it.label || it.block);
+            }
             const span = document.createElement('span');
             span.className = 'faq-path-text';
             span.textContent = crumbs.join(' → ');
@@ -1267,8 +1275,8 @@ function rebuildAssistantMessage(el, msg) {
             menu[stack[0]].items.forEach((item, j) => {
                 const hasOpts = item.options && item.options.length;
                 chipsEl.appendChild(chip(
-                    item.block + (hasOpts ? ' …' : ''),
-                    hasOpts ? 'faq-chip-branch' : '',
+                    item.label || item.block,
+                    hasOpts ? 'faq-chip-branch' : 'faq-chip-q',
                     () => {
                         if (hasOpts) { stack = [stack[0], j]; render(); }
                         else sendFaq(item.question, item.id);
@@ -1278,7 +1286,7 @@ function rebuildAssistantMessage(el, msg) {
         } else {
             const item = menu[stack[0]].items[stack[1]];
             (item.options || []).forEach((opt) => {
-                chipsEl.appendChild(chip(opt.label, '', () =>
+                chipsEl.appendChild(chip(opt.label, 'faq-chip-q', () =>
                     sendFaq(item.question + ' — ' + opt.label, opt.id)));
             });
         }
@@ -1350,9 +1358,19 @@ function renderRelatedFiles(meta) {
         '<i class="fas fa-paperclip"></i> Бланки и документы</div>' + cards + '</div>';
 }
 
+// ПДн: сгенерированный документ с персональными данными не хранится —
+// предупреждаем, что сообщение и файл будут автоматически удалены.
+function renderPiiNote(meta) {
+    if (!meta || !meta.pii_doc) return '';
+    return '<div class="chat-pii-note"><i class="fas fa-user-shield"></i><div>' +
+        '<span class="chat-note-text">Документ содержит персональные данные. По регламенту такие ' +
+        'файлы не хранятся: сообщение и документ будут <b>автоматически удалены примерно через час</b>. ' +
+        'Скачайте файл сейчас, если он вам нужен.</span></div></div>';
+}
+
 function renderAnswerMeta(msg) {
     if (!msg || msg.role !== 'assistant') return '';
-    return renderClarifyChips(msg.meta) + renderRelatedFiles(msg.meta) + renderAnswerNote(msg);
+    return renderPiiNote(msg.meta) + renderClarifyChips(msg.meta) + renderRelatedFiles(msg.meta) + renderAnswerNote(msg);
 }
 
 // ===== Пересланные из мессенджера сообщения (в стиле пересылки мессенджера) =====
@@ -1733,14 +1751,23 @@ function sourceFileIcon(filename) {
 
 // Индикатор «бот думает» внутри пустого пузырька
 const STATUS_LABELS = {
+    queued: 'Ожидание в очереди…',
     search: 'Ищу в базе знаний…',
     rerank: 'Подбираю самые релевантные фрагменты…',
     rerank_done: 'Готовлю ответ…',
     generate: 'Формулирую ответ…',
 };
 
-function renderThinkingIndicator(statusKey) {
-    const label = STATUS_LABELS[statusKey] || 'Подготовка ответа…';
+// «Вы N-й в очереди…» — человекочитаемая позиция запроса в очереди к ассистенту.
+function queueLabel(pos, total) {
+    if (!pos || pos <= 1) return 'Вы следующий в очереди…';
+    return 'Вы ' + pos + '-й в очереди' + (total ? ' из ' + total : '') + '…';
+}
+
+function renderThinkingIndicator(statusKey, queuePos, queueTotal) {
+    const label = (statusKey === 'queued')
+        ? queueLabel(queuePos, queueTotal)
+        : (STATUS_LABELS[statusKey] || 'Подготовка ответа…');
     return `
         <div class="bot-thinking" data-thinking="true">
             <div class="typing-indicator typing-inline">
@@ -1830,7 +1857,7 @@ function setRawContentForElement(contentEl, raw) {
     _withPreservedSelection(contentEl, () => {
         if (!raw) {
             const status = contentEl.dataset.status || 'search';
-            contentEl.innerHTML = renderThinkingIndicator(status);
+            contentEl.innerHTML = renderThinkingIndicator(status, contentEl.dataset.queuePos, contentEl.dataset.queueTotal);
         } else {
             contentEl.innerHTML = formatMessageContent(raw, sources, includeSources);
         }
@@ -1844,13 +1871,20 @@ function appendRawContentForElement(contentEl, chunk) {
     setRawContentForElement(contentEl, next);
 }
 
-function setThinkingStatus(contentEl, statusKey) {
+function setThinkingStatus(contentEl, statusKey, queuePos, queueTotal) {
     if (!contentEl) return;
     contentEl.dataset.status = statusKey;
+    if (statusKey === 'queued') {
+        contentEl.dataset.queuePos = queuePos || 0;
+        contentEl.dataset.queueTotal = queueTotal || 0;
+    } else {
+        delete contentEl.dataset.queuePos;
+        delete contentEl.dataset.queueTotal;
+    }
     const raw = contentEl.dataset.rawContent || '';
     // Перерисовываем индикатор только если контент ещё пустой
     if (!raw) {
-        contentEl.innerHTML = renderThinkingIndicator(statusKey);
+        contentEl.innerHTML = renderThinkingIndicator(statusKey, queuePos, queueTotal);
     }
 }
 

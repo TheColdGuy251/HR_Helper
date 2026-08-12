@@ -1073,6 +1073,10 @@ window.MsgrUI = (function () {
     intent: "Анализирую запрос…", extract_fields: "Разбираю данные…", plan: "Планирую поиск…",
   };
   function aiStatusLabel(s) { return AI_STATUS[s] || "Готовлю ответ…"; }
+  function aiQueueLabel(pos, total) {
+    if (!pos || pos <= 1) return "Вы следующий в очереди…";
+    return "Вы " + pos + "-й в очереди" + (total ? " из " + total : "") + "…";
+  }
   function buildAiStreamNode(m, statusKey) {
     const div = document.createElement("div");
     div.dataset.id = m.id; div._msg = m;
@@ -1090,6 +1094,7 @@ window.MsgrUI = (function () {
     return div;
   }
   function setAiStatus(node, key) { const s = node && node.querySelector(".bot-thinking-status"); if (s) s.textContent = aiStatusLabel(key); }
+  function setAiQueue(node, pos, total) { const s = node && node.querySelector(".bot-thinking-status"); if (s) s.textContent = aiQueueLabel(pos, total); }
   function setAiText(node, text) {
     if (!node) return;
     const live = node.querySelector("[data-ai-live]"); if (live) live.textContent = text;
@@ -1129,7 +1134,7 @@ window.MsgrUI = (function () {
     esc, fmtTime, copyText, buildMessageNode, computeGroupFlags, groupFlag, messageText, groupedCopyText,
     imageLightbox, filePreview, showContextMenu, attachThreadInteractions, scrollToMessage,
     confirmDelete, editMessage, updatePinnedBar, pollModal, pollResultsModal, lastSeenText,
-    buildAiStreamNode, setAiStatus, setAiText, pendingAttsHtml, attachmentsModal, attachLabel,
+    buildAiStreamNode, setAiStatus, setAiQueue, setAiText, pendingAttsHtml, attachmentsModal, attachLabel,
     typingLabel, buildTypingNode, dividerScrollTop,
   };
 })();

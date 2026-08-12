@@ -12,7 +12,9 @@ from services.vectorstore import get_store
 from utils.logger import logger
 
 
-_TOKEN_RE = re.compile(r"[\wа-яёА-ЯЁ]+", re.UNICODE)
+# Составные номера («3.2», «84.1», «3.1.2») сохраняем ЕДИНЫМ токеном — иначе
+# «пункт 3.2» рассыпается на «3» и «2» и BM25 не находит пункт по номеру.
+_TOKEN_RE = re.compile(r"\d+(?:\.\d+)+|[\wа-яёА-ЯЁ]+", re.UNICODE)
 
 # Морфологическая нормализация для BM25 (одинаково к корпусу и к запросу).
 # Слои по убыванию качества: pymorphy3 (лемматизация) → snowball (стемминг) →

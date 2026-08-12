@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections import defaultdict
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from data.chat_message import ChatMessage
@@ -125,7 +126,14 @@ def _ai_items(db: Session, user: User) -> list[dict]:
 
 
 def _system_items(db: Session, user: User) -> tuple[list[dict], int]:
-    notes = db.query(Notification).order_by(Notification.id.desc()).limit(50).all()
+    # Широковещательные (user_id=NULL) + адресные этому пользователю.
+    notes = (
+        db.query(Notification)
+        .filter(or_(Notification.user_id.is_(None), Notification.user_id == user.id))
+        .order_by(Notification.id.desc())
+        .limit(50)
+        .all()
+    )
     read_ids = {
         r.notification_id
         for r in db.query(NotificationRead).filter(NotificationRead.user_id == user.id).all()
@@ -184,7 +192,10 @@ async def mark_system_read(
         r.notification_id
         for r in db.query(NotificationRead).filter(NotificationRead.user_id == user.id).all()
     }
-    for n in db.query(Notification).all():
+    visible = db.query(Notification).filter(
+        or_(Notification.user_id.is_(None), Notification.user_id == user.id)
+    ).all()
+    for n in visible:
         if n.id not in read_ids:
             db.add(NotificationRead(notification_id=n.id, user_id=user.id))
     db.commit()

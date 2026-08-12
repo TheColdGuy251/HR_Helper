@@ -22,13 +22,152 @@ document.addEventListener('DOMContentLoaded', function () {
   const escapeHtml = window.escapeHtml;
   const escapeAttr = window.escapeAttr;
 
-  function filterCards(container, query, selector = '.kb-item, .kb-person-group') {
-    const q = (query || '').trim().toLowerCase();
-    container.querySelectorAll(selector).forEach((el) => {
-      if (!q) { el.style.display = ''; return; }
-      const t = (el.textContent || '').toLowerCase();
-      el.style.display = t.includes(q) ? '' : 'none';
+  /* ============ Группы-блоки: параллельные блоки с раскрытием поверх ============
+     Документы/источники/шаблоны/FAQ группируются в блоки, стоящие в 3 колонки.
+     Свернутый блок ограничен по высоте (стрелка внизу); стрелка или клик по
+     свободному месту раскрывает его ПОВЕРХ нижних групп, повторный клик по
+     свободному месту (или вне блока) сворачивает. */
+  function renderGroupBlocks(listEl, sections, opts = {}) {
+    // Сохраняем раскрытость блоков между перерисовками (авто-обновление списка).
+    const openKeys = new Set(
+      [...listEl.querySelectorAll('.kb-group.is-open')].map((g) => g.dataset.groupKey)
+    );
+    listEl.classList.add('kb-groups');
+    listEl.innerHTML =
+      (opts.prefixHtml ? `<div class="kb-groups-note">${opts.prefixHtml}</div>` : '') +
+      sections.map((sec) => `
+      <div class="kb-group ${openKeys.has(sec.key) ? 'is-open' : ''}" data-group-key="${escapeAttr(sec.key)}">
+        <div class="kb-group-card">
+          <div class="kb-group-head">
+            <i class="fas ${sec.icon || 'fa-folder'}"></i>
+            <span class="kb-group-name">${escapeHtml(sec.name)}</span>
+            <span class="kb-group-count">${sec.count}</span>
+            <button class="kb-group-close" type="button" title="Свернуть" aria-label="Свернуть"><i class="fas fa-xmark"></i></button>
+          </div>
+          <div class="kb-group-items">${sec.html}</div>
+          <button class="kb-group-arrow" type="button" title="Развернуть / свернуть">
+            <i class="fas fa-chevron-down"></i>
+          </button>
+        </div>
+      </div>`).join('');
+
+    listEl.querySelectorAll('.kb-group-card').forEach((card) => {
+      card.addEventListener('click', (e) => {
+        const group = card.closest('.kb-group');
+        if (e.target.closest('.kb-group-close')) { toggleKbGroup(group, false); return; }
+        if (!e.target.closest('.kb-group-arrow')) {
+          // «Свободное место» блока: карточки, кнопки и поля ввода не в счёт.
+          if (e.target.closest('a, button, input, textarea, select, label, .kb-item')) return;
+          // Свернутые списки прокручиваются: клик по вертикальному скроллбару —
+          // это листание, а не сворачивание/раскрытие.
+          const items = e.target.closest('.kb-group-items');
+          if (items && e.target === items) {
+            const r = items.getBoundingClientRect();
+            if (e.clientX > r.left + items.clientWidth) return;
+          }
+        }
+        toggleKbGroup(group);
+      });
     });
+    updateKbGroupFit(listEl);
+  }
+
+  function toggleKbGroup(group, force) {
+    const open = force != null ? force : !group.classList.contains('is-open');
+    const root = group.closest('.kb-groups');
+    if (root && open) {
+      root.querySelectorAll('.kb-group.is-open').forEach((g) => {
+        if (g !== group) g.classList.remove('is-open');
+      });
+    }
+    group.classList.toggle('is-open', open);
+  }
+
+  // Стрелка и затухание — только там, где список реально обрезан по высоте.
+  // Раскрытые блоки не мерим: их «влезаемость» оценивается в свернутом виде.
+  function updateKbGroupFit(listEl) {
+    listEl.querySelectorAll('.kb-group:not(.is-open)').forEach((g) => {
+      const items = g.querySelector('.kb-group-items');
+      if (!items || !items.clientHeight) return;   // вкладка скрыта — не мерим
+      g.classList.toggle('kb-group-fit', items.scrollHeight <= items.clientHeight + 4);
+    });
+  }
+
+  // Клик по пустому месту страницы сворачивает раскрытый блок.
+  document.addEventListener('click', (e) => {
+    const t = e.target;
+    if (t instanceof Element && t.closest('.kb-group-card, .kb-priority-menu, .kb-modal, .cselect-menu')) return;
+    document.querySelectorAll('.kb-group.is-open').forEach((g) => g.classList.remove('is-open'));
+  });
+
+  // Фильтрация внутри вкладки: поиск + фильтр по группе + предикат по data-атрибутам
+  // карточки (статус, приоритет, флаги и т.п. — свои у каждой вкладки).
+  function applyGroupView(listEl, groupKey, query, predicate) {
+    const q = (query || '').trim().toLowerCase();
+    listEl.querySelectorAll('.kb-group').forEach((g) => {
+      const matchGroup = !groupKey || g.dataset.groupKey === groupKey;
+      let visible = 0;
+      g.querySelectorAll('.kb-item').forEach((el) => {
+        const show = matchGroup
+          && (!q || (el.textContent || '').toLowerCase().includes(q))
+          && (!predicate || predicate(el));
+        el.style.display = show ? '' : 'none';
+        if (show) visible++;
+      });
+      g.style.display = visible ? '' : 'none';
+      const cnt = g.querySelector('.kb-group-count');
+      if (cnt) cnt.textContent = visible;
+    });
+    updateKbGroupFit(listEl);
+    updateFilterBadges();
+  }
+
+  // Повесить apply на набор селектов + кнопку сброса (сбрасывает и поиск).
+  function wireKbFilters(controls, apply, resetBtn, searchEl) {
+    controls.forEach((c) => c && c.addEventListener('change', apply));
+    if (resetBtn) resetBtn.addEventListener('click', () => {
+      if (searchEl) searchEl.value = '';
+      controls.forEach((c) => { if (c) c.value = ''; });
+      apply();
+    });
+  }
+
+  /* Кнопка «Фильтры» открывает модалку с панелью активной вкладки. */
+  const filtersModal = document.getElementById('kbFiltersModal');
+  function openFiltersModal(tab) {
+    if (!filtersModal) return;
+    filtersModal.querySelectorAll('.kb-filter-bar').forEach((b) => {
+      b.style.display = b.dataset.filterPanel === tab ? '' : 'none';
+    });
+    filtersModal.style.display = 'flex';
+  }
+  function closeFiltersModal() { if (filtersModal) filtersModal.style.display = 'none'; }
+  document.querySelectorAll('.kb-filter-open').forEach((btn) => {
+    btn.addEventListener('click', () => openFiltersModal(btn.dataset.filterFor));
+  });
+  document.getElementById('kbFiltersClose')?.addEventListener('click', closeFiltersModal);
+  document.getElementById('kbFiltersDone')?.addEventListener('click', closeFiltersModal);
+  filtersModal?.querySelector('.kb-modal-overlay')?.addEventListener('click', closeFiltersModal);
+
+  // Бейдж на кнопке «Фильтры» — число выставленных параметров вкладки.
+  function updateFilterBadges() {
+    if (!filtersModal) return;
+    document.querySelectorAll('.kb-filter-open').forEach((btn) => {
+      const bar = filtersModal.querySelector(`.kb-filter-bar[data-filter-panel="${btn.dataset.filterFor}"]`);
+      const n = bar ? [...bar.querySelectorAll('select')].filter((s) => s.value).length : 0;
+      btn.classList.toggle('has-filters', n > 0);
+      const badge = btn.querySelector('.kb-filter-count');
+      if (badge) { badge.textContent = n; badge.hidden = !n; }
+    });
+  }
+
+  // Наполнить селект фильтра списком групп, сохранив текущий выбор.
+  function fillGroupFilter(sel, sections) {
+    if (!sel) return;
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">Все группы</option>' +
+      sections.map((s) => `<option value="${escapeAttr(s.key)}">${escapeHtml(s.name)}</option>`).join('');
+    if ([...sel.options].some((o) => o.value === cur)) sel.value = cur;
   }
 
   /* ============ ДОКУМЕНТЫ ============ */
@@ -48,9 +187,34 @@ document.addEventListener('DOMContentLoaded', function () {
       fileInput.value = '';
     });
   }
-  if (docsSearch) {
-    docsSearch.addEventListener('input', () => filterCards(docsList, docsSearch.value));
+  const docsGroupSel    = document.getElementById('kbDocsGroupFilter');
+  const docsStatusSel   = document.getElementById('kbDocsStatusFilter');
+  const docsPrioritySel = document.getElementById('kbDocsPriorityFilter');
+  const docsReviewSel   = document.getElementById('kbDocsReviewFilter');
+  const docsFeatureSel  = document.getElementById('kbDocsFeatureFilter');
+  function docPredicate(el) {
+    const st = docsStatusSel ? docsStatusSel.value : '';
+    if (st === 'busy') {
+      if (el.dataset.status !== 'pending' && el.dataset.status !== 'parsing') return false;
+    } else if (st && el.dataset.status !== st) return false;
+    const pr = docsPrioritySel ? docsPrioritySel.value : '';
+    if (pr && el.dataset.priority !== pr) return false;
+    const rv = docsReviewSel ? docsReviewSel.value : '';
+    if (rv === 'fresh') { if (el.dataset.review) return false; }
+    else if (rv && el.dataset.review !== rv) return false;
+    const ft = docsFeatureSel ? docsFeatureSel.value : '';
+    const flags = (el.dataset.flags || '').split(' ');
+    if (ft === 'noarchive') { if (flags.includes('archived')) return false; }
+    else if (ft && !flags.includes(ft)) return false;
+    return true;
   }
+  const applyDocFilters = () =>
+    applyGroupView(docsList, docsGroupSel ? docsGroupSel.value : '', docsSearch ? docsSearch.value : '', docPredicate);
+  if (docsSearch) docsSearch.addEventListener('input', applyDocFilters);
+  wireKbFilters(
+    [docsGroupSel, docsStatusSel, docsPrioritySel, docsReviewSel, docsFeatureSel],
+    applyDocFilters, document.getElementById('kbDocsFilterReset'), docsSearch
+  );
 
   // Импорт документов из выгрузки 1С (ZIP) — #18
   const oneCFileInput = document.getElementById('kb1cFileInput');
@@ -200,8 +364,49 @@ document.addEventListener('DOMContentLoaded', function () {
     }
   }
 
+  // Группировка документов по типу (как у шаблонов — по категориям).
+  const KIND_ICONS = {
+    code: 'fa-book', law: 'fa-landmark', regulation: 'fa-file-contract',
+    order: 'fa-stamp', manual: 'fa-clipboard-list', other: 'fa-folder-open',
+    web: 'fa-globe',
+  };
+  // Группа документа: тип (если указан и не «прочее») → первый тег → «Прочее».
+  // Пока редакторы не заполнили типы, теги («процесс» и т.п.) дают осмысленные блоки.
+  function docGroupOf(d) {
+    if (d.source_type === 'web') return { key: 'web', name: 'Веб-страницы', icon: 'fa-globe' };
+    const kind = d.document_kind;
+    if (kind && kind !== 'other' && KIND_LABELS[kind]) {
+      return { key: kind, name: KIND_LABELS[kind], icon: KIND_ICONS[kind] };
+    }
+    const tag = (d.tags || [])[0];
+    if (tag) return { key: 'tag:' + tag, name: tag[0].toUpperCase() + tag.slice(1), icon: 'fa-tag' };
+    return { key: 'other', name: 'Прочее', icon: KIND_ICONS.other };
+  }
+
+  function docSections(items) {
+    const map = new Map();
+    for (const d of items) {
+      const g = docGroupOf(d);
+      if (!map.has(g.key)) map.set(g.key, { ...g, items: [] });
+      map.get(g.key).items.push(d);
+    }
+    // Порядок: известные типы → веб → теги (по алфавиту) → «Прочее» в конце.
+    const kindOrder = ['code', 'law', 'regulation', 'order', 'manual', 'web'];
+    const rank = (s) => {
+      const i = kindOrder.indexOf(s.key);
+      if (i >= 0) return [0, i, ''];
+      if (s.key.startsWith('tag:')) return [1, 0, s.name.toLowerCase()];
+      return [2, 0, ''];
+    };
+    return [...map.values()].sort((a, b) => {
+      const [ga, ia, na] = rank(a), [gb, ib, nb] = rank(b);
+      return ga - gb || ia - ib || na.localeCompare(nb, 'ru');
+    });
+  }
+
   function renderDocs(items) {
     if (!items.length) {
+      docsList.classList.remove('kb-groups');
       docsList.innerHTML = '<div class="kb-empty">В базе знаний пока нет документов. Загрузите первый файл выше.</div>';
       return;
     }
@@ -216,7 +421,7 @@ document.addEventListener('DOMContentLoaded', function () {
       summary = `<div class="kb-review-summary"><i class="fas fa-clock-rotate-left"></i> ` +
         `Требуют внимания: ${parts.join(', ')}. Обновите текст/даты действия или архивируйте устаревшие.</div>`;
     }
-    docsList.innerHTML = summary + items.map((d) => {
+    const docItemHtml = (d) => {
       const isWeb = d.source_type === 'web';
       const openTitle = isWeb ? 'Открыть источник' : 'Скачать файл';
       const openIcon = isWeb ? 'fa-external-link-alt' : 'fa-download';
@@ -246,8 +451,12 @@ document.addEventListener('DOMContentLoaded', function () {
 
       const badges = renderDocBadges(d);
       const ficon = kbDocIcon(d);
+      const flags = [d.is_archived && 'archived', d.ocr_applied && 'ocr', d.pii_warning && 'pii']
+        .filter(Boolean).join(' ');
       return `
-      <div class="kb-item" data-doc-id="${d.id}">
+      <div class="kb-item" data-doc-id="${d.id}" data-status="${escapeAttr(d.status || '')}"
+           data-priority="${Number(d.priority || 2)}" data-review="${escapeAttr(d.review_status || '')}"
+           data-flags="${flags}">
         <div class="kb-item-icon ${ficon.cls} ${d.status === 'failed' ? 'failed' : ''}"><i class="fas ${ficon.icon}"></i></div>
         <div class="kb-item-body">
           <div class="kb-item-title">${titleHtml}</div>
@@ -261,7 +470,15 @@ document.addEventListener('DOMContentLoaded', function () {
         <button class="kb-icon-btn kb-icon-btn-meta" title="Изменить метаданные" data-meta-doc="${d.id}"><i class="fas fa-sliders-h"></i></button>
         <button class="kb-icon-btn kb-icon-btn-danger" title="Удалить" data-delete-doc="${d.id}"><i class="fas fa-trash"></i></button>
       </div>`;
-    }).join('');
+    };
+
+    const sections = docSections(items).map((sec) => ({
+      key: sec.key, name: sec.name, icon: sec.icon,
+      count: sec.items.length,
+      html: sec.items.map(docItemHtml).join(''),
+    }));
+    renderGroupBlocks(docsList, sections, { prefixHtml: summary });
+    fillGroupFilter(docsGroupSel, sections);
 
     docsList.querySelectorAll('[data-delete-doc]').forEach((btn) => {
       btn.addEventListener('click', async () => {
@@ -280,7 +497,7 @@ document.addEventListener('DOMContentLoaded', function () {
     docsList.querySelectorAll('.kb-priority[data-kind="document"]').forEach((btn) => {
       btn.addEventListener('click', (e) => showPriorityMenu(e, btn, 'document'));
     });
-    if (docsSearch) filterCards(docsList, docsSearch.value);
+    applyDocFilters();
   }
 
   const KIND_LABELS = {
@@ -475,7 +692,28 @@ document.addEventListener('DOMContentLoaded', function () {
       } catch (err) { alert(`Ошибка: ${err.message}`); }
     });
   }
-  if (sourcesSearch) sourcesSearch.addEventListener('input', () => filterCards(sourcesList, sourcesSearch.value));
+  const sourcesGroupSel    = document.getElementById('kbSourcesGroupFilter');
+  const sourcesStateSel    = document.getElementById('kbSourcesStateFilter');
+  const sourcesIdxSel      = document.getElementById('kbSourcesIdxFilter');
+  const sourcesPrioritySel = document.getElementById('kbSourcesPriorityFilter');
+  function srcPredicate(el) {
+    const st = sourcesStateSel ? sourcesStateSel.value : '';
+    if (st && el.dataset.enabled !== (st === 'on' ? '1' : '0')) return false;
+    const ix = sourcesIdxSel ? sourcesIdxSel.value : '';
+    if (ix === 'progress') {
+      if (el.dataset.docstatus === 'indexed' || el.dataset.docstatus === 'failed') return false;
+    } else if (ix && el.dataset.docstatus !== ix) return false;
+    const pr = sourcesPrioritySel ? sourcesPrioritySel.value : '';
+    if (pr && el.dataset.priority !== pr) return false;
+    return true;
+  }
+  const applySourceFilters = () =>
+    applyGroupView(sourcesList, sourcesGroupSel ? sourcesGroupSel.value : '', sourcesSearch ? sourcesSearch.value : '', srcPredicate);
+  if (sourcesSearch) sourcesSearch.addEventListener('input', applySourceFilters);
+  wireKbFilters(
+    [sourcesGroupSel, sourcesStateSel, sourcesIdxSel, sourcesPrioritySel],
+    applySourceFilters, document.getElementById('kbSourcesFilterReset'), sourcesSearch
+  );
 
   async function loadSources() {
     sourcesList.innerHTML = '<div class="kb-loader">Загрузка…</div>';
@@ -490,10 +728,11 @@ document.addEventListener('DOMContentLoaded', function () {
 
   function renderSources(items) {
     if (!items.length) {
+      sourcesList.classList.remove('kb-groups');
       sourcesList.innerHTML = '<div class="kb-empty">Источники не настроены.</div>';
       return;
     }
-    sourcesList.innerHTML = items.map((s) => {
+    const srcItemHtml = (s) => {
       const last = s.last_crawled_at ? new Date(s.last_crawled_at).toLocaleString('ru-RU') : '—';
       const status = s.last_status ? escapeHtml(s.last_status) : 'ещё не парсился';
       // Состояние индексации распарсенного документа.
@@ -506,7 +745,8 @@ document.addEventListener('DOMContentLoaded', function () {
         ? `<a class="kb-icon-btn kb-icon-btn-view" href="/kb/documents/${s.document_id}/view" target="_blank" rel="noopener" title="Предпросмотр распарсенного текста"><i class="fas fa-eye"></i></a>`
         : '';
       return `
-      <div class="kb-item" data-src-id="${s.id}">
+      <div class="kb-item" data-src-id="${s.id}" data-enabled="${s.is_enabled ? 1 : 0}"
+           data-docstatus="${escapeAttr(s.doc_status || '')}" data-priority="${Number(s.priority || 2)}">
         <div class="kb-item-icon source"><i class="fas fa-globe"></i></div>
         <div class="kb-item-body">
           <div class="kb-item-title">${escapeHtml(s.name)}</div>
@@ -520,7 +760,25 @@ document.addEventListener('DOMContentLoaded', function () {
         ${previewBtn}
         <button class="kb-icon-btn kb-icon-btn-danger" title="Удалить" data-src-del="${s.id}"><i class="fas fa-trash"></i></button>
       </div>`;
-    }).join('');
+    };
+
+    // Группировка источников по сайту (hostname).
+    const byHost = new Map();
+    for (const s of items) {
+      let host = 'прочее';
+      try { host = new URL(s.url).hostname.replace(/^www\./, '') || 'прочее'; } catch (e) {}
+      if (!byHost.has(host)) byHost.set(host, []);
+      byHost.get(host).push(s);
+    }
+    const sections = [...byHost.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0], 'ru'))
+      .map(([host, list]) => ({
+        key: host, name: host, icon: 'fa-globe',
+        count: list.length,
+        html: list.map(srcItemHtml).join(''),
+      }));
+    renderGroupBlocks(sourcesList, sections);
+    fillGroupFilter(sourcesGroupSel, sections);
 
     sourcesList.querySelectorAll('[data-src-del]').forEach((btn) => {
       btn.addEventListener('click', async () => {
@@ -532,7 +790,7 @@ document.addEventListener('DOMContentLoaded', function () {
     sourcesList.querySelectorAll('.kb-priority[data-kind="source"]').forEach((btn) => {
       btn.addEventListener('click', (e) => showPriorityMenu(e, btn, 'source'));
     });
-    if (sourcesSearch) filterCards(sourcesList, sourcesSearch.value);
+    applySourceFilters();
   }
 
   /* ============ ШАБЛОНЫ ============ */
@@ -570,7 +828,20 @@ document.addEventListener('DOMContentLoaded', function () {
       tplFileLabel.textContent = f ? f.name : 'Выбрать .docx / .doc / .pdf';
     });
   }
-  if (tplSearch) tplSearch.addEventListener('input', () => filterCards(tplList, tplSearch.value));
+  const tplGroupSel = document.getElementById('kbTplGroupFilter');
+  const tplKindSel  = document.getElementById('kbTplKindFilter');
+  function tplPredicate(el) {
+    const k = tplKindSel ? tplKindSel.value : '';
+    if (k === 'fillable') return Number(el.dataset.fields || 0) > 0;
+    if (k === 'reference') return Number(el.dataset.fields || 0) === 0;
+    if (k === 'default') return el.dataset.default === '1';
+    return true;
+  }
+  const applyTplFilters = () =>
+    applyGroupView(tplList, tplGroupSel ? tplGroupSel.value : '', tplSearch ? tplSearch.value : '', tplPredicate);
+  if (tplSearch) tplSearch.addEventListener('input', applyTplFilters);
+  wireKbFilters([tplGroupSel, tplKindSel], applyTplFilters,
+    document.getElementById('kbTplFilterReset'), tplSearch);
 
   if (tplForm) {
     tplForm.addEventListener('submit', async (e) => {
@@ -627,6 +898,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
   function renderTemplates(items) {
     if (!items.length) {
+      tplList.classList.remove('kb-groups');
       tplList.innerHTML = '<div class="kb-empty">Шаблоны не загружены. Добавьте первый шаблон выше.</div>';
       return;
     }
@@ -638,35 +910,35 @@ document.addEventListener('DOMContentLoaded', function () {
       const slot = (t.category_id && byCat.get(t.category_id)) || noCat;
       slot.items.push(t);
     }
-    const sections = [...byCat.values(), noCat].filter((s) => s.items.length > 0);
-
-    tplList.innerHTML = sections.map((sec) => `
-      <div class="kb-category-block">
-        <div class="kb-category-header">
-          <i class="fas ${sec.cat.icon || 'fa-folder'}"></i>
-          ${escapeHtml(sec.cat.name)}
-          <span class="kb-category-count">${sec.items.length} шт.</span>
+    const tplItemHtml = (t, cat) => {
+      const isDefault = cat.default_template_id === t.id;
+      return `
+      <div class="kb-item" data-tpl-id="${t.id}" data-fields="${Number(t.fields_count || 0)}" data-default="${isDefault ? 1 : 0}">
+        <div class="kb-item-icon"><i class="fas fa-file-word"></i></div>
+        <div class="kb-item-body">
+          <div class="kb-item-title">
+            ${escapeHtml(t.title)}
+            ${isDefault ? '<span class="kb-tpl-default-mark"><i class="fas fa-star"></i> По умолчанию</span>' : ''}
+          </div>
+          <div class="kb-item-meta">${escapeHtml(t.description || '')}${t.description ? ' • ' : ''}полей: ${t.fields_count}</div>
         </div>
-        ${sec.items.map((t) => {
-          const isDefault = sec.cat.default_template_id === t.id;
-          return `
-          <div class="kb-item" data-tpl-id="${t.id}">
-            <div class="kb-item-icon ${isDefault ? '' : ''}"><i class="fas fa-file-word"></i></div>
-            <div class="kb-item-body">
-              <div class="kb-item-title">
-                ${escapeHtml(t.title)}
-                ${isDefault ? '<span class="kb-tpl-default-mark"><i class="fas fa-star"></i> По умолчанию</span>' : ''}
-              </div>
-              <div class="kb-item-meta">${escapeHtml(t.description || '')}${t.description ? ' • ' : ''}полей: ${t.fields_count}</div>
-            </div>
-            ${sec.cat.id ? `<button class="kb-default-toggle ${isDefault ? 'is-default' : ''}" data-set-default="${t.id}" data-cat="${sec.cat.id}">${isDefault ? 'По умолчанию' : 'Сделать по умолчанию'}</button>` : ''}
-            <a class="kb-icon-btn kb-icon-btn-view" href="/kb/templates/${t.id}/view" target="_blank" rel="noopener" title="Предпросмотр шаблона"><i class="fas fa-eye"></i></a>
-            <a class="kb-icon-btn kb-icon-btn-open" href="/api/kb/templates/${t.id}/download" target="_blank" rel="noopener" title="Скачать оригинал"><i class="fas fa-download"></i></a>
-            <button class="kb-icon-btn kb-icon-btn-danger" title="Удалить" data-tpl-del="${t.id}"><i class="fas fa-trash"></i></button>
-          </div>`;
-        }).join('')}
-      </div>
-    `).join('');
+        ${cat.id ? `<button class="kb-default-toggle ${isDefault ? 'is-default' : ''}" data-set-default="${t.id}" data-cat="${cat.id}">${isDefault ? 'По умолчанию' : 'Сделать по умолчанию'}</button>` : ''}
+        <a class="kb-icon-btn kb-icon-btn-view" href="/kb/templates/${t.id}/view" target="_blank" rel="noopener" title="Предпросмотр шаблона"><i class="fas fa-eye"></i></a>
+        <a class="kb-icon-btn kb-icon-btn-open" href="/api/kb/templates/${t.id}/download" target="_blank" rel="noopener" title="Скачать оригинал"><i class="fas fa-download"></i></a>
+        <button class="kb-icon-btn kb-icon-btn-danger" title="Удалить" data-tpl-del="${t.id}"><i class="fas fa-trash"></i></button>
+      </div>`;
+    };
+    const sections = [...byCat.values(), noCat]
+      .filter((s) => s.items.length > 0)
+      .map((sec) => ({
+        key: String(sec.cat.id == null ? 'none' : sec.cat.id),
+        name: sec.cat.name,
+        icon: sec.cat.icon || 'fa-folder',
+        count: sec.items.length,
+        html: sec.items.map((t) => tplItemHtml(t, sec.cat)).join(''),
+      }));
+    renderGroupBlocks(tplList, sections);
+    fillGroupFilter(tplGroupSel, sections);
 
     tplList.querySelectorAll('[data-tpl-del]').forEach((btn) => {
       btn.addEventListener('click', async () => {
@@ -688,7 +960,7 @@ document.addEventListener('DOMContentLoaded', function () {
         loadTemplates();
       });
     });
-    if (tplSearch) filterCards(tplList, tplSearch.value);
+    applyTplFilters();
   }
 
   /* ============ ПЕРСОНАЛЬНЫЕ ДАННЫЕ ============ */
@@ -1239,7 +1511,9 @@ document.addEventListener('DOMContentLoaded', function () {
       ? `<div class="kb-faq-row"><i class="fas fa-user-tie"></i> ${escapeHtml(e.contact)}</div>` : '';
     const answerShort = (e.answer || '').length > 220 ? e.answer.slice(0, 220) + '…' : (e.answer || '');
     return `
-    <div class="kb-item kb-faq-item ${e.is_active ? '' : 'kb-faq-inactive'}" data-faq-id="${e.id}">
+    <div class="kb-item kb-faq-item ${e.is_active ? '' : 'kb-faq-inactive'}" data-faq-id="${e.id}"
+         data-active="${e.is_active ? 1 : 0}" data-branch="${(e.option_label || e.clarify_question) ? 1 : 0}"
+         data-contact="${e.contact ? 1 : 0}" data-docrefs="${(e.doc_refs && e.doc_refs.length) ? 1 : 0}">
       <div class="kb-item-icon source"><i class="fas fa-comments"></i></div>
       <div class="kb-item-body">
         <div class="kb-item-title">${escapeHtml(e.block || '(без блока)')} ${sub}
@@ -1260,14 +1534,56 @@ document.addEventListener('DOMContentLoaded', function () {
     </div>`;
   }
 
+  // Тематика FAQ — из имени файла-источника («чат-бот Отпуска.docx» → «Отпуска»).
+  function faqCategoryName(sourceFile) {
+    let stem = String(sourceFile || '').replace(/\.[a-z0-9]+$/i, '');
+    stem = stem.replace(/чат[\s-]?бот/i, '').replace(/^[\s\-–_]+|[\s\-–_]+$/g, '');
+    return stem ? stem[0].toUpperCase() + stem.slice(1) : 'Прочее';
+  }
+
+  const faqGroupSel = document.getElementById('kbFaqGroupFilter');
+  const faqStateSel = document.getElementById('kbFaqStateFilter');
+  const faqTypeSel  = document.getElementById('kbFaqTypeFilter');
+  const faqSearchEl = document.getElementById('kbFaqSearch');
+  function faqPredicate(el) {
+    const st = faqStateSel ? faqStateSel.value : '';
+    if (st && el.dataset.active !== (st === 'on' ? '1' : '0')) return false;
+    const tp = faqTypeSel ? faqTypeSel.value : '';
+    if (tp === 'branch') return el.dataset.branch === '1';
+    if (tp === 'simple') return el.dataset.branch !== '1';
+    if (tp === 'contact') return el.dataset.contact === '1';
+    if (tp === 'docs') return el.dataset.docrefs === '1';
+    return true;
+  }
+  const applyFaqFilters = () =>
+    applyGroupView(faqList, faqGroupSel ? faqGroupSel.value : '', faqSearchEl ? faqSearchEl.value : '', faqPredicate);
+  wireKbFilters([faqGroupSel, faqStateSel, faqTypeSel], applyFaqFilters,
+    document.getElementById('kbFaqFilterReset'), faqSearchEl);
+
   let faqItems = [];
   function renderFaq(items) {
     faqItems = items;
     if (!items.length) {
+      faqList.classList.remove('kb-groups');
       faqList.innerHTML = '<div class="kb-empty">FAQ пуст — импортируйте файлы «чат-бот …».</div>';
       return;
     }
-    faqList.innerHTML = items.map(faqCard).join('');
+    const byTopic = new Map();
+    for (const e of items) {
+      const name = faqCategoryName(e.source_file);
+      if (!byTopic.has(name)) byTopic.set(name, []);
+      byTopic.get(name).push(e);
+    }
+    const sections = [...byTopic.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0], 'ru'))
+      .map(([name, list]) => ({
+        key: name, name, icon: 'fa-comments',
+        count: list.length,
+        html: list.map(faqCard).join(''),
+      }));
+    renderGroupBlocks(faqList, sections);
+    fillGroupFilter(faqGroupSel, sections);
+    applyFaqFilters();
   }
 
   faqList?.addEventListener('click', async (ev) => {
@@ -1338,9 +1654,7 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   }
 
-  document.getElementById('kbFaqSearch')?.addEventListener('input', (e) => {
-    filterCards(faqList, e.target.value, '.kb-faq-item');
-  });
+  faqSearchEl?.addEventListener('input', applyFaqFilters);
 
   // Полный реимпорт из выбранных файлов
   document.getElementById('kbFaqImportInput')?.addEventListener('change', async (e) => {

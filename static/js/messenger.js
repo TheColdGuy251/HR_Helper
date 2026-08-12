@@ -145,7 +145,36 @@
     if (interactions && interactions.closeOverlays && interactions.closeOverlays()) return;
     cancelForward(); showList(); loadConvs();
   });
-  // Клик вне панели миничат НЕ закрывает — остаётся открытым (по требованию).
+
+  // ─────────── закрепление панели ───────────
+  // Незакреплённая панель закрывается кликом по пустому месту страницы;
+  // закреплённая (кнопка-«булавка» в шапке) — остаётся открытой.
+  const pinBtn = $("msgrPin");
+  let pinned = false;
+  try { pinned = localStorage.getItem("msgrPinned") === "1"; } catch (e) {}
+  function renderPinBtn() {
+    if (!pinBtn) return;
+    pinBtn.classList.toggle("active", pinned);
+    pinBtn.title = pinned
+      ? "Открепить: закрывать при клике вне окна"
+      : "Закрепить: не закрывать при клике вне окна";
+  }
+  if (pinBtn) pinBtn.addEventListener("click", () => {
+    pinned = !pinned;
+    try { localStorage.setItem("msgrPinned", pinned ? "1" : "0"); } catch (e) {}
+    renderPinBtn();
+  });
+  renderPinBtn();
+  document.addEventListener("click", (e) => {
+    if (!state.open || pinned || pipWindow || panel.hidden) return;
+    if (Date.now() - lastOpenTs < 350) return;   // клик, открывший панель / завершивший drag-resize
+    const t = e.target;
+    if (!(t instanceof Element)) return;
+    // Клики по самой панели и по её всплывающим слоям (меню, модалки, просмотр
+    // картинок, тосты, уведомления) закрытием не считаются.
+    if (t.closest(".msgr-panel, .msgr-fab, .msgr-ctx-wrap, .msgr-modal-ov, .msgr-lightbox, .toast-container, .ntf-overlay, .cselect-menu")) return;
+    closePanel();
+  });
 
   // Кнопка «развернуть»: запоминаем текущую страницу (для «Назад») и открытый
   // диалог, чтобы полная страница открыла именно его.
@@ -207,10 +236,12 @@
         key: state.key, peer_id: state.peerId, general: state.general, name: state.name,
       }));
     } catch (e) {}
+    // Модалку миничата прячем сразу — чат продолжается в отдельном окне.
+    closePanel();
     const w = window.open(
       "/messenger?popup=1", "hrMessenger",
       "width=430,height=680,menubar=no,toolbar=no,location=no,status=no,resizable=yes");
-    if (w) { closePanel(); w.focus(); }
+    if (w) w.focus(); else openPanel(false);   // popup заблокирован — вернуть панель
   }
   const popoutBtn = $("msgrPopout");
   if (popoutBtn) popoutBtn.addEventListener("click", popOut);
@@ -903,7 +934,8 @@
       insertOrdered(node, d.id);   // ниже вопроса (у вопроса id меньше)
       aiNodes[d.id] = node; scrollBottom();
     }
-    if (d.phase === "status") U.setAiStatus(node, d.status);
+    if (d.phase === "queued") U.setAiQueue(node, d.queue_position, d.queue_total);
+    else if (d.phase === "status") U.setAiStatus(node, d.status);
     else if (d.phase === "sources") node._srcs = d.sources || [];
     else if (d.phase === "chunk") { node._acc += d.chunk; U.setAiText(node, node._acc); if (isNearBottom()) scrollBottom(); }
     else if (d.phase === "done") {

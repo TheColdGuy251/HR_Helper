@@ -309,6 +309,7 @@ def create_dpo_report(db: Session, user: User, xlsx_path: str | Path) -> tuple[M
         status="ready",
         fields={"year": stats["year"], "total_people": stats["total_people"],
                 "long_events": stats["long_events"]},
+        is_pii=True,  # списки обученных работников — документ не хранится
     )
     db.add(rec)
     db.commit()

@@ -265,7 +265,9 @@ async def delete_my_document(
 async def list_my_documents(user: User = Depends(require_user), db: Session = Depends(get_db)):
     docs = (
         db.query(MyDocuments)
-        .filter(MyDocuments.user_id == user.id)
+        # ПДн-документы не храним — в списке «Моих документов» их нет
+        # (доступны только из сообщения чата до автоудаления).
+        .filter(MyDocuments.user_id == user.id, MyDocuments.is_pii.is_(False))
         .order_by(MyDocuments.last_activity.desc())
         .all()
     )

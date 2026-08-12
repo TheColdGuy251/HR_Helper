@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import AsyncIterator
@@ -190,7 +191,10 @@ class StreamState:
     buffer: list[str] = field(default_factory=list)  # последовательные чанки
     finished: bool = False
     cancelled: bool = False
-    status: str = "search"  # search | rerank | generate
+    status: str = "search"  # queued | search | rerank | generate
+    # Позиция в очереди к ассистенту, пока запрос ждёт (0 = не в очереди/уже пошёл).
+    queue_position: int = 0
+    queue_total: int = 0
     sources: list = field(default_factory=list)  # структурные источники (готовы ДО текста)
     # id только что созданного сообщения пользователя (для обычной отправки) — чтобы
     # клиент сразу проставил его пузырю id и показал кнопку «изменить».
@@ -234,6 +238,61 @@ def _unregister_stream(state: StreamState):
 
 def _get_stream(message_id: int) -> StreamState | None:
     return _active_streams.get(message_id)
+
+
+def _enqueue_generation(
+    state: StreamState,
+    loop: asyncio.AbstractEventLoop,
+    gen_args: tuple,
+    gen_kwargs: dict | None = None,
+    *,
+    user_id: int | None = None,
+    bypass: bool = False,
+) -> None:
+    """Ставит генерацию ответа в справедливую очередь ассистента вместо прямого
+    запуска потока. Пока запрос ждёт, в state прокидывается позиция в очереди
+    (её стримит SSE). При переполнении очереди/лимите на пользователя —
+    отдаёт понятное сообщение прямо в пузырь ответа и завершает стрим.
+
+    ``bypass=True`` — запустить сразу, минуя очередь (для мгновенных ответов без
+    LLM, например курируемый FAQ: занимать слот и ждать за LLM-генерациями им
+    незачем)."""
+    if bypass:
+        threading.Thread(
+            target=_run_generation, args=gen_args, kwargs=gen_kwargs or {}, daemon=True
+        ).start()
+        return
+
+    from services.assistant_queue import QueueRejected, get_assistant_queue
+
+    def _on_position(pos: int, total: int) -> None:
+        state.status = "queued"
+        state.queue_position = pos
+        state.queue_total = total
+        loop.call_soon_threadsafe(state.event.set)
+
+    def _on_start() -> None:
+        state.queue_position = 0
+        state.queue_total = 0
+        # Мгновенно показываем «поиск», а _run_generation тут же уточнит стадию.
+        if state.status == "queued":
+            state.status = "search"
+        loop.call_soon_threadsafe(state.event.set)
+
+    try:
+        get_assistant_queue().submit(
+            _run_generation,
+            args=gen_args,
+            kwargs=gen_kwargs or {},
+            user_id=user_id,
+            on_position=_on_position,
+            on_start=_on_start,
+        )
+    except QueueRejected as e:
+        logger.warning("[QUEUE] запрос отклонён ({}): msg={}", e.reason, state.message_id)
+        state.append(e.user_message)
+        loop.call_soon_threadsafe(state.event.set)
+        _persist_and_finish(state.message_id, state, loop)
 
 
 # ---------------------------------------------------------------------------
@@ -322,6 +381,26 @@ def _persist_and_finish(
             msg.last_seq = state.last_seq
             if attach_doc_id is not None:
                 msg.attachment_document_id = attach_doc_id
+                # ПДн-документ: помечаем ответ И запросное сообщение пользователя
+                # (вместе с его вложениями-выгрузками) для автоудаления по TTL —
+                # по ТЗ содержимое с персональными данными не хранится.
+                from data.my_documents import MyDocuments
+
+                doc = db.get(MyDocuments, attach_doc_id)
+                if doc is not None and doc.is_pii:
+                    meta = {**(meta or {}), "pii_doc": True}
+                    req = (
+                        db.query(ChatMessage)
+                        .filter(
+                            ChatMessage.session_id == msg.session_id,
+                            ChatMessage.role == "user",
+                            ChatMessage.id < msg.id,
+                        )
+                        .order_by(ChatMessage.id.desc())
+                        .first()
+                    )
+                    if req is not None:
+                        req.meta = {**(req.meta or {}), "pii_doc": True}
             if meta:
                 msg.meta = meta
             db.commit()
@@ -1848,15 +1927,16 @@ async def edit_message(
         session_id=s.id, message_id=assistant_msg.id, started_at=datetime.utcnow()
     )
     _register_stream(state)
-    threading.Thread(
-        target=_run_generation,
-        args=(
+    _enqueue_generation(
+        state,
+        loop,
+        gen_args=(
             s.id, gen_text, assistant_msg.id, s.dialogue.id, s.dialogue.user_id,
             use_rag_flag, history, attached_documents, s.dialogue.memory_summary,
             state, loop, forwarded,
         ),
-        daemon=True,
-    ).start()
+        user_id=s.dialogue.user_id,
+    )
 
     return {"success": True, "assistant_message_id": assistant_msg.id}
 
@@ -1973,6 +2053,15 @@ async def stream_abort(
             st.cancelled = True
             st.event.set()
     return {"success": True}
+
+
+@router.get("/queue-status")
+async def queue_status(user: User = Depends(require_user)):
+    """Снимок очереди ассистента: сколько запросов сейчас в работе и в ожидании,
+    текущие лимиты. Для мониторинга/админ-панели."""
+    from services.assistant_queue import get_assistant_queue
+
+    return {"success": True, **get_assistant_queue().stats()}
 
 
 @router.post("/stream")
@@ -2112,9 +2201,10 @@ async def stream(
         )
         _register_stream(state)
 
-        threading.Thread(
-            target=_run_generation,
-            args=(
+        _enqueue_generation(
+            state,
+            loop,
+            gen_args=(
                 session.id,
                 gen_text,
                 new_msg.id,
@@ -2128,8 +2218,8 @@ async def stream(
                 loop,
                 forwarded,
             ),
-            daemon=True,
-        ).start()
+            user_id=owner_id,
+        )
     else:
         # Пересланные из мессенджера сообщения (если есть) уходят с ПЕРВОЙ отправкой:
         # текст пользователя при этом может быть пустым.
@@ -2238,9 +2328,12 @@ async def stream(
         )
         _register_stream(state)
 
-        threading.Thread(
-            target=_run_generation,
-            args=(
+        # Быстрый набор FAQ (body.faq_id) — детерминированный ответ без LLM: пускаем
+        # мимо очереди, чтобы курируемый ответ не ждал за LLM-генерациями в слотах.
+        _enqueue_generation(
+            state,
+            loop,
+            gen_args=(
                 session.id,
                 gen_text,
                 assistant_msg.id,
@@ -2254,9 +2347,10 @@ async def stream(
                 loop,
                 forwarded,
             ),
-            kwargs={"faq_id": body.faq_id},
-            daemon=True,
-        ).start()
+            gen_kwargs={"faq_id": body.faq_id},
+            user_id=owner_id,
+            bypass=body.faq_id is not None,
+        )
 
     def _build_done_payload(message_id: int, last_seq: int) -> dict:
         payload: dict = {"done": True, "message_id": message_id, "last_seq": last_seq}
@@ -2308,6 +2402,9 @@ async def stream(
             "last_seq": state.last_seq,
             "status": state.status,
         }
+        if state.status == "queued":
+            head["queue_position"] = state.queue_position
+            head["queue_total"] = state.queue_total
         if state.user_message_id:
             head["user_message_id"] = state.user_message_id
         if state.sources:
@@ -2315,6 +2412,7 @@ async def stream(
         yield f"data: {json.dumps(head, ensure_ascii=False)}\n\n".encode("utf-8")
 
         last_status = state.status
+        last_qpos = state.queue_position
         last_yielded = state.last_seq
         sources_sent = bool(state.sources)
         try:
@@ -2343,10 +2441,18 @@ async def stream(
                     sources_sent = True
                     yield f"data: {json.dumps({'sources': state.sources, 'message_id': state.message_id}, ensure_ascii=False)}\n\n".encode("utf-8")
 
-                # Обновление статуса (поиск / реранкинг / генерация)
-                if state.status != last_status:
+                # Обновление статуса (очередь / поиск / реранкинг / генерация).
+                # Для очереди также шлём позицию, и пере-шлём, когда она изменилась.
+                if state.status != last_status or (
+                    state.status == "queued" and state.queue_position != last_qpos
+                ):
                     last_status = state.status
-                    yield f"data: {json.dumps({'status': state.status, 'message_id': state.message_id})}\n\n".encode("utf-8")
+                    last_qpos = state.queue_position
+                    st_payload = {"status": state.status, "message_id": state.message_id}
+                    if state.status == "queued":
+                        st_payload["queue_position"] = state.queue_position
+                        st_payload["queue_total"] = state.queue_total
+                    yield f"data: {json.dumps(st_payload)}\n\n".encode("utf-8")
 
                 # Шлём накопившиеся чанки
                 while last_yielded < state.last_seq:
@@ -2574,9 +2680,20 @@ async def faq_menu(user: User = Depends(require_user), db: Session = Depends(get
         head = g["head"] or (g["subs"][0] if g["subs"] else None)
         if head is None:
             continue
-        variants = head.variants or []
-        question = next((v for v in variants if len(v) > 3), None) or head.block or "Вопрос"
-        item: dict = {"block": head.block or question, "question": question}
+        variants = [v.strip() for v in (head.variants or []) if v and len(v.strip()) > 3]
+        block = (head.block or "").strip()
+        # В части файлов первый «вариант» — это путь категории, совпадающий с
+        # названием блока («Аттестация работников - Аттестация АУП и УВП»):
+        # из-за него всё меню состояло из одинаковых кнопок. Настоящий вопрос —
+        # первый вариант, не повторяющий блок (вопросительный — в приоритете).
+        meaningful = [v for v in variants if v.lower() != block.lower()]
+        question = (
+            next((v for v in meaningful if v.rstrip().endswith("?")), None)
+            or (meaningful[0] if meaningful else None)
+            or block
+            or "Вопрос"
+        )
+        item: dict = {"block": block or question, "question": question, "label": block or question}
         if g["subs"]:
             item["options"] = [
                 {
@@ -2589,8 +2706,14 @@ async def faq_menu(user: User = Depends(require_user), db: Session = Depends(get
             item["id"] = head.id
         categories.setdefault(_faq_category(head.source_file), []).append(item)
 
+    # Если подпись всё равно повторяется внутри категории (много групп с одним
+    # блоком) — показываем на кнопке сам вопрос вместо названия блока.
     for items in categories.values():
-        items.sort(key=lambda x: x["block"].lower())
+        label_counts = Counter(i["label"].lower() for i in items)
+        for i in items:
+            if label_counts[i["label"].lower()] > 1:
+                i["label"] = i["question"]
+        items.sort(key=lambda x: x["label"].lower())
     return {
         "success": True,
         "categories": [

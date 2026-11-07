@@ -1,13 +1,13 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { z } from 'zod';
+import type { user_sex } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { badRequest, hashPassword, userJson, withSession } from '@/lib/auth';
 import type { CurrentUser } from '@/lib/auth';
 
-// Регистрация. Порт POST /api/auth/register из backend/routes/auth.py.
-// Ограничения полей повторяют RegisterForm (backend/forms/auth.py), а тексты
-// ошибок — _friendly_errors оттуда же.
+// Регистрация.
+// Ограничения полей и понятные тексты ошибок.
 
 const schema = z
   .object({
@@ -28,6 +28,13 @@ const schema = z
     password_again: z.string().min(6, '«Повтор пароля»: минимум 6 симв.'),
   })
   .refine((d) => d.password === d.password_again, { message: 'Пароли не совпадают' });
+
+// Пол - enum user_sex. Кроме значений формы принимаем и русские подписи (их
+// раньше записывали в базу как есть); прочее - "не указан".
+const SEX_VALUES: Record<string, user_sex> = {
+  male: 'male', m: 'male', 'мужской': 'male', 'м': 'male',
+  female: 'female', f: 'female', 'женский': 'female', 'ж': 'female',
+};
 
 export async function POST(request: NextRequest) {
   let raw: unknown;
@@ -65,7 +72,7 @@ export async function POST(request: NextRequest) {
       name: form.name,
       patronymic: form.patronymic || null,
       position: form.position || 'HR-специалист',
-      sex: form.sex || null,
+      sex: SEX_VALUES[(form.sex || '').trim().toLowerCase()] ?? null,
       is_active: true,
       is_admin: false,
       is_kb_editor: false,

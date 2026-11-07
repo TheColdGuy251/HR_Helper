@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import { Bell, Bot, CheckCheck, MessagesSquare, TriangleAlert } from 'lucide-react';
 import { apiGet, apiPost, timeAgo } from '@/lib/api';
 
-// Центр уведомлений (порт static/js/notifications.js).
+// Центр уведомлений.
 // Данные: GET /api/notifications -> {counts, messenger[], ai[], system[]}.
 
 interface MessengerItem {
@@ -17,14 +17,14 @@ interface MessengerItem {
   unread: number;
 }
 interface AiItem {
-  session_id: string;
+  dialogue_id: string;
   title: string;
   preview?: string;
   at?: string;
   unread?: number;
 }
 interface SystemItem {
-  id: number;
+  id: string;
   title?: string;
   body?: string;
   url?: string;
@@ -48,7 +48,7 @@ const TABS: { key: TabKey; label: string; icon: typeof Bell }[] = [
   { key: 'system', label: 'Системные', icon: TriangleAlert },
 ];
 
-// Подписка на Web Push — запрашивается по клику на колокольчик (жест пользователя).
+// Подписка на Web Push - запрашивается по клику на колокольчик (жест пользователя).
 async function ensurePushSubscription() {
   try {
     if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) return;
@@ -70,7 +70,7 @@ async function ensurePushSubscription() {
       subscription: { ...sub.toJSON(), ua: navigator.userAgent },
     });
   } catch {
-    /* пуши опциональны — молча пропускаем */
+    /* пуши опциональны - молча пропускаем */
   }
 }
 
@@ -152,7 +152,7 @@ export function NotificationsBell() {
 
   const openAiItem = (item: AiItem) => {
     setOpen(false);
-    router.push(`/chat/${item.session_id}`);
+    router.push(`/chat/${item.dialogue_id}`);
   };
 
   const openSystemItem = async (item: SystemItem) => {
@@ -267,7 +267,7 @@ export function NotificationsBell() {
             ) : tab === 'ai' ? (
               (items as AiItem[]).map((i) => (
                 <button
-                  key={i.session_id}
+                  key={i.dialogue_id}
                   onClick={() => openAiItem(i)}
                   className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition text-left border-b border-gray-50 last:border-b-0"
                 >

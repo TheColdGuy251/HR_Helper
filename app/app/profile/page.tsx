@@ -2,8 +2,7 @@
 import { useAuth } from '@/components/auth-context';
 import { StatusPill } from '@/components/ui';
 
-// Профиль пользователя: данные из GET /api/auth/me (FastAPI).
-// Дизайн — карточка профиля Tyuiu.bot-main.
+// Профиль пользователя: данные из GET /api/auth/me.
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (

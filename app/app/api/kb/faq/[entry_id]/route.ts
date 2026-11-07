@@ -7,16 +7,13 @@ import { asList, jsonBody, parsePathId, pyBool, pyStr } from '@/lib/kb';
 import { invalidateFaqMatcher } from '@/lib/ml/faq';
 
 // Правка и удаление FAQ-записи (А2/А6).
-// Порт PATCH/DELETE /api/kb/faq/{entry_id} из backend/routes/kb.py.
 //
-// После каждой записи сбрасываем прогретые прототипы FAQ-матчера (аналог
-// get_matcher().invalidate() в Python) — иначе бот продолжает отвечать по
-// старым вариантам формулировок до перезапуска процесса. Процесс FastAPI, если
-// он ещё поднят, свой кэш не увидит — там сброс делает сам Python-роут.
+// После каждой записи сбрасываем прогретые прототипы FAQ-матчера - иначе бот
+// продолжает отвечать по старым вариантам формулировок до перезапуска процесса.
 
 type Ctx = { params: Promise<{ entry_id: string }> };
 
-/** Python-идиома `str(x or "")`: пустые значения дают пустую строку. */
+/** Пустые значения дают пустую строку. */
 function strOrEmpty(v: unknown): string {
   return pyBool(v) ? pyStr(v) : '';
 }
@@ -33,10 +30,10 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
   const body = parsedBody.body;
   const has = (k: string) => Object.prototype.hasOwnProperty.call(body, k);
 
-  const row =
-    parsed.value === null
-      ? null
-      : await prisma.faq_entries.findUnique({ where: { id: parsed.value }, select: { id: true } });
+  const row = await prisma.faq_entries.findUnique({
+    where: { id: parsed.value },
+    select: { id: true, group_id: true },
+  });
   if (!row) return notFound('FAQ-запись не найдена');
 
   const data: Prisma.faq_entriesUncheckedUpdateInput = {};
@@ -51,13 +48,18 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
     data.variants = vs.length ? vs : Prisma.DbNull;
   }
 
-  if (has('clarify_question')) data.clarify_question = strOrEmpty(body.clarify_question).trim() || null;
   if (has('option_label')) data.option_label = strOrEmpty(body.option_label).trim() || null;
   if (has('is_active')) data.is_active = pyBool(body.is_active);
 
+  // Уточняющий вопрос - атрибут группы, общий для всех её записей.
+  if (has('clarify_question')) {
+    await prisma.faq_groups.update({
+      where: { id: row.group_id },
+      data: { clarify_question: strOrEmpty(body.clarify_question).trim() || null },
+    });
+  }
   if (Object.keys(data).length) {
-    // SQLAlchemy бампает updated_at на каждом UPDATE (onupdate=current_timestamp).
-    data.updated_at = new Date();
+    // updated_at бампает сам Prisma (@updatedAt).
     await prisma.faq_entries.update({ where: { id: row.id }, data });
   }
   invalidateFaqMatcher(); // прототипы пересчитаются при следующем запросе
@@ -71,23 +73,25 @@ export async function DELETE(_request: NextRequest, { params }: Ctx) {
   const parsed = parsePathId((await params).entry_id, 'entry_id');
   if ('response' in parsed) return parsed.response;
 
-  const row =
-    parsed.value === null
-      ? null
-      : await prisma.faq_entries.findUnique({ where: { id: parsed.value }, select: { id: true } });
+  const row = await prisma.faq_entries.findUnique({
+    where: { id: parsed.value },
+    select: { id: true, group_id: true },
+  });
   if (!row) return notFound('FAQ-запись не найдена');
 
-  await prisma.faq_entries.delete({ where: { id: row.id } });
+  await prisma.$transaction([
+    prisma.faq_entries.delete({ where: { id: row.id } }),
+    // Группа без записей не нужна.
+    prisma.faq_groups.deleteMany({ where: { id: row.group_id, entries: { none: {} } } }),
+  ]);
   invalidateFaqMatcher();
   return NextResponse.json({ success: true });
 }
 
 /**
- * POST по этому пути у FastAPI нет (импорт живёт на статическом /api/kb/faq/import,
- * его перехватывает app/api/kb/faq/import). Starlette в таком случае отвечает 405
- * с заголовком Allow первого маршрута, совпавшего по пути, — это PATCH, он
- * объявлен раньше DELETE. Экспорт нужен, чтобы Next не подставил свой 405
- * (без Allow и без тела) и чтобы запрос не ушёл по fallback-правилу в Python.
+ * POST по этому пути нет: импорт живёт на статическом /api/kb/faq/import.
+ * Отвечаем 405 с заголовком Allow - без экспорта Next отдал бы свой 405 без
+ * Allow и без тела.
  */
 export async function POST() {
   return NextResponse.json(

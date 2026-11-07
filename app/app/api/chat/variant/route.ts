@@ -2,13 +2,13 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import { badRequest, notFound, requireUser } from '@/lib/auth';
+import { asUuid } from '@/lib/ids';
 import { MESSAGE_SELECT, messageItems } from '@/lib/chat';
 
-// Переключение между вариантами ответа (‹ i/n ›) и между ветками правок вопроса.
-// Порт POST /api/chat/variant из backend/routes/chat.py.
+// Переключение между вариантами ответа (< i/n >) и между ветками правок вопроса.
 //
 // У ответа ассистента обычно достаточно заменить один пузырь, но если после
-// старого варианта уже шли новые сообщения, меняется вся видимая ветка — тогда
+// старого варианта уже шли новые сообщения, меняется вся видимая ветка - тогда
 // фронтенду возвращается флаг reload и он перезагружает список целиком.
 
 export async function POST(request: NextRequest) {
@@ -16,37 +16,35 @@ export async function POST(request: NextRequest) {
   if ('response' in gate) return gate.response;
   const user = gate.user;
 
-  let body: { session_id?: unknown; message_id?: unknown; direction?: unknown };
+  let body: { dialogue_id?: unknown; message_id?: unknown; direction?: unknown };
   try {
     body = await request.json();
   } catch {
     return badRequest('Ожидается JSON');
   }
 
-  const sessionId = typeof body.session_id === 'string' ? body.session_id : '';
-  const messageId = Number(body.message_id);
+  const dialogueId = asUuid(body.dialogue_id);
+  const messageId = asUuid(body.message_id);
   const direction = Number(body.direction ?? 0) || 0;
-  if (!sessionId || !Number.isInteger(messageId)) return notFound('Сообщение не найдено');
+  if (!dialogueId || !messageId) return notFound('Сообщение не найдено');
 
-  // Сессия должна принадлежать текущему пользователю.
-  const session = await prisma.chat_sessions.findUnique({
-    where: { id: sessionId },
-    select: { id: true, dialogues: { select: { user_id: true } } },
+  // Диалог должен принадлежать текущему пользователю.
+  const dialogue = await prisma.dialogues.findUnique({
+    where: { id: dialogueId },
+    select: { id: true, user_id: true },
   });
-  if (!session || session.dialogues.user_id !== user.id) return notFound('Сессия не найдена');
+  if (!dialogue || dialogue.user_id !== user.id) return notFound('Диалог не найден');
 
   const cur = await prisma.chat_messages.findUnique({
     where: { id: messageId },
-    select: { id: true, session_id: true, role: true, variant_group: true },
+    select: { id: true, dialogue_id: true, role: true, variant_group: true },
   });
-  if (!cur || cur.session_id !== session.id || (cur.role !== 'assistant' && cur.role !== 'user')) {
-    return notFound('Сообщение не найдено');
-  }
+  if (!cur || cur.dialogue_id !== dialogue.id) return notFound('Сообщение не найдено');
 
   // Группа вариантов: у первого сообщения группы её идентификатором служит его же id.
   const group = cur.variant_group ?? cur.id;
   const variants = await prisma.chat_messages.findMany({
-    where: { session_id: session.id, variant_group: group, role: cur.role },
+    where: { dialogue_id: dialogue.id, variant_group: group, role: cur.role },
     orderBy: { id: 'asc' },
     select: { id: true },
   });
@@ -59,7 +57,7 @@ export async function POST(request: NextRequest) {
   const newIdx = Math.max(0, Math.min(idx + direction, list.length - 1));
   const target = list[newIdx];
 
-  // Активным остаётся ровно один вариант — по нему собирается видимая ветка.
+  // Активным остаётся ровно один вариант - по нему собирается видимая ветка.
   await prisma.$transaction([
     prisma.chat_messages.updateMany({
       where: { id: { in: list.map((v) => v.id) } },
@@ -76,11 +74,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: true, role: 'user', reload: true });
   }
 
-  // У вариантов ответа могли быть «продолжения» — вопросы, заданные после
+  // У вариантов ответа могли быть "продолжения" - вопросы, заданные после
   // старого варианта до повторной генерации. Тогда точечной замены мало.
   const groupIds = new Set(list.map((v) => v.id));
   const after = await prisma.chat_messages.findMany({
-    where: { session_id: session.id, id: { gt: list[0].id } },
+    where: { dialogue_id: dialogue.id, id: { gt: list[0].id } },
     select: { id: true },
   });
   if (after.some((row) => !groupIds.has(row.id))) {
@@ -93,7 +91,7 @@ export async function POST(request: NextRequest) {
   });
   if (!row) return notFound('Сообщение не найдено');
 
-  const [item] = await messageItems([row], user);
+  const [item] = await messageItems([row]);
   item.variant_group = group;
   item.variant_index = newIdx + 1;
   item.variant_count = list.length;

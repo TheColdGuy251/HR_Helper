@@ -2,11 +2,10 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { badRequest, notFound } from '@/lib/auth';
 import { isoUtc, prisma } from '@/lib/db';
-import { parseIntParam, validationError } from '@/lib/news';
+import { parseIdParam, validationError } from '@/lib/news';
 import { piiLog, requirePiiAccess, storeEncrypted } from '@/lib/pii';
 
 // Прямая загрузка документа в существующую карточку. Без распознавания.
-// Порт POST /api/pii/persons/{person_id}/documents из backend/routes/pii.py (upload_direct).
 
 type Ctx = { params: Promise<{ person_id: string }> };
 
@@ -17,7 +16,7 @@ export async function POST(request: NextRequest, { params }: Ctx) {
   const gate = await requirePiiAccess();
   if ('response' in gate) return gate.response;
 
-  const parsed = parseIntParam((await params).person_id, 'person_id');
+  const parsed = parseIdParam((await params).person_id, 'person_id');
   if ('response' in parsed) return parsed.response;
 
   let form: FormData;
@@ -36,7 +35,7 @@ export async function POST(request: NextRequest, { params }: Ctx) {
   const person = await prisma.pii_persons.findUnique({ where: { id: parsed.value } });
   if (!person) return notFound('Сотрудник не найден');
 
-  // Расширение берётся от последней точки в ИМЕНИ КАК ПРИШЛО — как rsplit в Python.
+  // Расширение берётся от последней точки в имени файла как пришло.
   const filename = file.name || '';
   const suffix = filename.includes('.')
     ? `.${filename.slice(filename.lastIndexOf('.') + 1).toLowerCase()}`

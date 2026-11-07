@@ -1,20 +1,18 @@
 import 'server-only';
 
 // Лексический поиск BM25 с морфологической нормализацией русского.
-// Порт services/rag/retriever.py (_tokenize, _RU_STOP, BM25Okapi).
 //
-// Морфология повторяет слои оригинала: сначала лемматизация (Az.js работает на
-// тех же словарях OpenCorpora, что и pymorphy3 в Python, и даёт те же нормальные
-// формы: «уволен» → «уволить»), при её недоступности — стеммер Snowball, затем
-// исходное слово. Нормализация обязана быть одинаковой для корпуса и запроса,
-// иначе токены перестают совпадать и лексический поиск деградирует.
+// Нормализация слова: лемматизация Az.js по словарям OpenCorpora ("уволен" ->
+// "уволить"), при её недоступности - стеммер Snowball, затем исходное слово.
+// Нормализация обязана быть одинаковой для корпуса и запроса, иначе токены
+// перестают совпадать и лексический поиск деградирует.
 
-// Составные номера («3.2», «84.1») остаются одним токеном: иначе «пункт 3.2»
-// рассыпается на «3» и «2», и BM25 перестаёт находить пункт по номеру.
+// Составные номера ("3.2", "84.1") остаются одним токеном: иначе "пункт 3.2"
+// рассыпается на "3" и "2", и BM25 перестаёт находить пункт по номеру.
 const TOKEN_RE = /\d+(?:\.\d+)+|[\wа-яёА-ЯЁ]+/gu;
 
-// Только служебные слова. Отрицания («не», «без», «нет») НЕ включены: в
-// нормативных текстах они несут смысл («без уважительных причин»).
+// Только служебные слова. Отрицания ("не", "без", "нет") не включены: в
+// нормативных текстах они несут смысл ("без уважительных причин").
 const RU_STOP = new Set([
   'и', 'в', 'во', 'на', 'с', 'со', 'к', 'ко', 'у', 'же', 'по', 'за', 'от',
   'о', 'об', 'обо', 'из', 'изо', 'для', 'при', 'про', 'до', 'над', 'под',
@@ -43,7 +41,7 @@ function normalize(word: string): string {
   if (morph) {
     try {
       const parses = morph(word);
-      // Первый разбор — самый вероятный, как `morph.parse(w)[0]` в pymorphy.
+      // Первый разбор - самый вероятный.
       if (parses?.length) result = parses[0].normalize().word;
     } catch {
       result = word;
@@ -55,14 +53,14 @@ function normalize(word: string): string {
       result = word;
     }
   }
-  // В юридических текстах слова часто повторяются — кэш заметно ускоряет.
+  // В юридических текстах слова часто повторяются - кэш заметно ускоряет.
   if (normCache.size < 100_000) normCache.set(word, result);
   return result;
 }
 
 /**
- * Подключает морфологию. Порядок слоёв — как в Python:
- * лемматизация → стемминг → без нормализации.
+ * Подключает морфологию. Порядок слоёв:
+ * лемматизация -> стемминг -> без нормализации.
  */
 export async function initStemmer(): Promise<void> {
   if (morph || stemmer) return;
@@ -81,7 +79,7 @@ export async function initStemmer(): Promise<void> {
     morph = az.Morph;
     return;
   } catch {
-    /* словари не нашлись — идём на стеммер */
+    /* словари не нашлись - идём на стеммер */
   }
 
   try {
@@ -89,11 +87,11 @@ export async function initStemmer(): Promise<void> {
     const factory = (mod as unknown as { newStemmer: (lang: string) => Stemmer }).newStemmer;
     stemmer = factory('russian');
   } catch {
-    stemmer = null; // без морфологии — поиск по точным словоформам
+    stemmer = null; // без морфологии - поиск по точным словоформам
   }
 }
 
-/** Какой слой морфологии активен — для диагностики. */
+/** Какой слой морфологии активен - для диагностики. */
 export function morphologyMode(): 'lemmatization' | 'stemming' | 'none' {
   if (morph) return 'lemmatization';
   if (stemmer) return 'stemming';
@@ -101,7 +99,7 @@ export function morphologyMode(): 'lemmatization' | 'stemming' | 'none' {
 }
 
 /**
- * Лемма отдельного слова (аналог `_norm_word` в retriever.py). Нужна FAQ-матчеру:
+ * Лемма отдельного слова. Нужна FAQ-матчеру:
  * он сравнивает наборы лемм без стоп-фильтра, поэтому tokenize не подходит.
  */
 export function lemma(word: string): string {
@@ -113,17 +111,14 @@ export function tokenize(text: string): string[] {
   for (const raw of String(text || '').matchAll(TOKEN_RE)) {
     const t = raw[0].toLowerCase();
     if (RU_STOP.has(t)) continue;
-    // Одиночные буквы — мусор, одиночные цифры («статья 5») сохраняем.
+    // Одиночные буквы - мусор, одиночные цифры ("статья 5") сохраняем.
     if (t.length < 2 && !/^\d$/.test(t)) continue;
     out.push(normalize(t));
   }
   return out;
 }
 
-/**
- * BM25 Okapi — та же формула и те же параметры, что в rank_bm25,
- * который используется на стороне Python.
- */
+/** BM25 Okapi. */
 export class BM25 {
   private readonly k1 = 1.5;
   private readonly b = 0.75;
@@ -147,8 +142,8 @@ export class BM25 {
       for (const t of freqs.keys()) df.set(t, (df.get(t) || 0) + 1);
     }
 
-    // rank_bm25 подменяет отрицательные IDF на долю среднего значения, иначе
-    // очень частые слова получали бы отрицательный вес и «вычитали» релевантность.
+    // BM25 Okapi подменяет отрицательные IDF на долю среднего значения, иначе
+    // очень частые слова получали бы отрицательный вес и "вычитали" релевантность.
     const n = corpusTokens.length;
     let idfSum = 0;
     const negative: string[] = [];
@@ -179,7 +174,7 @@ export class BM25 {
   }
 }
 
-// Индекс держим в памяти процесса — как и Python. Это сознательное
+// Индекс держим в памяти процесса. Это сознательное
 // ограничение: при нескольких инстансах каждый строит свою копию.
 const g = globalThis as unknown as {
   __hrBm25?: { index: BM25 | null; meta: Record<string, unknown>[] };
@@ -211,7 +206,7 @@ export function bm25Search(query: string, topK: number): [number, number][] {
     .slice(0, topK);
 }
 
-/** Reciprocal Rank Fusion — объединение плотного и лексического списков. */
+/** Reciprocal Rank Fusion - объединение плотного и лексического списков. */
 export function rrf(rank: number, k = 60): number {
   return 1 / (k + rank + 1);
 }

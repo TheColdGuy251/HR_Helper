@@ -5,9 +5,8 @@ import { jsonBody, pyBool, pyStr } from '@/lib/kb';
 import { indexUrl } from '@/lib/ml/indexer';
 
 // Индексация веб-страницы по URL.
-// Порт POST /api/kb/index-url из backend/routes/kb.py (index_url).
 //
-// Ответ ждёт окончания индексации, как и в Python: скачивание, разбор,
+// Ответ ждёт окончания индексации: скачивание, разбор,
 // эмбеддинги и запись в Qdrant идут прямо в обработчике.
 
 export async function POST(request: NextRequest) {

@@ -3,19 +3,20 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { ChevronDown, Folder, X } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
-/* Группы-блоки базы знаний — порт kb.js:30 renderGroupBlocks / :75 toggleKbGroup /
-   :88 updateKbGroupFit / :99 (клик по фону) / :105 applyGroupView.
+/*
+ * Группы-блоки базы знаний.
+ *
+ * Документы, источники, шаблоны и FAQ группируются в блоки, стоящие в 3 колонки.
+ * Свернутый блок ограничен по высоте (стрелка внизу); раскрытый растёт вниз поверх
+ * нижних групп, не сдвигая раскладку. Раскрыт всегда ровно один блок: открытие
+ * одного схлопывает остальные, клик по фону страницы закрывает все.
+ */
 
-   Документы, источники, шаблоны и FAQ группируются в блоки, стоящие в 3 колонки.
-   Свернутый блок ограничен по высоте (стрелка внизу); раскрытый растёт вниз ПОВЕРХ
-   нижних групп, не сдвигая раскладку. Раскрыт всегда ровно один блок: открытие
-   одного схлопывает остальные, клик по фону страницы закрывает все. */
-
-// На сервере layout-эффектов нет — иначе Next ругается предупреждением.
+// На сервере layout-эффектов нет - иначе Next ругается предупреждением.
 const useIsoLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect;
 
 export interface GroupSection {
-  /** Ключ группы — он же значение фильтра «Группа». */
+  /** Ключ группы - он же значение фильтра "Группа". */
   key: string;
   name: string;
   icon?: LucideIcon;
@@ -45,23 +46,23 @@ export default function GroupBlocks({
   note,
 }: {
   sections: GroupSection[];
-  /** Плашка над плиткой (сводка по актуальности и т.п.) — во всю ширину. */
+  /** Плашка над плиткой (сводка по актуальности и т.п.) - во всю ширину. */
   note?: React.ReactNode;
 }) {
   const [wantOpenKey, setOpenKey] = useState<string | null>(null);
-  // Группа могла исчезнуть из выдачи после фильтрации — раскрывать нечего.
+  // Группа могла исчезнуть из выдачи после фильтрации - раскрывать нечего.
   const openKey = wantOpenKey && sections.some((s) => s.key === wantOpenKey) ? wantOpenKey : null;
   // Ключи групп, чьё содержимое влезло целиком: у них стрелка не нужна.
   const [fitKeys, setFitKeys] = useState<Set<string>>(new Set());
   const itemsRefs = useRef(new Map<string, HTMLDivElement | null>());
 
   // Стрелка и прокрутка нужны только там, где список реально обрезан по высоте.
-  // Раскрытые блоки не мерим: «влезаемость» оценивается в свернутом виде.
+  // Раскрытые блоки не мерим: "влезаемость" оценивается в свернутом виде.
   const measure = useCallback(() => {
     const next = new Set<string>();
     for (const [key, el] of itemsRefs.current) {
       if (!el || key === openKey) continue;
-      if (!el.clientHeight) continue; // вкладка скрыта — не мерим
+      if (!el.clientHeight) continue; // вкладка скрыта - не мерим
       if (el.scrollHeight <= el.clientHeight + 4) next.add(key);
     }
     setFitKeys((prev) => {
@@ -104,9 +105,9 @@ export default function GroupBlocks({
       return;
     }
     if (!target.closest('[data-kb-group-arrow]')) {
-      // «Свободное место» блока: карточки, кнопки и поля ввода не в счёт.
+      // "Свободное место" блока: карточки, кнопки и поля ввода не в счёт.
       if (target.closest('a, button, input, textarea, select, label, [data-kb-item]')) return;
-      // Свернутые списки прокручиваются: клик по вертикальному скроллбару —
+      // Свернутые списки прокручиваются: клик по вертикальному скроллбару -
       // это листание, а не сворачивание/раскрытие.
       const items = target.closest('[data-kb-group-items]');
       if (items && target === items) {
@@ -130,7 +131,7 @@ export default function GroupBlocks({
             className={`relative h-[340px] md:h-[640px] ${isOpen ? 'z-40' : ''}`}
           >
             {/* На мобильном раскрытый блок работает почти как модалка: затемнение
-                вокруг (тап по нему закрывает — сработает документный обработчик). */}
+                вокруг (тап по нему закрывает - сработает документный обработчик). */}
             {isOpen && <div className="md:hidden fixed inset-0 bg-slate-900/45" aria-hidden />}
             <div
               data-kb-group-card
@@ -170,7 +171,7 @@ export default function GroupBlocks({
                 className={`flex-1 min-h-0 flex flex-col gap-2 px-2.5 pb-2 overscroll-contain ${
                   isOpen ? 'overflow-y-auto' : 'overflow-y-auto max-md:overflow-hidden'
                 } ${
-                  // Свернутый и обрезанный список на мобильном затухает книзу — намёк
+                  // Свернутый и обрезанный список на мобильном затухает книзу - намёк
                   // на продолжение (листать можно только после раскрытия).
                   !isOpen && !fits
                     ? 'max-md:[mask-image:linear-gradient(180deg,#000_70%,transparent_98%)]'
@@ -184,7 +185,7 @@ export default function GroupBlocks({
                 ))}
               </div>
 
-              {/* Стрелка «развернуть / свернуть» */}
+              {/* Стрелка "развернуть / свернуть" */}
               <button
                 data-kb-group-arrow
                 type="button"

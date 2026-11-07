@@ -1,7 +1,6 @@
 'use client';
 
-// Тонкая обвязка над fetch для работы с FastAPI-бэкендом.
-// Всё ходит на тот же origin (Next проксирует /api и /static на uvicorn:8000),
+// Тонкая обвязка над fetch для API приложения. Всё ходит на тот же origin,
 // cookie `hr_session` прикладывается браузером автоматически.
 
 export class ApiError extends Error {
@@ -118,7 +117,7 @@ export function postSSE(
       if (finished) break;
       buffer += decoder.decode(value, { stream: true });
 
-      // Кадры разделяются пустой строкой; каждый кадр — строки `data: {...}`.
+      // Кадры разделяются пустой строкой; каждый кадр - строки `data: {...}`.
       let sep: number;
       while ((sep = buffer.indexOf('\n\n')) !== -1) {
         const frame = buffer.slice(0, sep);
@@ -144,9 +143,7 @@ export function postSSE(
   return { abort: () => controller.abort(), done };
 }
 
-// ---------------------------------------------------------------------------
-// Утилиты форматирования (порт time_ago из utils/templating.py)
-// ---------------------------------------------------------------------------
+// Утилиты форматирования
 
 export function timeAgo(value: string | Date | null | undefined): string {
   if (!value) return '—';

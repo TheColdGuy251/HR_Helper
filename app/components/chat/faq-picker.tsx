@@ -3,13 +3,13 @@ import { useState } from 'react';
 import { ChevronDown, ChevronLeft, Zap } from 'lucide-react';
 import { apiGet } from '@/lib/api';
 
-// Быстрый набор частых вопросов (FAQ отдела кадров), порт из chat.js:
-// три уровня чипов — категория → вопрос → под-ветка. Выбор конечного пункта
-// отправляет вопрос с faq_id → точный курируемый ответ без LLM.
-// Формы — GET /api/chat/faq-menu (routes/chat.py: faq_menu).
+// Быстрый набор частых вопросов (FAQ отдела кадров):
+// три уровня чипов - категория -> вопрос -> под-ветка. Выбор конечного пункта
+// отправляет вопрос с faq_id -> точный курируемый ответ без LLM.
+// Формы - GET /api/chat/faq-menu.
 
 interface FaqOption {
-  id: number;
+  id: string;
   label: string;
 }
 
@@ -17,7 +17,7 @@ export interface FaqItem {
   block?: string;
   question: string;
   label?: string;
-  id?: number;
+  id?: string;
   options?: FaqOption[];
 }
 
@@ -31,12 +31,12 @@ export function FaqPicker({
   onPick,
 }: {
   disabled?: boolean;
-  onPick: (text: string, faqId: number) => void;
+  onPick: (text: string, faqId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [menu, setMenu] = useState<FaqCategory[] | null>(null);
   const [state, setState] = useState<'idle' | 'loading' | 'error'>('idle');
-  const [stack, setStack] = useState<number[]>([]); // [] → [кат] → [кат, вопрос]
+  const [stack, setStack] = useState<number[]>([]); // [] -> [кат] -> [кат, вопрос]
 
   const toggle = async () => {
     const next = !open;
@@ -52,7 +52,7 @@ export function FaqPicker({
     }
   };
 
-  const pick = (text: string, faqId: number) => {
+  const pick = (text: string, faqId: string) => {
     setOpen(false);
     setStack([]);
     onPick(text, faqId);
@@ -84,7 +84,7 @@ export function FaqPicker({
 
           {state === 'idle' && menu && menu.length > 0 && (
             <>
-              {/* Хлебные крошки + «назад» */}
+              {/* Хлебные крошки + "назад" */}
               {stack.length > 0 && (
                 <div className="flex items-center gap-2 mb-2">
                   <button
@@ -101,7 +101,7 @@ export function FaqPicker({
                 </div>
               )}
 
-              {/* Уровень 1: категории — компактные «таблетки» */}
+              {/* Уровень 1: категории - компактные "таблетки" */}
               {stack.length === 0 && (
                 <div className="flex flex-wrap gap-1.5">
                   {menu.map((c, i) => (
@@ -117,7 +117,7 @@ export function FaqPicker({
                 </div>
               )}
 
-              {/* Уровень 2: вопросы категории — вертикальный список */}
+              {/* Уровень 2: вопросы категории - вертикальный список */}
               {stack.length === 1 && cat && (
                 <div className="flex flex-col gap-1">
                   {cat.items.map((it, j) => {
@@ -128,7 +128,7 @@ export function FaqPicker({
                         type="button"
                         onClick={() => {
                           if (hasOpts) setStack([stack[0], j]);
-                          else if (typeof it.id === 'number') pick(it.question, it.id);
+                          else if (it.id) pick(it.question, it.id);
                         }}
                         className="w-full text-left px-3 py-2 rounded-lg text-xs text-slate-600 hover:bg-gray-50 hover:text-[#0f1c3f] font-medium transition flex items-center justify-between gap-2"
                       >

@@ -1,5 +1,5 @@
 # Инфраструктура HR-помощника: база данных и векторный поиск.
-# Само приложение (FastAPI + Next.js) запускается локально через dev.ps1.
+# Само приложение (Next.js) запускается локально через start.ps1.
 #
 #   docker compose up -d      # поднять
 #   docker compose down       # остановить (данные сохраняются в томах)
@@ -9,7 +9,8 @@
 
 services:
   postgres:
-    image: postgres:17
+    # 18 — ради встроенной uuidv7(): ею генерируются все первичные ключи.
+    image: postgres:18
     container_name: hr-postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-hr}
@@ -19,7 +20,9 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - hr_pgdata:/var/lib/postgresql/data
+      # С версии 18 образ хранит данные в /var/lib/postgresql/<версия>/docker,
+      # поэтому том монтируется на уровень выше (так проще pg_upgrade между версиями).
+      - hr_postgres:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hr} -d ${POSTGRES_DB:-hr_helper}"]
       interval: 5s
@@ -38,5 +41,5 @@ services:
     restart: unless-stopped
 
 volumes:
-  hr_pgdata:
+  hr_postgres:
   hr_qdrant:

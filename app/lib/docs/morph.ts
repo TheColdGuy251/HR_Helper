@@ -1,12 +1,11 @@
 import 'server-only';
 
 /**
- * Приведение должности к именительному падежу — замена pymorphy3 из
- * services/documents/vacancy.py (_to_nominative).
+ * Приведение должности к именительному падежу.
  *
- * Az.js работает на тех же словарях OpenCorpora, что и pymorphy3, и даёт те же
- * граммемы (NOUN/ADJF/PRTF, падежи). Как и в Python, любая ошибка морфологии
- * означает «оставить строку как есть» — это не критичный шаг.
+ * Az.js работает на словарях OpenCorpora и даёт граммемы NOUN/ADJF/PRTF и
+ * падежи. Любая ошибка морфологии означает "оставить строку как есть" - это не
+ * критичный шаг.
  */
 
 interface AzTag {
@@ -39,7 +38,7 @@ async function initMorph(): Promise<void> {
         });
         morph = az.Morph;
       } catch {
-        morph = null; // словари не нашлись — работаем без морфологии
+        morph = null; // словари не нашлись - работаем без морфологии
       }
     })();
   }
@@ -47,9 +46,9 @@ async function initMorph(): Promise<void> {
 }
 
 /**
- * «специалиста ректората» → «специалист ректората»: ведущие прилагательные и
- * первое существительное приводим к именительному, дополнение («ректората»)
- * остаётся в родительном — так и должно быть.
+ * "специалиста ректората" -> "специалист ректората": ведущие прилагательные и
+ * первое существительное приводим к именительному, дополнение ("ректората")
+ * остаётся в родительном - так и должно быть.
  */
 export async function toNominative(pos: string): Promise<string> {
   await initMorph();
@@ -66,7 +65,7 @@ export async function toNominative(pos: string): Promise<string> {
       const p = morph(w)[0];
       const posTag = p?.tag?.POS;
       if (p && (posTag === 'NOUN' || posTag === 'ADJF' || posTag === 'PRTF')) {
-        // Число фиксируем явно: Az выбирает ПЕРВУЮ подходящую форму, а pymorphy
+        // Число фиксируем явно: Az выбирает первую подходящую форму, а нужна
         // сохраняет остальные граммемы исходной словоформы.
         const grammemes = p.tag.NMbr ? ['nomn', p.tag.NMbr] : ['nomn'];
         const nom = p.inflect(grammemes) || p.inflect(['nomn']);

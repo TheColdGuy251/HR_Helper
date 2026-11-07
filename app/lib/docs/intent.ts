@@ -5,12 +5,10 @@ import { SYSTEM_PROMPT_EXTRACT, SYSTEM_PROMPT_INTENT } from '@/lib/ml/prompts';
 import { ru } from './common';
 
 /**
- * Распознавание HR-команд: «нанять Иванова», «оформить отпуск Петровой».
- * Порт backend/services/documents/intent.py.
+ * Распознавание HR-команд: "нанять Иванова", "оформить отпуск Петровой".
  *
- * Тексты промптов и формулировки регэкспов менять НЕЛЬЗЯ: от них зависит, какой
- * шаблон выберет модель и что она положит в поля — расхождение с Python дало бы
- * другой документ на тот же запрос.
+ * Тексты промптов и регэкспы не менять без проверки: от них зависит, какой
+ * шаблон выберет модель и что она положит в поля.
  */
 
 // ---------------------------------------------------------------------------
@@ -27,7 +25,7 @@ export interface TemplateField {
 
 /** Минимум полей DocTemplate, нужный докгену (реальная строка Prisma шире). */
 export interface DocTemplateLike {
-  id: number;
+  id: string;
   key: string;
   title: string;
   description?: string | null;
@@ -37,9 +35,8 @@ export interface DocTemplateLike {
 }
 
 /**
- * `template.fields_schema or []` в типизированном виде. Колонка — свободный
- * json, поэтому мусорные элементы (не-объекты, объекты без name) отбрасываем:
- * в Python они бы упали на `f["name"]`.
+ * `template.fields_schema` в типизированном виде. Колонка - свободный json,
+ * поэтому мусорные элементы (не-объекты, объекты без name) отбрасываем.
  */
 export function templateFields(tpl: { fields_schema: unknown }): TemplateField[] {
   const raw = tpl.fields_schema;
@@ -59,17 +56,17 @@ export function templateFields(tpl: { fields_schema: unknown }): TemplateField[]
   return out;
 }
 
-/** Значения полей: `null` = «неизвестно», как в Python. */
+/** Значения полей: `null` = "неизвестно". */
 export type FieldValues = Record<string, unknown>;
 
-/** `v in (None, "")` из Python: 0 и false считаются заполненными. */
+/** 0 и false считаются заполненными, пустыми - только null и "". */
 export function isBlank(v: unknown): boolean {
   return v === null || v === undefined || v === '';
 }
 
 /**
- * `json.dumps(obj, ensure_ascii=False)`: разделители по умолчанию — «, » и
- * «: ». JSON.stringify пишет без пробелов, а текст промпта должен совпадать.
+ * `json.dumps(obj, ensure_ascii=False)`: разделители по умолчанию - ", " и
+ * ": ". JSON.stringify пишет без пробелов, а текст промпта должен совпадать.
  */
 export function pyJson(value: unknown): string {
   if (value === null || value === undefined) return 'null';
@@ -94,8 +91,8 @@ export function pyJson(value: unknown): string {
 export async function detectTemplate(query: string): Promise<DocTemplateLike | null> {
   const templates = await prisma.doc_templates.findMany({
     where: { is_enabled: true },
-    // В Python порядок не задан; фиксируем его, чтобы список в промпте был
-    // стабильным от запроса к запросу (иначе модель «плавает»).
+    // Порядок фиксируем, чтобы список в промпте был стабильным от запроса к
+    // запросу (иначе модель "плавает").
     orderBy: { id: 'asc' },
   });
   if (!templates.length) return null;
@@ -119,15 +116,106 @@ export async function detectTemplate(query: string): Promise<DocTemplateLike | n
 }
 
 // ---------------------------------------------------------------------------
+// Лемма-фолбэк выбора шаблона (когда LLM-детект промахнулся)
+// ---------------------------------------------------------------------------
+// LLM-классификатор недетерминирован: "сделай заявление о выходе из отпуска"
+// периодически возвращает null, и запрос проваливается в RAG, где модель
+// сочиняет текст заявления в чате. Названия шаблонов - простые и короткие,
+// лексическое сопоставление по леммам здесь надёжнее.
+
+/** Генеративный глагол - иначе это вопрос/просьба бланка, не команда. */
+const GENERATE_VERB_RE = ru(
+  '\\b(оформ\\w*|сдела\\w*|созда\\w*|подготов\\w*|состав\\w*|сформир\\w*|заполн\\w*|напиш\\w*|набросай|выпиш\\w*|сгенерир\\w*)'
+);
+// Запрос бланка обслуживает отдельная ветка (протокол: бот выдаёт бланки, не
+// заполняет) - фолбэк в неё не лезет.
+const BLANK_LIKE_RE = ru(
+  '\\b(бланк\\w*|образ(?:ец|цы|ца|цов)|шаблон\\w*|скача\\w*|пришл\\w*|предостав\\w*|выда\\w*|дай|дать)\\b'
+);
+
+// Леммы, не различающие ни запросы, ни шаблоны.
+const QUERY_GENERIC = new Set([
+  'сделать', 'оформить', 'создать', 'подготовить', 'составить', 'сформировать',
+  'написать', 'заполнить', 'сгенерировать', 'выписать', 'нужный', 'нужно',
+  'хотеть', 'просить', 'пожалуйста', 'срочно', 'заявление', 'документ', 'форма',
+  'мне', 'мой', 'наш', 'меня',
+]);
+const TITLE_GENERIC = new Set(['заявление', 'записка', 'документ', 'форма', 'предоставление']);
+
+/**
+ * Подбирает шаблон по совпадению лемм запроса с леммами названий. Возвращает
+ * шаблон только при уверенном И однозначном совпадении - иначе null (решение
+ * остаётся за прежним поведением).
+ */
+export async function matchTemplateByTitle(query: string): Promise<DocTemplateLike | null> {
+  const q = (query || '').trim();
+  if (!q || !GENERATE_VERB_RE.test(q) || BLANK_LIKE_RE.test(q)) return null;
+
+  const { initStemmer, tokenize } = await import('@/lib/ml/bm25');
+  await initStemmer();
+  const qSig = [...new Set(tokenize(q))].filter((t) => !QUERY_GENERIC.has(t) && !/^\d/.test(t));
+  if (qSig.length < 2) return null;
+  const qSet = new Set(qSig);
+
+  const templates = await prisma.doc_templates.findMany({
+    where: { is_enabled: true },
+    orderBy: { id: 'asc' },
+  });
+
+  let best: DocTemplateLike | null = null;
+  let bestScore = 0;
+  let secondScore = 0;
+  for (const t of templates) {
+    const tSig = [...new Set(tokenize(t.title || ''))].filter(
+      (x) => !TITLE_GENERIC.has(x) && !/^\d/.test(x)
+    );
+    if (!tSig.length) continue;
+    const hit = tSig.filter((x) => qSet.has(x)).length;
+    if (!hit) continue;
+    // Обоюдное покрытие: и запрос узнан в названии, и название - в запросе.
+    const score = (hit / qSig.length + hit / tSig.length) / 2;
+    if (score > bestScore) {
+      secondScore = bestScore;
+      bestScore = score;
+      best = t;
+    } else if (score > secondScore) {
+      secondScore = score;
+    }
+  }
+
+  // Порог уверенности + заметный отрыв от второго кандидата.
+  if (!best || bestScore < 0.6 || bestScore - secondScore < 0.12) return null;
+  return best;
+}
+
+// Вопросительные маркеры: "как оформить заявление..." - вопрос о процедуре,
+// а не команда создать документ.
+const QUESTION_LIKE_RE = ru(
+  '\\b(как|можно ли|нужно ли|надо ли|что нужно|какие|какой|каков\\w*|где|когда|почему|зачем|сколько)\\b|\\?\\s*$'
+);
+
+/**
+ * Императивная команда на создание документа ("сделай/оформи заявление ..."):
+ * генеративный глагол, без вопросительных маркеров и без просьбы бланка.
+ * Для такой команды уместно начать диалоговый добор полей, даже если из самого
+ * сообщения не извлеклось ни одного поля.
+ */
+export function looksImperativeDocCommand(query: string): boolean {
+  const q = (query || '').trim();
+  if (!q) return false;
+  return GENERATE_VERB_RE.test(q) && !QUESTION_LIKE_RE.test(q) && !BLANK_LIKE_RE.test(q);
+}
+
+// ---------------------------------------------------------------------------
 // extract_fields
 // ---------------------------------------------------------------------------
 
 /**
  * Просит LLM извлечь значения полей шаблона из произвольного русского текста.
  *
- * `context` — необязательный текст предыдущих реплик диалога. Нужен, чтобы
+ * `context` - необязательный текст предыдущих реплик диалога. Нужен, чтобы
  * доизвлечь поля, если пользователь досказывает недостающие сведения отдельным
- * сообщением («оклад 50000») в ответ на просьбу уточнить.
+ * сообщением ("оклад 50000") в ответ на просьбу уточнить.
  */
 export async function extractFields(
   query: string,
@@ -137,7 +225,7 @@ export async function extractFields(
   const schema = templateFields(template);
   if (!schema.length) return {};
 
-  // Подсказываем модели тип поля — чтобы в числовые поля не попадал текст.
+  // Подсказываем модели тип поля - чтобы в числовые поля не попадал текст.
   const desc = (f: TemplateField): string => {
     const label = f.label || f.name;
     const hint = isNumericField(f) ? ' (число)' : '';
@@ -209,11 +297,11 @@ export function summarizeForTitle(template: DocTemplateLike, fields: FieldValues
 }
 
 // ---------------------------------------------------------------------------
-// Пред-фильтр «похоже на запрос документа»
+// Пред-фильтр "похоже на запрос документа"
 // ---------------------------------------------------------------------------
 
 const TRIGGER_WORDS = [
-  // Приём на работу: «нанять/найми/наняла/нанимаем», «приём/принять/прими»
+  // Приём на работу: "нанять/найми/наняла/нанимаем", "приём/принять/прими"
   'наним', 'нанят', 'нанял', 'нанима', 'найм', 'найми',
   'приня', 'прими', 'прин[еия]', 'приём', 'прием',
   // Увольнение
@@ -228,7 +316,7 @@ const TRIGGER_WORDS = [
 ];
 const TRIGGER_RE = new RegExp(TRIGGER_WORDS.join('|'), 'i');
 
-/** Лёгкий пред-фильтр, чтобы не дёргать LLM на каждый «привет». */
+/** Лёгкий пред-фильтр, чтобы не дёргать LLM на каждый "привет". */
 export function looksLikeDocRequest(query: string): boolean {
   if (!query || query.length < 8) return false;
   return TRIGGER_RE.test(query);
@@ -237,8 +325,8 @@ export function looksLikeDocRequest(query: string): boolean {
 // ---------------------------------------------------------------------------
 // Валидация и нормализация полей перед рендером
 // ---------------------------------------------------------------------------
-// Числовые/денежные поля: чтобы в оклад не попали «пельмени». Определяем по типу
-// поля в схеме ИЛИ по смыслу имени/подписи.
+// Числовые/денежные поля: чтобы в оклад не попали "пельмени". Определяем по типу
+// поля в схеме или по смыслу имени/подписи.
 
 const NUMERIC_TYPES = new Set(['number', 'int', 'integer', 'float', 'amount', 'money', 'decimal']);
 const MONEY_NUM_NAME_RE = ru(
@@ -246,8 +334,8 @@ const MONEY_NUM_NAME_RE = ru(
     'количеств|кол-?во|\\bчисло\\b|salary|amount|count|price|\\bsum\\b|rate|salary',
   'i'
 );
-// Первый числовой фрагмент: «100 000 пельменей» → «100 000».
-// В классе — обычный и неразрывный пробел (как в Python-исходнике).
+// Первый числовой фрагмент: "100 000 пельменей" -> "100 000".
+// В классе - обычный и неразрывный пробел.
 const NUM_TOKEN_RE = /-?\d[\d  .,]*/;
 
 function isNumericField(field: TemplateField): boolean {
@@ -256,19 +344,19 @@ function isNumericField(field: TemplateField): boolean {
 }
 
 /**
- * «100000 пельменей» → «100000»; «пельмени» → null; 50000 → «50000».
+ * "100000 пельменей" -> "100000"; "пельмени" -> null; 50000 -> "50000".
  * Возвращает очищенное число-строку или null, если числа в значении нет.
  */
 function coerceNumeric(value: unknown): string | null {
   const s = pyStr(value).trim();
   const m = NUM_TOKEN_RE.exec(s);
   if (!m) return null;
-  // .strip(".,-") — снимаем эти символы с обоих концов
+  // .strip(".,-") - снимаем эти символы с обоих концов
   const token = m[0].replace(/[^\d.,-]/g, '').replace(/^[.,-]+|[.,-]+$/g, '');
   return token || null;
 }
 
-/** `str(v)` из Python: bool печатается как True/False. */
+/** Значение строкой: bool печатается как True/False. */
 function pyStr(v: unknown): string {
   if (v === null || v === undefined) return 'None';
   if (typeof v === 'boolean') return v ? 'True' : 'False';
@@ -277,7 +365,7 @@ function pyStr(v: unknown): string {
 
 /**
  * Приводит числовые поля к числу и отбрасывает мусор (текст в поле оклада).
- * Некорректное значение обнуляется (→ null) — дальше оно считается «недостающим».
+ * Некорректное значение обнуляется (-> null) - дальше оно считается "недостающим".
  */
 export function validateFields(fields: FieldValues, template: DocTemplateLike): FieldValues {
   const schema = new Map(templateFields(template).map((f) => [f.name, f]));
@@ -295,9 +383,9 @@ export function validateFields(fields: FieldValues, template: DocTemplateLike): 
 }
 
 /**
- * Список ИМЁН обязательных полей, которых не хватает (перевод подписи — на
+ * Список имён обязательных полей, которых не хватает (перевод подписи - на
  * этапе показа, см. ruFieldLabel). По умолчанию поле обязательно (required
- * отсутствует → true); опциональные помечаются явно required=false.
+ * отсутствует -> true); опциональные помечаются явно required=false.
  */
 export function missingRequiredFields(fields: FieldValues, template: DocTemplateLike): string[] {
   const missing: string[] = [];
@@ -343,7 +431,7 @@ export const RU_FIELD_LABELS: Record<string, string> = {
 const HAS_CYRILLIC_RE = /[А-Яа-яЁё]/;
 
 /**
- * Русская подпись поля по его имени. Если имя незнакомо — возвращаем
+ * Русская подпись поля по его имени. Если имя незнакомо - возвращаем
  * хранимую подпись (если она уже кириллицей), иначе имя как есть.
  */
 export function ruFieldLabel(name: string, fallback: string | null = null): string {
@@ -357,8 +445,8 @@ export function ruFieldLabel(name: string, fallback: string | null = null): stri
 // Явные намерения пользователя в диалоге генерации
 // ---------------------------------------------------------------------------
 
-// «Имя неправильно — должно быть …», «исправь отчество на …», «не Иванов, а Петров» —
-// намерение ИСПРАВИТЬ уже заполненное поле (а не просто дозаполнить пустое).
+// "Имя неправильно - должно быть ...", "исправь отчество на ...", "не Иванов, а Петров" -
+// намерение исправить уже заполненное поле (а не просто дозаполнить пустое).
 const CORRECTION_RE = ru(
   'неправильн\\w*|не\\s+так\\b|неверн\\w*|не\\s+верн\\w*|ошибк\\w*|ошиба\\w*|' +
     'исправ\\w*|поменя\\w*|замен\\w*|должн[оаы]\\s+быть|на\\s+самом\\s+деле|' +
@@ -370,7 +458,7 @@ export function wantsCorrection(query: string): boolean {
   return CORRECTION_RE.test(query || '');
 }
 
-// «Сгенерируй как есть / без обязательных полей / оставь пустым» — разрешение
+// "Сгенерируй как есть / без обязательных полей / оставь пустым" - разрешение
 // создать документ, не заполняя недостающие поля (пустые останутся пустыми).
 const FORCE_GENERATE_RE = ru(
   'как\\s+есть|без\\s+(обязательн|остальн|недоста|заполнен)|' +
@@ -379,7 +467,7 @@ const FORCE_GENERATE_RE = ru(
     'сгенерируй\\s+(так|всё|все|документ)|не\\s+важно|неважно|пропусти',
   'i'
 );
-// «Отмена / забудь / не надо» — отказ от начатой генерации документа.
+// "Отмена / забудь / не надо" - отказ от начатой генерации документа.
 const CANCEL_RE = ru(
   '\\bотмен\\w*|\\bзабуд\\w*|\\bне\\s+надо\\b|\\bне\\s+нужно\\b|\\bотбой\\b|' +
     '\\bстоп\\b|\\bпередума\\w*|\\bотстав\\w*|\\bне\\s+хочу\\b',
@@ -395,7 +483,7 @@ export function wantsCancel(query: string): boolean {
 }
 
 /**
- * null → пустая строка: чтобы в документе не печаталось буквальное «None»
+ * null -> пустая строка: чтобы в документе не печаталось буквальное "null"
  * для необязательных незаполненных полей.
  */
 export function normalizeForRender(fields: FieldValues): FieldValues {

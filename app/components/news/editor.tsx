@@ -26,12 +26,11 @@ import { apiPatch, apiPost, apiUpload, formatBytes } from '@/lib/api';
 import { PrimaryButton, SecondaryButton } from '@/components/ui';
 import NewsImageEditor from '@/components/news/image-editor';
 
-// Редактор новости — порт HR Helper/static/js/news.js.
-// Форматы запросов/ответов сверены с HR Helper/routes/news.py.
+// Редактор новости.
 
-// ─────────────────────────── типы (по routes/news.py) ───────────────────────────
+// типы
 
-/** PollPayload / _poll_edit_dict: голосование без счётчиков (для редактора). */
+/** Голосование без счётчиков (для редактора). */
 export interface NewsPollDraft {
   question: string;
   description: string;
@@ -40,12 +39,12 @@ export interface NewsPollDraft {
   options: string[];
 }
 
-/** Элемент ленты — _post_dict() бэкенда. */
+/** Элемент ленты. */
 export interface NewsItem {
-  id: number;
+  id: string;
   title: string;
   body_html: string;
-  attachments: { media_id: number; name: string; size: number; is_image: boolean; url: string }[];
+  attachments: { media_id: string; name: string; size: number; is_image: boolean; url: string }[];
   preview_image: string | null;
   excerpt: string;
   poll: NewsPollDraft | null;
@@ -55,26 +54,26 @@ export interface NewsItem {
   updated_at: string | null;
 }
 
-/** Ответ POST /api/news/upload → {success, media}. */
+/** Ответ POST /api/news/upload -> {success, media}. */
 interface UploadedMedia {
-  id: number;
+  id: string;
   name: string;
   size: number;
   is_image: boolean;
   url: string;
 }
 
-// ─────────────────── CSS контента (тело статьи и редактор) ───────────────────
+// CSS контента (тело статьи и редактор)
 // Инлайн-стили режутся санитайзером бэкенда, поэтому legacy использует классы
-// news-align-* (блоки) и news-img-* (картинки) — воспроизводим их здесь.
-// Иконки карточек документов — SVG-фоном (FontAwesome в Next-порте нет).
+// news-align-* (блоки) и news-img-* (картинки) - воспроизводим их здесь.
+// Иконки карточек документов - SVG-фоном (FontAwesome в Next-порте нет).
 
 const FILE_ICON =
   `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z'/%3E%3Cpath d='M14 2v4a2 2 0 0 0 2 2h4'/%3E%3Cpath d='M16 13H8'/%3E%3Cpath d='M16 17H8'/%3E%3C/svg%3E")`;
 const DOWNLOAD_ICON =
   `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'/%3E%3Cpolyline points='7 10 12 15 17 10'/%3E%3Cline x1='12' y1='15' x2='12' y2='3'/%3E%3C/svg%3E")`;
 
-/** Типографика санитизированного HTML, scope — селектор контейнера. */
+/** Типографика санитизированного HTML, scope - селектор контейнера. */
 export function newsBodyCss(scope: string): string {
   const s = scope;
   return `
@@ -118,7 +117,7 @@ const EDITOR_EXTRA_CSS = `
 .news-body-input img.news-img-selected { outline: 3px solid #3b82f6; outline-offset: 2px; }
 `;
 
-// ─────────────────────────── утилиты ───────────────────────────
+// утилиты
 
 const esc = (s: string) =>
   s.replace(/[&<>"']/g, (c) =>
@@ -127,7 +126,7 @@ const esc = (s: string) =>
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** FA-классы по расширению — как legacy (в Next скрыты, но сохраняют вид в старом UI). */
+/** FA-классы по расширению - как legacy (в Next скрыты, но сохраняют вид в старом UI). */
 function faFileIcon(name: string): string {
   const e = (name.split('.').pop() || '').toLowerCase();
   if (e === 'pdf') return 'fa-file-pdf';
@@ -139,8 +138,10 @@ function faFileIcon(name: string): string {
   return 'fa-file-lines';
 }
 
-/** Карточка документа в теле (структура и классы — как в legacy news.js).
-    Основная ссылка ведёт напрямую на файл: страницы /news/media/{id}/view в порте нет. */
+/**
+ * Карточка документа в теле.
+ * Основная ссылка ведёт напрямую на файл: страницы /news/media/{id}/view в порте нет.
+ */
 function docCardHtml(m: UploadedMedia): string {
   return (
     '<span class="news-doc" contenteditable="false">' +
@@ -155,7 +156,7 @@ function docCardHtml(m: UploadedMedia): string {
   );
 }
 
-// ─────────────────────────── кнопка тулбара ───────────────────────────
+// кнопка тулбара
 
 function TbBtn({
   title,
@@ -181,7 +182,7 @@ function TbBtn({
 
 const TbSep = () => <span className="w-px h-5 bg-gray-200 mx-1" aria-hidden />;
 
-// ─────────────────────────── модалка голосования ───────────────────────────
+// модалка голосования
 
 function PollModal({
   initial,
@@ -329,14 +330,14 @@ function PollModal({
   );
 }
 
-// ─────────────────────────── редактор поста ───────────────────────────
+// редактор поста
 
 export default function NewsEditor({
   post,
   onClose,
   onSaved,
 }: {
-  post: NewsItem | null; // null — создание нового
+  post: NewsItem | null; // null - создание нового
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -367,7 +368,7 @@ export default function NewsEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── выделение: вставка/форматирование идут по месту курсора ──
+  // выделение: вставка/форматирование идут по месту курсора
   function saveSel() {
     const s = window.getSelection();
     if (s && s.rangeCount && bodyRef.current?.contains(s.anchorNode)) {
@@ -393,7 +394,7 @@ export default function NewsEditor({
     if (img) img.classList.add('news-img-selected');
   }
 
-  // ── форматирование (document.execCommand — как legacy) ──
+  // форматирование (document.execCommand - как legacy)
   function exec(cmd: string) {
     restoreSel();
     document.execCommand(cmd, false);
@@ -423,7 +424,7 @@ export default function NewsEditor({
   // Выравнивание классами: inline-style режется санитайзером бэкенда.
   function setAlign(dir: 'left' | 'center' | 'right' | 'justify') {
     if (activeImg.current) {
-      // Выбрана картинка — выравниваем её (она может лежать не в абзаце).
+      // Выбрана картинка - выравниваем её (она может лежать не в абзаце).
       const map: Record<typeof dir, string> = {
         left: 'news-img-left',
         center: 'news-img-center',
@@ -438,7 +439,7 @@ export default function NewsEditor({
     const b = currentBlock();
     if (!b) return;
     b.classList.remove('news-align-left', 'news-align-center', 'news-align-right', 'news-align-justify');
-    if (dir !== 'left') b.classList.add(`news-align-${dir}`); // left — по умолчанию
+    if (dir !== 'left') b.classList.add(`news-align-${dir}`); // left - по умолчанию
     saveSel();
   }
 
@@ -450,7 +451,7 @@ export default function NewsEditor({
     saveSel();
   }
 
-  // ── двойной Enter на пустой строке выходит из цитаты ──
+  // двойной Enter на пустой строке выходит из цитаты
   function closestTag(tag: string): HTMLElement | null {
     const s = window.getSelection();
     if (!s || !s.rangeCount) return null;
@@ -470,7 +471,7 @@ export default function NewsEditor({
         if (enterStreak.current >= 2) {
           e.preventDefault();
           enterStreak.current = 0;
-          // убрать пустую строку от первого Enter и выйти абзацем ПОСЛЕ цитаты
+          // убрать пустую строку от первого Enter и выйти абзацем после цитаты
           while (
             bq.lastChild &&
             (bq.lastChild.nodeName === 'BR' ||
@@ -495,7 +496,7 @@ export default function NewsEditor({
     enterStreak.current = 0;
   }
 
-  // ── загрузка и вставка картинок/документов по месту курсора ──
+  // загрузка и вставка картинок/документов по месту курсора
   async function uploadFile(file: File): Promise<UploadedMedia> {
     const fd = new FormData();
     fd.append('file', file);
@@ -536,7 +537,7 @@ export default function NewsEditor({
     }
   }
 
-  // ── сохранение (PostPayload: title, body_html, attachments, is_pinned, poll) ──
+  // сохранение (PostPayload: title, body_html, attachments, is_pinned, poll)
   async function save() {
     setActiveImg(null); // не сохранять подсветку выбранной картинки
     const t = title.trim();
@@ -545,8 +546,8 @@ export default function NewsEditor({
       setStatus({ text: 'Заполните заголовок или текст.', err: true });
       return;
     }
-    // attachments всегда [] — файлы встроены в body_html, бэкенд привязывает
-    // их сам по ссылкам /api/news/media/{id} (_bind_media), как в legacy.
+    // attachments всегда [] - файлы встроены в body_html, бэкенд привязывает
+    // их сам по ссылкам /api/news/media/{id}.
     const payload = {
       title: t,
       body_html,
@@ -645,7 +646,7 @@ export default function NewsEditor({
             onKeyDown={onBodyKeyDown}
             onClick={(e) => setActiveImg((e.target as HTMLElement).closest('img'))}
             onDoubleClick={(e) => {
-              // Двойной клик по картинке — редактор изображения (news.js:396).
+              // Двойной клик по картинке - редактор изображения.
               const img = (e.target as HTMLElement).closest('img');
               if (img) {
                 e.preventDefault();
@@ -730,7 +731,7 @@ export default function NewsEditor({
           src={editImg.src}
           onCancel={() => setEditImg(null)}
           onApply={(url, width) => {
-            // Подменяем картинку в теле поста: ширина по горизонтали, высота — авто.
+            // Подменяем картинку в теле поста: ширина по горизонтали, высота - авто.
             editImg.src = url;
             editImg.setAttribute('width', String(width));
             editImg.removeAttribute('height');

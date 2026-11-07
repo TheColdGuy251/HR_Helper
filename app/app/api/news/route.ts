@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { badRequest, requireKbEditor, requireUser } from '@/lib/auth';
 import { sanitizeHtml } from '@/lib/htmlsanitize';
@@ -15,7 +14,6 @@ import {
 } from '@/lib/news';
 
 // Лента новостей и создание поста.
-// Порт GET/POST /api/news из backend/routes/news.py (list_news, create_post).
 
 export async function GET() {
   const gate = await requireUser();
@@ -54,14 +52,13 @@ export async function POST(request: NextRequest) {
     data: {
       title: title || 'Без заголовка',
       body_html: body,
-      // Пустой список в БД хранится как NULL — так же, как `attachments or None`.
-      attachments: attachments.length ? attachments : Prisma.DbNull,
       author_id: gate.user.id,
       is_published: true,
       is_pinned: payload.is_pinned,
     },
   });
 
+  // Список вложений хранится у самих файлов (news_media.attachment_order).
   await bindMedia(post.id, attachments, post.body_html);
   await savePoll(post.id, payload.poll);
 

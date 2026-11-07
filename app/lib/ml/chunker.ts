@@ -1,14 +1,11 @@
 import 'server-only';
 
-// Разбиение документа на чанки. Порт services/rag/chunker.py:
-// иерархический сплиттер с авто-выбором стратегии по структуре текста —
-// нормативный акт (чанк = статья), структурированный ЛНА (чанк с путём-
-// заголовком) или обычный текст (жадная склейка абзацев/предложений).
+// Разбиение документа на чанки.
 //
 // Метаданные чанка (article_no / unit_*) попадают в payload Qdrant и нужны
-// навигации «статья 81», «раздел 3», «последний пункт» и блоку «Источники».
+// навигации "статья 81", "раздел 3", "последний пункт" и блоку "Источники".
 
-// В Python `\b` и `\w` знают кириллицу, в JS — только ASCII (см. lib/ml/pipeline.ts).
+// В JS `\b` и `\w` знают только ASCII (см. lib/ml/pipeline.ts).
 const W = '0-9A-Za-zА-Яа-яЁё_';
 const B = `(?:(?<![${W}])(?=[${W}])|(?<=[${W}])(?![${W}]))`;
 
@@ -16,15 +13,15 @@ function ru(pattern: string, flags = ''): RegExp {
   return new RegExp(pattern.replace(/\\b/g, B).replace(/\\w/g, `[${W}]`), flags);
 }
 
-/** settings.chunk_size = 600 — размер чанка в символах. */
+/** Размер чанка в символах. */
 export const CHUNK_SIZE = Math.max(1, Number(process.env.CHUNK_SIZE || 600));
-/** settings.chunk_overlap = 100 — «хвост» предыдущего чанка. */
+/** "Хвост" предыдущего чанка. */
 export const CHUNK_OVERLAP = Math.max(0, Number(process.env.CHUNK_OVERLAP || 100));
 
 const PARAGRAPH_SPLIT = /\n\s*\n+/;
 const SENT_SPLIT = /(?<=[.!?…])\s+(?=[А-ЯA-ZЁ0-9])/;
 
-// Маркер начала статьи нормативного акта: «Статья 5.», «Статья 22.», «Статья 84.1»
+// Маркер начала статьи нормативного акта: "Статья 5.", "Статья 22.", "Статья 84.1"
 const ARTICLE_HEAD = /^[\s]*Статья\s+\d+(?:\.\d+)?\.?/gim;
 
 export interface Chunk {
@@ -32,12 +29,12 @@ export interface Chunk {
   index: number;
   char_start: number;
   char_end: number;
-  // Метаданные нормативных актов («Статья N») — для навигации по статьям.
+  // Метаданные нормативных актов ("Статья N") - для навигации по статьям.
   article_no: number | null;
   is_article_head: boolean;
-  // Обобщённая структурная единица для НЕ-кодексных документов:
-  // раздел/глава/пункт/параграф. unit_no — канонический номер-строка («3», «3.2»),
-  // unit_ord — float для сортировки, is_unit_head — заголовок единицы.
+  // Обобщённая структурная единица для не-кодексных документов:
+  // раздел/глава/пункт/параграф. unit_no - канонический номер-строка ("3", "3.2"),
+  // unit_ord - float для сортировки, is_unit_head - заголовок единицы.
   unit_type: string | null; // section | chapter | clause | paragraph
   unit_no: string | null;
   unit_ord: number | null;
@@ -60,15 +57,14 @@ function chunk(text: string, index: number, charStart: number, charEnd: number, 
   };
 }
 
-// Номер статьи из начала чанка: «Статья 81.», «статья 84.1», а также из
-// маркера-продолжения «[Статья 81. … — продолжение] …».
+// Номер статьи из начала чанка: "Статья 81.", "статья 84.1", а также из
+// маркера-продолжения "[Статья 81. ... - продолжение] ...".
 const ARTICLE_NO_RE = ru('^\\s*\\[?\\s*стать\\w*\\s+(\\d+(?:\\.\\d+)?)', 'i');
 
 /**
- * Номер статьи (число, чтобы «84.1» сравнивалось корректно) или null.
- * Порт parse_article_no. Такая же копия живёт в lib/ml/retriever.ts — в Python
- * функция тоже одна на chunker и retriever, но импорт оттуда сюда потянул бы
- * загрузку модели эмбеддингов в индексатор.
+ * Номер статьи (число, чтобы "84.1" сравнивалось корректно) или null.
+ * Такая же копия живёт в lib/ml/retriever.ts: импорт оттуда потянул бы загрузку
+ * модели эмбеддингов в индексатор.
  */
 export function parseArticleNo(text: string): number | null {
   const m = ARTICLE_NO_RE.exec(text || '');
@@ -77,17 +73,17 @@ export function parseArticleNo(text: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/** Эвристика: >= 5 заголовков статей — считаем документ нормативным актом. */
+/** Эвристика: >= 5 заголовков статей - считаем документ нормативным актом. */
 function looksLikeLegalAct(text: string): boolean {
   ARTICLE_HEAD.lastIndex = 0;
   return [...(text || '').matchAll(ARTICLE_HEAD)].length >= 5;
 }
 
-// ── Нормативные акты ───────────────────────────────────────────────────────
+// Нормативные акты
 
 /**
- * Структурный сплиттер для нормативных актов: каждый чанк — это одна статья
- * (или её часть), всегда начинается с маркера «Статья N. …».
+ * Структурный сплиттер для нормативных актов: каждый чанк - это одна статья
+ * (или её часть), всегда начинается с маркера "Статья N. ...".
  */
 function splitLegalText(text: string, chunkSize: number, overlap: number): Chunk[] {
   ARTICLE_HEAD.lastIndex = 0;
@@ -106,7 +102,7 @@ function splitLegalText(text: string, chunkSize: number, overlap: number): Chunk
     );
   };
 
-  // Префикс до первой статьи (преамбула, главы и т.п.) — отдельным чанком
+  // Префикс до первой статьи (преамбула, главы и т.п.) - отдельным чанком
   const firstStart = matches[0].index ?? 0;
   if (firstStart > 0) {
     const preface = text.slice(0, firstStart);
@@ -128,8 +124,8 @@ function splitLegalText(text: string, chunkSize: number, overlap: number): Chunk
       return;
     }
 
-    // Длинная статья — режем простым жадным сплиттером (без структурного режима,
-    // чтобы нумерованные пункты внутри статьи не подменили маркер «продолжение»).
+    // Длинная статья - режем простым жадным сплиттером (без структурного режима,
+    // чтобы нумерованные пункты внутри статьи не подменили маркер "продолжение").
     const sub = splitPlain(block, chunkSize, overlap);
     sub.forEach((s, j) => {
       if (j === 0) add(s.text, start + s.char_start, start + s.char_end, true);
@@ -140,14 +136,14 @@ function splitLegalText(text: string, chunkSize: number, overlap: number): Chunk
   return chunks;
 }
 
-// ── Структурные документы НЕ нормативного типа ─────────────────────────────
+// Структурные документы не нормативного типа
 // Инструкции, положения, регламенты, ЛНА часто структурированы заголовками
-// «Раздел/Глава/§» и нумерацией «1.», «2.3», но без «Статья N». Для них мы тоже
-// хотим осмысленные границы чанков и КОНТЕКСТ заголовка в каждом чанке —
-// «[Раздел 3. Оплата труда › 3.2 Сроки выплаты] …».
+// "Раздел/Глава/параграф" и нумерацией "1.", "2.3", но без "Статья N". Для них мы тоже
+// хотим осмысленные границы чанков и контекст заголовка в каждом чанке -
+// "[Раздел 3. Оплата труда > 3.2 Сроки выплаты] ...".
 
 const HEADING_KEYWORD_RE = ru('^(раздел|глава|подраздел|часть|параграф|§|приложение)\\b', 'i');
-// Нумерованный заголовок: «1. …», «2.3 …», «3.1.2 …» (короткая строка-титул).
+// Нумерованный заголовок: "1. ...", "2.3 ...", "3.1.2 ..." (короткая строка-титул).
 const HEADING_NUM_RE = /^(\d+(?:\.\d+)*)([.)])?\s+(\S)/;
 
 function isLower(c: string): boolean {
@@ -166,12 +162,12 @@ function isDigit(c: string): boolean {
   return /\p{Nd}/u.test(c);
 }
 
-/** str.split() без аргументов. */
+/** Разбивка по любым пробелам, пустые части отбрасываются. */
 function words(s: string): string[] {
   return s.split(/\s+/).filter((x) => x !== '');
 }
 
-/** str.strip(chars). */
+/** Снимает символы набора с обоих концов. */
 function stripChars(s: string, chars: string): string {
   let a = 0;
   let b = s.length;
@@ -181,15 +177,15 @@ function stripChars(s: string, chars: string): string {
 }
 
 /**
- * Номер нумерованного заголовка («3.2») или null. Два фильтра ложных
- * срабатываний: одиночному числу обязателен разделитель («2. Название» —
- * заголовок, «2 смена:» — нет), а после номера должна идти НЕ строчная буква
- * («2.\tобъявление недоверия…» — элемент перечисления).
+ * Номер нумерованного заголовка ("3.2") или null. Два фильтра ложных
+ * срабатываний: одиночному числу обязателен разделитель ("2. Название" -
+ * заголовок, "2 смена:" - нет), а после номера должна идти не строчная буква
+ * ("2.\tобъявление недоверия..." - элемент перечисления).
  */
 function numberedHeading(s: string): string | null {
   const m = HEADING_NUM_RE.exec(s);
   if (!m) return null;
-  // Необязательная группа может не совпасть — типизируем как в рантайме.
+  // Необязательная группа может не совпасть - типизируем как в рантайме.
   const [, num, sep, first] = m as unknown as (string | undefined)[];
   if (num === undefined || first === undefined) return null;
   if (!num.includes('.') && sep === undefined) return null;
@@ -197,7 +193,7 @@ function numberedHeading(s: string): string | null {
   return num;
 }
 
-/** Уровень заголовка (1 — верхний) или null, если строка не похожа на заголовок. */
+/** Уровень заголовка (1 - верхний) или null, если строка не похожа на заголовок. */
 function headingLevel(line: string): number | null {
   const s = line.trim();
   if (!s || s.length > 120) return null;
@@ -205,17 +201,17 @@ function headingLevel(line: string): number | null {
     const low = s.toLowerCase();
     if (low.startsWith('раздел') || low.startsWith('часть') || low.startsWith('приложение')) return 1;
     if (low.startsWith('глава')) return 2;
-    return 3; // подраздел / параграф / §
+    return 3; // подраздел / параграф / параграф
   }
   if (s.length <= 100) {
     const num = numberedHeading(s);
     if (num !== null) return (num.match(/\./g) || []).length + 1; // глубина нумерации
   }
   // Строка, начинающаяся с числа, но не признанная нумерованным заголовком
-  // («2 смена:», «2. перечисление…»), — не заголовок; КАПС-эвристику к ней
-  // не применяем, иначе «2 СМЕНА:» станет разделом.
+  // ("2 смена:", "2. перечисление..."), - не заголовок; капс-эвристику к ней
+  // не применяем, иначе "2 СМЕНА:" станет разделом.
   if (isDigit(s[0])) return null;
-  // Короткий заголовок КАПСОМ («ОБЩИЕ ПОЛОЖЕНИЯ»)
+  // Короткий заголовок капсом ("ОБЩИЕ ПОЛОЖЕНИЯ")
   const letters = Array.from(s).filter(isAlpha);
   if (letters.length >= 4 && words(s).length >= 2 && s.length <= 80) {
     if (letters.filter(isUpper).length / letters.length >= 0.8) return 1;
@@ -227,11 +223,11 @@ function countHeadings(text: string): number {
   return (text || '').split('\n').filter((ln) => headingLevel(ln) !== null).length;
 }
 
-// ── Разбор структурной единицы из заголовка (для навигации) ────────────────
+// Разбор структурной единицы из заголовка (для навигации)
 
 const ROMAN_RE = /^[IVXLCDM]+$/i;
 const DOTTED_NUM_RE = /^\d+(?:\.\d+)*$/;
-// Ключевое слово заголовка → тип единицы.
+// Ключевое слово заголовка -> тип единицы.
 const UNIT_KEYWORDS: [string, string][] = [
   ['подраздел', 'section'],
   ['раздел', 'section'],
@@ -254,7 +250,7 @@ function romanToInt(s: string): number | null {
   return total || null;
 }
 
-/** «3.»→['3',3.0]; «3.2»→['3.2',3.002]; «II»→['2',2.0]. */
+/** "3."->['3',3.0]; "3.2"->['3.2',3.002]; "II"->['2',2.0]. */
 function canonAndOrd(token: string): [string | null, number | null] {
   const t = stripChars(token.trim(), '.').trim();
   if (!t) return [null, null];
@@ -270,7 +266,7 @@ function canonAndOrd(token: string): [string | null, number | null] {
   return [null, null];
 }
 
-/** Заголовок → [unit_type, unit_no, unit_ord]. null, если номер не распознан. */
+/** Заголовок -> [unit_type, unit_no, unit_ord]. null, если номер не распознан. */
 function parseUnit(heading: string | null): [string | null, string | null, number | null] {
   if (!heading) return [null, null, null];
   const s = heading.trim();
@@ -282,7 +278,7 @@ function parseUnit(heading: string | null): [string | null, string | null, numbe
     const [no, ordv] = canonAndOrd(token);
     return no ? [typ, no, ordv] : [null, null, null];
   }
-  // Единые с headingLevel правила: ложные «заголовки» (перечисления, строки
+  // Единые с headingLevel правила: ложные "заголовки" (перечисления, строки
   // таблиц) не должны получать unit-метаданные.
   const num = numberedHeading(s);
   if (num !== null) {
@@ -292,7 +288,7 @@ function parseUnit(heading: string | null): [string | null, string | null, numbe
   return [null, null, null];
 }
 
-// ── Нарезка ────────────────────────────────────────────────────────────────
+// Нарезка
 
 type Unit = [string, number, number];
 
@@ -372,7 +368,7 @@ function splitPlain(text: string, chunkSize: number, overlap: number): Chunk[] {
 }
 
 /**
- * Сплиттер по заголовкам: накапливает иерархию, префиксует чанк «путём» в
+ * Сплиттер по заголовкам: накапливает иерархию, префиксует чанк "путём" в
  * структуре и проставляет unit-метаданные (тип/номер ближайшего заголовка).
  */
 function splitStructuredText(text: string, chunkSize: number, overlap: number): Chunk[] {
@@ -443,9 +439,9 @@ function splitStructuredText(text: string, chunkSize: number, overlap: number): 
 
 /**
  * Иерархический сплиттер с авто-выбором стратегии по структуре документа:
- * - нормативный акт (≥5 «Статья N») → чанк = статья (+ article_no);
- * - структурированный (заголовки «Раздел/Глава/N.N») → чанк с контекстом-путём;
- * - прочее → жадная склейка параграфов/предложений.
+ * - нормативный акт (>=5 "Статья N") -> чанк = статья (+ article_no);
+ * - структурированный (заголовки "Раздел/Глава/N.N") -> чанк с контекстом-путём;
+ * - прочее -> жадная склейка параграфов/предложений.
  */
 export function splitText(
   text: string,

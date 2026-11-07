@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { Prisma } from '@prisma/client';
 import { isoUtc, prisma } from '@/lib/db';
+import { asUuid } from '@/lib/ids';
 import { badRequest, requireKbEditor, requireUser } from '@/lib/auth';
 import { asList, internalError, pyInt, TEMPLATES_DIR } from '@/lib/kb';
 import { baseName, stemOf, suffixOf } from '@/lib/news';
@@ -15,8 +16,6 @@ import { analyzeBlank, type FieldSpec } from '@/lib/docs/autofill';
 import { invalidateBlankCatalog } from '@/lib/ml/blank-forms';
 
 // Список и загрузка шаблонов HR-документов.
-// Порт GET/POST /api/kb/templates из backend/routes/kb.py (list_templates,
-// upload_template).
 
 export async function GET() {
   const gate = await requireUser();
@@ -43,7 +42,7 @@ export async function GET() {
   });
 }
 
-// ── Русские подписи типовых HR-полей (services/documents/intent.py) ────────
+// Русские подписи типовых HR-полей
 // Шаблоны часто содержат латинские имена переменных ({{patronymic}}, {{position}}),
 // и авто-подпись выходит английской. Для показа пользователю переводим по словарю.
 
@@ -76,8 +75,8 @@ const RU_FIELD_LABELS: Record<string, string> = {
 const HAS_CYRILLIC_RE = /[А-Яа-яЁё]/;
 
 /**
- * Русская подпись поля по его имени. Если имя незнакомо — возвращаем хранимую
- * подпись (если она уже кириллицей), иначе имя как есть. Порт ru_field_label.
+ * Русская подпись поля по его имени. Если имя незнакомо - возвращаем хранимую
+ * подпись (если она уже кириллицей), иначе имя как есть.
  */
 function ruFieldLabel(name: string, fallback: string): string {
   const key = (name || '').trim().toLowerCase();
@@ -86,26 +85,24 @@ function ruFieldLabel(name: string, fallback: string): string {
   return fallback || name || '';
 }
 
-/** str.capitalize(): первая буква заглавная, ОСТАЛЬНЫЕ строчные. */
+/** Первая буква заглавная, остальные строчные. */
 function capitalize(s: string): string {
   return s ? s[0].toUpperCase() + s.slice(1).toLowerCase() : s;
 }
 
-/** Порт _slugify: `\w` в Python знает юникод, поэтому кириллица остаётся. */
 function slugify(s: string): string {
   const cleaned = (s || '').trim().replace(/[^\p{L}\p{N}_-]+/gu, '_');
   return cleaned.replace(/^_+|_+$/g, '').toLowerCase().slice(0, 64) || 'template';
 }
 
-// ── Извлечение {{переменных}} (порт _extract_template_fields) ──────────────
-// docxtpl собирает jinja-шаблон из всего document.xml и отдаёт
-// meta.find_undeclared_variables(). Здесь тот же результат достигается разбором
-// СКЛЕЕННОГО текста абзаца: Word рвёт «{{ имя }}» между соседними <w:t>
+// Извлечение {{переменных}}
+// Переменные ищем разбором
+// склеенного текста абзаца: Word рвёт "{{ имя }}" между соседними <w:t>
 // (проверка орфографии, правки), поэтому искать по отдельным прогонам нельзя.
 //
-// ОТЛИЧИЯ ОТ docxtpl: тег, разорванный МЕЖДУ абзацами, не найдётся (в jinja он
-// сработал бы); из {% … %} распознаются только for/if/elif/set — «умных»
-// конструкций в HR-шаблонах не бывает, а полный разбор jinja здесь не нужен.
+// Тег, разорванный между абзацами, не найдётся; из {% ... %}
+// распознаются только for/if/elif/set - "умных"
+// конструкций в HR-шаблонах не бывает, а полный разбор шаблонизатора здесь не нужен.
 
 const JINJA_KEYWORDS = new Set([
   'if', 'elif', 'else', 'endif', 'for', 'endfor', 'in', 'not', 'and', 'or', 'is',
@@ -118,13 +115,13 @@ const JINJA_KEYWORDS = new Set([
 
 const IDENT_RE = /[\p{L}_][\p{L}\p{N}_]*/gu;
 
-/** Корневые имена выражения: `a.b` → a, `x|upper` → x, строки игнорируются. */
+/** Корневые имена выражения: `a.b` -> a, `x|upper` -> x, строки игнорируются. */
 function collectNames(expr: string, declared: Set<string>, out: Set<string>): void {
   const src = expr.replace(/'[^']*'|"[^"]*"/g, ' ');
   IDENT_RE.lastIndex = 0;
   for (const m of src.matchAll(IDENT_RE)) {
     const name = m[0];
-    // Атрибут (obj.attr) и имя фильтра/теста (x|upper, x is defined) — не переменные.
+    // Атрибут (obj.attr) и имя фильтра/теста (x|upper, x is defined) - не переменные.
     if (/[.|]\s*$/.test(src.slice(0, m.index))) continue;
     if (JINJA_KEYWORDS.has(name.toLowerCase())) continue;
     if (declared.has(name)) continue;
@@ -151,7 +148,7 @@ function paragraphAllText(paragraph: XmlElement): string {
   return out;
 }
 
-/** Отсортированный список {{переменных}} шаблона (sorted(...) в Python). */
+/** Отсортированный список {{переменных}} шаблона. */
 function extractTemplateFields(data: Buffer): string[] {
   const body = loadDocxBody(data);
   const declared = new Set<string>();
@@ -163,7 +160,7 @@ function extractTemplateFields(data: Buffer): string[] {
 
     STMT_TAG_RE.lastIndex = 0;
     for (const m of text.matchAll(STMT_TAG_RE)) {
-      // Префиксы docxtpl: {%p …%}, {%tr …%}, {%tc …%}, {%r …%}
+      // Префиксы тегов: {%p ...%}, {%tr ...%}, {%tc ...%}, {%r ...%}
       const stmt = m[1].replace(/^\s*(?:p|tr|tc|r)\b/, '').trim();
       const head = stmt.split(/\s+/)[0];
       if (head === 'for') {
@@ -192,7 +189,7 @@ function extractTemplateFields(data: Buffer): string[] {
   return [...found].filter((name) => !declared.has(name)).sort();
 }
 
-// ── Загрузка шаблона ───────────────────────────────────────────────────────
+// Загрузка шаблона
 
 interface PydanticError {
   type: string;
@@ -218,8 +215,6 @@ export async function POST(request: NextRequest) {
   const gate = await requireKbEditor();
   if ('response' in gate) return gate.response;
 
-  // Тело читаем в буфер: .doc уходит в FastAPI тем же байт-в-байт запросом,
-  // а второй раз прочитать поток нельзя.
   const raw = await request.arrayBuffer();
   let form: FormData;
   try {
@@ -233,7 +228,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Ошибки валидации FastAPI отдаёт списком, в порядке объявления параметров.
+  // Ошибки валидации отдаём списком, в порядке объявления параметров.
   const errors: PydanticError[] = [];
   const file = form.get('file');
   if (!(file instanceof File)) errors.push(missing(['body', 'file']));
@@ -245,14 +240,15 @@ export async function POST(request: NextRequest) {
   const keyValue = form.get('key');
 
   const categoryValue = form.get('category_id');
-  let categoryId: number | null = null;
-  if (categoryValue !== null) {
-    const parsed = typeof categoryValue === 'string' ? pyInt(categoryValue) : null;
+  let categoryId: string | null = null;
+  // Пустое поле формы - категория не выбрана.
+  if (categoryValue !== null && categoryValue !== '') {
+    const parsed = asUuid(categoryValue);
     if (parsed === null) {
       errors.push({
-        type: 'int_parsing',
+        type: 'uuid_parsing',
         loc: ['body', 'category_id'],
-        msg: 'Input should be a valid integer, unable to parse string as an integer',
+        msg: 'Input should be a valid UUID',
         input: typeof categoryValue === 'string' ? categoryValue : null,
       });
     } else {
@@ -286,7 +282,7 @@ export async function POST(request: NextRequest) {
 
   let fieldsSchema: FieldSpec[];
   if (suffix === '.pdf') {
-    // PDF-шаблон нельзя заполнять переменными — это справочная форма
+    // PDF-шаблон нельзя заполнять переменными - это справочная форма
     // (доступна для предпросмотра и скачивания). Полей нет.
     fieldsSchema = [];
   } else {
@@ -294,7 +290,7 @@ export async function POST(request: NextRequest) {
     try {
       // .doc не является zip-контейнером: приводим его к .docx через
       // LibreOffice и разбираем уже современный формат. Сам файл шаблона
-      // остаётся на диске в исходном виде — как и в Python.
+      // остаётся на диске в исходном виде.
       const docxData =
         suffix === '.doc' ? await readFile(await convertToModern(target)) : data;
       variables = extractTemplateFields(docxData);
@@ -313,11 +309,11 @@ export async function POST(request: NextRequest) {
         required: true,
       }));
     } else {
-      // Бланк БЕЗ переменных → авто-определяем поля (autofill.analyze).
+      // Бланк без переменных -> авто-определяем поля (autofill.analyze).
       try {
         fieldsSchema = analyzeBlank(data);
       } catch {
-        // В Python эта ветка не защищена — исключение доходит до 500.
+        // Нераспознанный бланк - ошибка сервера.
         return internalError();
       }
     }
@@ -329,10 +325,10 @@ export async function POST(request: NextRequest) {
     where: { key: templateKey },
     select: { id: true },
   });
-  // n — счётчик коллизий ИМЕНИ ФАЙЛА (1, если файл не совпал): так же в Python.
+  // n - счётчик коллизий имени файла (1, если файл не совпал).
   if (clash) templateKey = `${templateKey}_${n}`;
 
-  // Если категория не указана — пробуем «Прочее».
+  // Если категория не указана - пробуем "Прочее".
   if (categoryId === null) {
     const other = await prisma.template_categories.findFirst({
       where: { slug: 'other' },
@@ -346,15 +342,13 @@ export async function POST(request: NextRequest) {
       key: templateKey,
       title,
       description,
-      file_path: path.relative(TEMPLATES_DIR, target),
+      file_path: target,
       fields_schema: fieldsSchema as unknown as Prisma.InputJsonValue,
       category_id: categoryId,
-      // Значение по умолчанию из модели SQLAlchemy (в схеме Prisma его нет).
-      is_enabled: true,
     },
   });
 
-  // Новый бланк должен сразу попадать в карточки «Связанные документы».
+  // Новый бланк должен сразу попадать в карточки "Связанные документы".
   invalidateBlankCatalog();
 
   return NextResponse.json({

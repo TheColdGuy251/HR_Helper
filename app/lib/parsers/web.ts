@@ -3,40 +3,32 @@ import type { ParsedFile } from '@/lib/parsers';
 
 /**
  * Извлечение основного текста веб-страницы.
- * Порт backend/services/parsers/web.py (fetch_url, _clean_text, _extract_title,
- * parse_url).
  *
- * ПОЧЕМУ БЕЗ НОВЫХ ЗАВИСИМОСТЕЙ. В проекте уже есть прецедент: lib/htmlsanitize.ts
- * разбирает HTML собственным потоковым парсером именно чтобы не тянуть
- * зависимость. Аналог trafilatura в Node — @mozilla/readability, но он требует
- * полноценный DOM (linkedom), то есть ДВЕ новые зависимости ради одного
- * эндпоинта. Поэтому здесь эвристики поверх того же потокового разбора тегов.
- *
- * ОТЛИЧИЯ ОТ PYTHON:
- *  - вместо trafilatura — выбор блока с максимальной «плотностью текста»
- *    (текст/разметка) с приоритетом <article>/<main>, фолбэк — <body>.
- *    Текст получается близким, но не байт-в-байт: у trafilatura своя эвристика
- *    и свои правила дедупликации абзацев;
- *  - автор берётся из <meta name="author"> (trafilatura смотрит ещё JSON-LD,
- *    микроразметку и OpenGraph), поэтому чаще выходит null;
- *  - _clean_text и _extract_title (<title> → <h1> → url) портированы дословно.
+ * Без новых зависимостей: lib/htmlsanitize.ts уже разбирает HTML собственным
+ * потоковым парсером, а @mozilla/readability требует полноценный DOM
+ * (linkedom), то есть две новые зависимости ради одного эндпоинта. Поэтому
+ * здесь эвристики поверх того же потокового разбора тегов:
+ *  - выбирается блок с максимальной "плотностью текста" (текст/разметка) с
+ *    приоритетом <article>/<main>, фолбэк - <body>;
+ *  - автор берётся из <meta name="author">, поэтому часто выходит null;
+ *  - заголовок: <title> -> <h1> -> url.
  */
 
-// Описательный бот-UA — запасной для сайтов, которые ТРЕБУЮТ идентификации робота
-// и блокируют браузерные UA (Wikimedia и др., «robot policy»). Основной UA —
-// браузерный (settings.web_user_agent), т.к. большинство сайтов, наоборот, блокируют ботов.
+// Описательный бот-UA - запасной для сайтов, которые требуют идентификации робота
+// и блокируют браузерные UA (Wikimedia и др., "robot policy"). Основной UA -
+// браузерный, т.к. большинство сайтов, наоборот, блокируют ботов.
 const BOT_USER_AGENT = 'HRHelperBot/1.0 (+https://www.tyuiu.ru; contact: hr-helper@tyuiu.ru)';
-/** settings.web_user_agent из backend/config.py. */
+/** User-Agent для загрузки веб-страниц. */
 const BROWSER_USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
   '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 const BLOCK_CODES = new Set([401, 403, 406, 429]);
-/** settings.web_request_timeout (секунды) */
+/** Тайм-аут загрузки страницы (секунды) */
 const REQUEST_TIMEOUT_MS = 30_000;
 
-// ── Загрузка ───────────────────────────────────────────────────────────────
+// Загрузка
 
-/** Текст исключения httpx.HTTPStatusError — он попадает в detail ответа 500. */
+/** Текст исключения httpx.HTTPStatusError - он попадает в detail ответа 500. */
 function statusError(status: number, statusText: string, url: string): Error {
   const kind = status < 500 ? 'Client error' : 'Server error';
   return new Error(
@@ -46,9 +38,9 @@ function statusError(status: number, statusText: string, url: string): Error {
 }
 
 /**
- * Кодировка тела: Content-Type → <meta charset> → UTF-8. Node всегда декодирует
- * response.text() как UTF-8, а российские сайты нередко отдают windows-1251 —
- * без этого шага текст превращается в «кракозябры». httpx делает то же самое.
+ * Кодировка тела: Content-Type -> <meta charset> -> UTF-8. Node всегда декодирует
+ * response.text() как UTF-8, а российские сайты нередко отдают windows-1251 -
+ * без этого шага текст превращается в "кракозябры". httpx делает то же самое.
  */
 function decodeBody(buf: Buffer, contentType: string): string {
   const fromHeader = /charset=["']?([\w-]+)/i.exec(contentType)?.[1];
@@ -67,7 +59,7 @@ function decodeBody(buf: Buffer, contentType: string): string {
 
 /**
  * Скачивает страницу и возвращает декодированный HTML. Пробует браузерный UA;
- * при блокировке (403/406/429/…) повторяет с описательным бот-UA.
+ * при блокировке (403/406/429/...) повторяет с описательным бот-UA.
  */
 export async function fetchUrl(url: string, timeoutMs = REQUEST_TIMEOUT_MS): Promise<string> {
   const agents = [BROWSER_USER_AGENT, BOT_USER_AGENT];
@@ -95,7 +87,7 @@ export async function fetchUrl(url: string, timeoutMs = REQUEST_TIMEOUT_MS): Pro
   throw lastError ?? new Error('fetch_url: недостижимо');
 }
 
-// ── Разбор HTML ────────────────────────────────────────────────────────────
+// Разбор HTML
 
 const TAG_RE = /<(\/?)([a-zA-Z][a-zA-Z0-9:-]*)((?:"[^"]*"|'[^']*'|[^>])*?)(\/?)>/g;
 
@@ -104,13 +96,13 @@ const VOID_TAGS = new Set([
   'link', 'meta', 'param', 'source', 'track', 'wbr',
 ]);
 
-// Вырезаются ВМЕСТЕ с содержимым — тот же список, что у _bs4_extract.
+// Вырезаются вместе с содержимым.
 const DROP_TAGS = new Set([
   'script', 'style', 'noscript', 'nav', 'header', 'footer', 'aside', 'form', 'svg',
 ]);
 
-// Границы абзацев при сборке текста (get_text("\n") в bs4 ставит их между всеми
-// узлами, но так рвутся предложения на инлайновых <b>/<a> — оставляем блочные).
+// Границы абзацев при сборке текста (ставим их между всеми
+// узлами, но так рвутся предложения на инлайновых <b>/<a> - оставляем блочные).
 const BLOCK_TAGS = new Set([
   'address', 'article', 'blockquote', 'caption', 'dd', 'div', 'dl', 'dt',
   'fieldset', 'figcaption', 'figure', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
@@ -176,7 +168,7 @@ function stripNoise(html: string): string {
   return parts.join('');
 }
 
-/** Видимый текст фрагмента: блочные теги → перевод строки, ячейки → « | ». */
+/** Видимый текст фрагмента: блочные теги -> перевод строки, ячейки -> " | ". */
 function htmlToText(html: string): string {
   const out: string[] = [];
   let last = 0;
@@ -192,7 +184,7 @@ function htmlToText(html: string): string {
   }
   out.push(unescapeHtml(html.slice(last)));
 
-  // Пробелы внутри строки схлопываем (в разметке перевод строки — просто пробел),
+  // Пробелы внутри строки схлопываем (в разметке перевод строки - просто пробел),
   // сами переводы строк сохраняем как границы абзацев.
   return out
     .join('')
@@ -206,7 +198,7 @@ interface Block {
 }
 
 /**
- * Элементы-кандидаты на «основной блок». Стек допускает незакрытые теги:
+ * Элементы-кандидаты на "основной блок". Стек допускает незакрытые теги:
  * закрывающий тег снимает всё, что открылось после него.
  */
 function candidateBlocks(html: string): Block[] {
@@ -229,7 +221,7 @@ function candidateBlocks(html: string): Block[] {
     if (at < 0) continue;
     for (let i = stack.length - 1; i >= at; i -= 1) {
       const open = stack[i];
-      // Закрывающий тег принадлежит только «своему» элементу; вложенные
+      // Закрывающий тег принадлежит только "своему" элементу; вложенные
       // незакрытые обрезаем по этой же позиции.
       if (CANDIDATE_TAGS.has(open.name)) {
         blocks.push({ tag: open.name, html: html.slice(open.innerStart, start) });
@@ -237,7 +229,7 @@ function candidateBlocks(html: string): Block[] {
     }
     stack.length = at;
   }
-  // Незакрытый <body> — тянем до конца документа.
+  // Незакрытый <body> - тянем до конца документа.
   for (const open of stack) {
     if (CANDIDATE_TAGS.has(open.name)) {
       blocks.push({ tag: open.name, html: html.slice(open.innerStart) });
@@ -247,7 +239,7 @@ function candidateBlocks(html: string): Block[] {
 }
 
 /**
- * Основной текст страницы: блок с максимальной «плотностью текста»
+ * Основной текст страницы: блок с максимальной "плотностью текста"
  * (доля полезного текста в разметке) при приоритете <article>/<main>.
  * Квадрат длины в числителе не даёт выиграть короткому плотному блоку
  * вроде хлебных крошек.
@@ -274,17 +266,17 @@ function extractMain(html: string): string {
   return best;
 }
 
-/** Весь <body> (или документ целиком) — грубый запасной разбор. */
+/** Весь <body> (или документ целиком) - грубый запасной разбор. */
 function extractBody(html: string): string {
   const body = /<body[^>]*>([\s\S]*)<\/body>/i.exec(html);
   return htmlToText(body ? body[1] : html).trim();
 }
 
-// ── Чистка текста (порт _clean_text) ───────────────────────────────────────
+// Чистка текста
 
-// Навигация «предыдущая/следующая статья», хлебные крошки в виде таблицы —
-// типичный шум правовых/справочных баз. Убираем строки, где ОДНОВРЕМЕННО есть
-// разделитель таблицы «|» и стрелки перехода «<<»/«>>» — обычная проза так не выглядит.
+// Навигация "предыдущая/следующая статья", хлебные крошки в виде таблицы -
+// типичный шум правовых/справочных баз. Убираем строки, где одновременно есть
+// разделитель таблицы "|" и стрелки перехода "<<"/">>" - обычная проза так не выглядит.
 const NAV_ROW_RE = /\|.*(?:<<|>>)|(?:<<|>>).*\|/;
 const PIPE_ONLY_RE = /^[\s|]+$/;
 const MULTI_BLANK_RE = /\n{3,}/g;
@@ -306,9 +298,9 @@ export function cleanText(text: string): string {
   return out.join('\n').replace(MULTI_BLANK_RE, '\n\n').trim();
 }
 
-// ── Заголовок и метаданные ─────────────────────────────────────────────────
+// Заголовок и метаданные
 
-/** Заголовок: <title> → <h1> → fallback (url). Порт _extract_title. */
+/** Заголовок: <title> -> <h1> -> fallback (url). */
 function extractTitle(html: string, fallback: string): string {
   const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html);
   // BeautifulSoup: .string непустой, только если внутри <title> нет других тегов.
@@ -331,15 +323,15 @@ function extractAuthor(html: string): string | null {
   return author || null;
 }
 
-// ── Публичный вход ─────────────────────────────────────────────────────────
+// Публичный вход
 
-/** Страница по URL → текст и метаданные документа. Порт parse_url. */
+/** Страница по URL -> текст и метаданные документа. */
 export async function parseUrl(url: string): Promise<ParsedFile> {
   const html = stripNoise(await fetchUrl(url));
 
   let text = cleanText(extractMain(html));
   if (text.length < 40) {
-    // Основной блок не нашёлся (SPA/нетипичная разметка) — берём весь <body>.
+    // Основной блок не нашёлся (SPA/нетипичная разметка) - берём весь <body>.
     const fallback = cleanText(extractBody(html));
     if (fallback.length > text.length) text = fallback;
   }

@@ -1,7 +1,6 @@
 @import "tailwindcss";
 
-/* Дизайн-токены платформы ТИУ (перенесены из Tyuiu.bot-main как переменные,
-   значения не менялись: корпоративный синий, тёмно-синий "чернильный", канвас). */
+/* Дизайн-токены платформы ТИУ: корпоративный синий, тёмно-синий "чернильный", канвас. */
 :root {
   --background: #f4f7fc;
   --foreground: #171717;
@@ -31,7 +30,7 @@ body {
     @apply bg-clip-text text-transparent bg-gradient-to-r from-[#0f1c3f] via-[#1e40af] to-[#2563eb];
   }
 
-  /* Использовалась в Tyuiu.bot-main, но не была определена — добавляем. */
+  /* Появление элемента: прозрачность + лёгкий сдвиг. */
   .animate-fade-in {
     animation: fade-in 0.25s ease-out both;
   }
@@ -48,16 +47,17 @@ body {
   }
 }
 
-/* ─────────────────────────────── Скроллбары ──────────────────────────────────
-   Форма и цвет — из легаси (static/css/styles.css:696-706): тонкая синяя
-   «пилюля» с прозрачной рамкой-отступом. Отличие одно: по умолчанию ползунок
-   невидим и проявляется, только когда страницу листают или курсор подходит к
-   правому краю окна (класс scroll-visible вешает components/scrollbar.tsx).
-
-   Ширина дорожки при этом не меняется — иначе контент дёргался бы на каждом
-   появлении ползунка. По той же причине у html стоит scrollbar-gutter: stable:
-   место под скроллбар зарезервировано всегда, и страницы без прокрутки не
-   съезжают по горизонтали относительно страниц с прокруткой. */
+/*
+ * Скроллбары
+ * Тонкая синяя "пилюля" с прозрачной рамкой-отступом. По умолчанию ползунок
+ * невидим и проявляется, только когда страницу листают или курсор подходит к
+ * правому краю окна (класс scroll-visible вешает components/scrollbar.tsx).
+ *
+ * Ширина дорожки при этом не меняется - иначе контент дёргался бы на каждом
+ * появлении ползунка. По той же причине у html стоит scrollbar-gutter: stable:
+ * место под скроллбар зарезервировано всегда, и страницы без прокрутки не
+ * съезжают по горизонтали относительно страниц с прокруткой.
+ */
 
 html {
   scrollbar-gutter: stable;
@@ -79,14 +79,14 @@ html.scroll-visible {
 }
 ::-webkit-scrollbar-thumb {
   background-color: transparent;
-  /* Рамка + background-clip дают ползунку «воздух» по краям дорожки. */
+  /* Рамка + background-clip дают ползунку "воздух" по краям дорожки. */
   border: 3px solid transparent;
   background-clip: padding-box;
   border-radius: 99px;
   transition: background-color 0.25s ease;
 }
 /* Правило намеренно общее: так подхватываются и вложенные прокручиваемые
-   области — лента чата, список бесед, модалки. */
+   области - лента чата, список бесед, модалки. */
 html.scroll-visible ::-webkit-scrollbar-thumb,
 html.scroll-visible::-webkit-scrollbar-thumb {
   background-color: rgba(37, 99, 235, 0.45);
@@ -96,7 +96,7 @@ html.scroll-visible::-webkit-scrollbar-thumb:hover {
   background-color: #1e40af;
 }
 
-/* Пользователь просил меньше движения — показываем ползунок постоянно. */
+/* Пользователь просил меньше движения - показываем ползунок постоянно. */
 @media (prefers-reduced-motion: reduce) {
   html {
     scrollbar-color: rgba(37, 99, 235, 0.45) transparent;
@@ -108,9 +108,11 @@ html.scroll-visible::-webkit-scrollbar-thumb:hover {
   }
 }
 
-/* ───────────────────────── Контент сообщений ассистента ─────────────────────
-   Рендерится lib/msgfmt.ts (порт message_format.js) внутри контейнера .msg-md.
-   Оформление — в духе Tyuiu.bot-main: белые карточки, синие акценты. */
+/*
+ * Контент сообщений ассистента
+ * Рендерится lib/msgfmt.ts внутри контейнера .msg-md: белые карточки, синие
+ * акценты.
+ */
 
 .msg-md {
   line-height: 1.6;
@@ -205,7 +207,7 @@ html.scroll-visible::-webkit-scrollbar-thumb:hover {
   border-color: #2563eb;
 }
 
-/* Блок «Источники» */
+/* Блок "Источники" */
 .msg-md .md-sources {
   margin-top: 0.8em;
   padding-top: 0.6em;
@@ -317,7 +319,7 @@ html.scroll-visible::-webkit-scrollbar-thumb:hover {
   color: #0f1c3f;
 }
 
-/* Блок связанных бланков/документов FAQ — порт .chat-related-* из chat.css */
+/* Блок связанных бланков/документов FAQ */
 .chat-related-files {
   margin-top: 0.75em;
   max-width: 640px;

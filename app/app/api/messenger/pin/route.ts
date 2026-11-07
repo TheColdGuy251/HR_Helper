@@ -13,7 +13,6 @@ import {
 } from '@/lib/messenger';
 
 // Закрепление сообщения в диалоге (закреплено может быть только одно).
-// Порт POST /api/messenger/pin из backend/routes/messenger.py.
 
 export async function POST(request: NextRequest) {
   const gate = await requireUser();
@@ -24,7 +23,7 @@ export async function POST(request: NextRequest) {
   if ('response' in parsed) return parsed.response;
   const p = parsed.params;
 
-  const messageId = p.int('message_id');
+  const messageId = p.uuid('message_id');
   const pinned = p.bool('pinned', true);
   const invalid = p.invalid();
   if (invalid) return invalid;
@@ -35,17 +34,17 @@ export async function POST(request: NextRequest) {
     return forbidden('Нет доступа');
   }
 
-  // Peer с точки зрения ЗАКРЕПЛЯЮЩЕГО: закреплять можно и чужое сообщение,
-  // тогда собеседник — его отправитель (а не recipient_id == сам пользователь).
+  // Peer с точки зрения закрепляющего: закреплять можно и чужое сообщение,
+  // тогда собеседник - его отправитель (а не recipient_id == сам пользователь).
   const peerOfUser = msg.is_general
     ? null
     : msg.sender_id !== me
       ? msg.sender_id
       : msg.recipient_id;
 
-  const unpinnedIds: number[] = [];
+  const unpinnedIds: string[] = [];
   if (pinned) {
-    // В диалоге закреплено только ОДНО сообщение — снимаем закрепление с прочих.
+    // В диалоге закреплено только одно сообщение - снимаем закрепление с прочих.
     const where = threadWhere(me, peerOfUser, msg.is_general);
     const others = await prisma.user_messages.findMany({
       where: { AND: [where, { is_pinned: true, id: { not: msg.id } }] },
@@ -61,8 +60,8 @@ export async function POST(request: NextRequest) {
   }
   await prisma.user_messages.update({ where: { id: msg.id }, data: { is_pinned: pinned } });
 
-  // Системная (серая) отметка о закреплении — её можно удалить у себя.
-  // Получатель — собеседник (НЕ msg.recipient_id: при закреплении чужого
+  // Системная (серая) отметка о закреплении - её можно удалить у себя.
+  // Получатель - собеседник (не msg.recipient_id: при закреплении чужого
   // сообщения им оказался бы сам закрепляющий, и отметка не попала бы в диалог).
   const systemMsg = await prisma.user_messages.create({
     data: {
@@ -71,9 +70,6 @@ export async function POST(request: NextRequest) {
       is_general: msg.is_general,
       content: pinned ? 'закрепил(а) сообщение' : 'открепил(а) сообщение',
       forwarded_meta: { system: true },
-      is_pinned: false,
-      is_edited: false,
-      is_ai_query: false,
     },
   });
 

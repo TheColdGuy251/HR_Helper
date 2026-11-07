@@ -4,9 +4,8 @@ import { requireUser } from '@/lib/auth';
 import { asList, pyStr } from '@/lib/kb';
 import { baseName } from '@/lib/news';
 
-// Меню быстрого набора FAQ: категории → вопросы (блоки) → под-ветки.
-// Порт GET /api/chat/faq-menu (backend/routes/chat.py: faq_menu).
-// Финальная кнопка отправляет сообщение с faq_id → точный курируемый ответ.
+// Меню быстрого набора FAQ: категории -> вопросы (блоки) -> под-ветки.
+// Финальная кнопка отправляет сообщение с faq_id -> точный курируемый ответ.
 
 // Человеческие названия категорий по файлам-источникам FAQ.
 const FAQ_CATEGORY_LABELS: [string, string][] = [
@@ -23,7 +22,7 @@ function stem(name: string): string {
   return i > 0 ? name.slice(0, i) : name;
 }
 
-/** Python str.strip(" -–_"): срезает перечисленные символы с обоих концов. */
+/** Срезает пробелы, дефисы, тире и подчёркивания с обоих концов. */
 function stripChars(s: string): string {
   return s.replace(/^[ \-–_]+/, '').replace(/[ \-–_]+$/, '');
 }
@@ -41,8 +40,8 @@ interface MenuItem {
   block: string;
   question: string;
   label: string;
-  options?: { id: number; label: string }[];
-  id?: number;
+  options?: { id: string; label: string }[];
+  id?: string;
 }
 
 export async function GET() {
@@ -51,16 +50,17 @@ export async function GET() {
 
   const rows = await prisma.faq_entries.findMany({
     where: { is_active: true },
-    orderBy: [{ source_file: 'asc' }, { group_key: 'asc' }, { position: 'asc' }],
+    include: { group: true },
+    orderBy: [{ group: { source_file: 'asc' } }, { group: { key: 'asc' } }, { position: 'asc' }],
   });
 
   type Row = (typeof rows)[number];
   const groups = new Map<string, { head: Row | null; subs: Row[] }>();
   for (const e of rows) {
-    let g = groups.get(e.group_key);
+    let g = groups.get(e.group_id);
     if (!g) {
       g = { head: null, subs: [] };
-      groups.set(e.group_key, g);
+      groups.set(e.group_id, g);
     }
     if (e.position === 0) g.head = e;
     else g.subs.push(e);
@@ -74,10 +74,10 @@ export async function GET() {
     const variants = asList(head.variants)
       .map((v) => (v ? pyStr(v).trim() : ''))
       .filter((v) => v.length > 3);
-    const block = (head.block || '').trim();
-    // В части файлов первый «вариант» — путь категории, совпадающий с названием
-    // блока: из-за него всё меню состояло из одинаковых кнопок. Настоящий вопрос —
-    // первый вариант, не повторяющий блок (вопросительный — в приоритете).
+    const block = (head.group.block || '').trim();
+    // В части файлов первый "вариант" - путь категории, совпадающий с названием
+    // блока: из-за него всё меню состояло из одинаковых кнопок. Настоящий вопрос -
+    // первый вариант, не повторяющий блок (вопросительный - в приоритете).
     const meaningful = variants.filter((v) => v.toLowerCase() !== block.toLowerCase());
     const question =
       meaningful.find((v) => v.replace(/\s+$/u, '').endsWith('?')) ||
@@ -99,13 +99,13 @@ export async function GET() {
       item.id = head.id;
     }
 
-    const cat = faqCategory(head.source_file);
+    const cat = faqCategory(head.group.source_file);
     const list = categories.get(cat);
     if (list) list.push(item);
     else categories.set(cat, [item]);
   }
 
-  // Если подпись повторяется внутри категории — показываем сам вопрос.
+  // Если подпись повторяется внутри категории - показываем сам вопрос.
   for (const items of categories.values()) {
     const counts = new Map<string, number>();
     for (const i of items) {

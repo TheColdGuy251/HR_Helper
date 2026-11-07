@@ -15,21 +15,19 @@ import { pyStr } from '@/lib/kb';
 import { ru } from './common';
 
 /**
- * Заполнение бланков БЕЗ {{ переменных }} — порт
- * services/documents/autofill.py (analyze + autofill).
+ * Заполнение бланков без {{ переменных }}.
  *
- * Бланк «пустографка»: значения подставляются прямо в области ввода
- * (таблицы 1×1, пустые абзацы с рамкой, подчёркнутые пробелы), формат места
+ * Бланк "пустографка": значения подставляются прямо в области ввода
+ * (таблицы 1x1, пустые абзацы с рамкой, подчёркнутые пробелы), формат места
  * при этом сохраняется. Роль поля выводится из соседних подписей.
  *
- * Python работает через python-docx; здесь та же логика применяется к дереву
- * `word/document.xml` (см. lib/docs/xml.ts): всё, что не трогаем, остаётся в
- * файле дословно, поэтому вёрстка бланка не меняется.
+ * Работаем с деревом `word/document.xml` (см. lib/docs/xml.ts): всё, что не
+ * трогаем, остаётся в файле дословно, поэтому вёрстка бланка не меняется.
  */
 
 const CAPTION_MAX = 90;
 
-// role_key → [базовое имя поля, подпись, обязательность]
+// role_key -> [базовое имя поля, подпись, обязательность]
 const ROLES: Record<string, [string, string, boolean]> = {
   head: ['head', 'ФИО и должность руководителя', true],
   head_fio: ['head_fio', 'ФИО руководителя', true],
@@ -45,10 +43,10 @@ const CAPTION_HINT_RE = ru(
   'ф\\.?и\\.?о|должност|подпис|подразделен|наименован|причин|руководител|работник',
   'i'
 );
-// «Кому» — только отдельным словом, иначе сюда попадали бы «кому-то» и т.п.
+// "Кому" - только отдельным словом, иначе сюда попадали бы "кому-то" и т.п.
 const HEAD_CAP_RE = ru('\\bкому\\b|руководител|ректор|директор|проректор');
 
-/** str.islower() для первого символа строки. */
+/** Первый символ строки - строчная буква. */
 function firstIsLower(t: string): boolean {
   const c = t.slice(0, 1);
   if (!c) return false;
@@ -63,7 +61,7 @@ function looksLikeCaption(raw: string): boolean {
   return firstIsLower(t) || CAPTION_HINT_RE.test(t);
 }
 
-/** Сущность подписи для СМЕЖНОСТИ (шапка ФИО/должность). */
+/** Сущность подписи для смежности (шапка ФИО/должность). */
 function captionEntity(text: string): string | null {
   const low = (text || '').toLowerCase();
   if (low.includes('подпис')) return null;
@@ -88,11 +86,11 @@ function captionRole(caption: string, prec = ''): string | null {
   return null;
 }
 
-// ── чтение документа ───────────────────────────────────────────────────────
+// чтение документа
 
 const RUN_CONTENT = new Set(['w:t', 'w:tab', 'w:br', 'w:cr']);
 
-/** Текст прогона: python-docx превращает w:tab в \t, w:br/w:cr — в \n. */
+/** Текст прогона: w:tab -> \t, w:br/w:cr -> \n. */
 function runText(r: XElement): string {
   let out = '';
   for (const c of r.children) {
@@ -104,7 +102,7 @@ function runText(r: XElement): string {
   return out;
 }
 
-/** Прямые прогоны абзаца — как Paragraph.runs (без содержимого гиперссылок). */
+/** Прямые прогоны абзаца - как Paragraph.runs (без содержимого гиперссылок). */
 function runsOf(p: XElement): XElement[] {
   return childrenOf(p, 'w:r');
 }
@@ -122,7 +120,7 @@ function runUnderlined(r: XElement): boolean {
   return val !== undefined && val !== 'none';
 }
 
-/** Индексы прогонов, являющихся ПОДЧЁРКНУТЫМИ ПРОБЕЛАМИ (место ввода). */
+/** Индексы прогонов, являющихся подчёркнутыми пробелами (место ввода). */
 function uspaceRuns(p: XElement): number[] {
   const out: number[] = [];
   runsOf(p).forEach((r, k) => {
@@ -134,7 +132,7 @@ function uspaceRuns(p: XElement): number[] {
   return out;
 }
 
-/** 1×1 таблица — область ввода (в эталонах — с нижней рамкой). */
+/** 1x1 таблица - область ввода (в эталонах - с нижней рамкой). */
 function isFieldTable(tbl: XElement): boolean {
   const rows = childrenOf(tbl, 'w:tr');
   const grid = child(tbl, 'w:tblGrid');
@@ -148,7 +146,7 @@ function paraHasBorder(p: XElement): boolean {
   return Boolean(bdr && (child(bdr, 'w:top') || child(bdr, 'w:bottom')));
 }
 
-/** Пустой абзац-линия: сам с рамкой ИЛИ следующий рисует линию сверху. */
+/** Пустой абзац-линия: сам с рамкой или следующий рисует линию сверху. */
 function isBorderEmptyPara(paras: XElement[], i: number): boolean {
   const p = paras[i];
   if (paraText(p).trim()) return false;
@@ -156,7 +154,7 @@ function isBorderEmptyPara(paras: XElement[], i: number): boolean {
   return i + 1 < paras.length && paraHasBorder(paras[i + 1]);
 }
 
-// ── правка документа ───────────────────────────────────────────────────────
+// правка документа
 
 /** run.text = value: содержимое прогона очищается, w:rPr сохраняется. */
 function setRunText(r: XElement, value: string): void {
@@ -185,7 +183,7 @@ function setRunText(r: XElement, value: string): void {
   r.empty = r.children.length === 0;
 }
 
-/** paragraph.add_run(text) c подчёркиванием — новый прогон в конец абзаца. */
+/** paragraph.add_run(text) c подчёркиванием - новый прогон в конец абзаца. */
 function addUnderlinedRun(p: XElement, value: string): void {
   const r = element('w:r', {}, [element('w:rPr', {}, [element('w:u', { 'w:val': 'single' })])]);
   setRunText(r, value);
@@ -193,9 +191,8 @@ function addUnderlinedRun(p: XElement, value: string): void {
   p.empty = false;
 }
 
-// Порядок дочерних элементов w:pPr по схеме CT_PPr — нужен, чтобы вставить
-// w:jc на его законное место (python-docx дописывает в конец, но Word к
-// нарушению порядка относится хуже, чем к его соблюдению).
+// Порядок дочерних элементов w:pPr по схеме CT_PPr - нужен, чтобы вставить
+// w:jc на его законное место: Word плохо относится к нарушению порядка.
 const PPR_ORDER = [
   'w:pStyle', 'w:keepNext', 'w:keepLines', 'w:pageBreakBefore', 'w:framePr',
   'w:widowControl', 'w:numPr', 'w:suppressLineNumbers', 'w:pBdr', 'w:shd',
@@ -230,7 +227,7 @@ function ensureCenterJc(p: XElement): void {
   pPr.empty = false;
 }
 
-/** Значение в ячейку 1×1 по центру (сохраняя рамку/стиль). */
+/** Значение в ячейку 1x1 по центру (сохраняя рамку/стиль). */
 function setCellValue(tbl: XElement, value: string): void {
   const tr = childrenOf(tbl, 'w:tr')[0];
   const tc = tr ? childrenOf(tr, 'w:tc')[0] : null;
@@ -262,7 +259,7 @@ function fillUspace(p: XElement, runIdx: number, value: string): void {
   }
 }
 
-// ── анализ: план заполнения ────────────────────────────────────────────────
+// анализ: план заполнения
 
 type PlanItem =
   | { kind: 'table'; tableIdx: number; field: string }
@@ -277,7 +274,7 @@ export interface FieldSpec {
 }
 
 function analyzeBody(body: XElement): { schema: FieldSpec[]; plan: PlanItem[] } {
-  // Таблицы адресуются номером среди ВСЕХ таблиц тела (как doc.tables),
+  // Таблицы адресуются номером среди всех таблиц тела,
   // поэтому здесь достаточно счётчика ниже.
   const paras = childrenOf(body, 'w:p');
 
@@ -296,7 +293,7 @@ function analyzeBody(body: XElement): { schema: FieldSpec[]; plan: PlanItem[] } 
 
   const plan: PlanItem[] = [];
 
-  // === 1) ТАБЛИЦЫ (1×1) — роли по СМЕЖНОСТИ подписи (ФИО над / должность под)
+  // === 1) Таблицы (1x1) - роли по смежности подписи (ФИО над / должность под)
   const seq: ['tbl' | 'cap', number | string][] = [];
   let tblCounter = 0;
   for (const node of body.children) {
@@ -338,8 +335,8 @@ function analyzeBody(body: XElement): { schema: FieldSpec[]; plan: PlanItem[] } 
     if (role) plan.push({ kind: 'table', tableIdx: tidx, field: fieldFor(role) });
   }
 
-  // === 2) ВЫДЕЛЕННЫЕ ПУСТЫЕ АБЗАЦЫ (гос-формы) — по ближайшей подписи ниже.
-  // Несколько пустых строк под одной подписью = ОДНО поле (заполняем первую).
+  // === 2) Выделенные пустые абзацы (гос-формы) - по ближайшей подписи ниже.
+  // Несколько пустых строк под одной подписью = одно поле (заполняем первую).
   const capBelow = (i: number): string => {
     for (let j = i + 1; j < Math.min(i + 12, paras.length); j += 1) {
       const t = paraText(paras[j]).trim();
@@ -363,7 +360,7 @@ function analyzeBody(body: XElement): { schema: FieldSpec[]; plan: PlanItem[] } 
     gi = gj;
   }
 
-  // === 3) ПОДЧЁРКНУТЫЕ ПРОБЕЛЫ — по тексту перед ними / подписи ниже
+  // === 3) Подчёркнутые пробелы - по тексту перед ними / подписи ниже
   const usedUspacePara = new Set(
     plan.filter((it) => it.kind === 'para').map((it) => (it as { paraIdx: number }).paraIdx)
   );
@@ -387,14 +384,14 @@ function analyzeBody(body: XElement): { schema: FieldSpec[]; plan: PlanItem[] } 
     }
     const prec = paraText(p).slice(0, acc).split(/\s+/).filter((x) => x).slice(-6).join(' ');
     const role = captionRole(cap, prec);
-    // только ПЕРВЫЙ подчёркнутый пробел абзаца заполняем значением поля
+    // только первый подчёркнутый пробел абзаца заполняем значением поля
     if (role) plan.push({ kind: 'uspace', paraIdx: i, runIdx: runsIdx[0], field: fieldFor(role) });
   }
 
   return { schema: [...schema.values()], plan };
 }
 
-// ── публичный API ──────────────────────────────────────────────────────────
+// публичный API
 
 /** Тело документа `word/document.xml`. */
 function bodyOf(root: XElement): XElement {
@@ -403,7 +400,7 @@ function bodyOf(root: XElement): XElement {
   return body;
 }
 
-/** Авто-определённая схема полей бланка (analyze → schema). */
+/** Авто-определённая схема полей бланка (analyze -> schema). */
 export function analyzeBlank(content: Buffer): FieldSpec[] {
   const zip = new PizZip(content);
   const doc = parseXml(zip.files['word/document.xml'].asText());
@@ -428,10 +425,10 @@ export function autofillDocx(content: Buffer, values: Record<string, unknown>): 
   const used = new Set<string>();
   for (const it of plan) {
     const raw = values[it.field];
-    // `val in (None, "")` в Python: 0 и False считаются заполненными.
+    // 0 и false считаются заполненными.
     const filled = raw !== null && raw !== undefined && raw !== '';
     if (it.kind === 'table') {
-      // Ячейку чистим даже без значения — иначе в бланке останется старый текст.
+      // Ячейку чистим даже без значения - иначе в бланке останется старый текст.
       if (used.has(it.field)) continue;
       used.add(it.field);
       const tbl = tables[it.tableIdx];
@@ -454,12 +451,12 @@ export function autofillDocx(content: Buffer, values: Record<string, unknown>): 
 }
 
 /**
- * Версия бланка ДЛЯ ПОКАЗА: области ввода заполнены названиями полей
- * [в скобках]. Порт render_field_preview из autofill.py.
+ * Версия бланка для показа: области ввода заполнены названиями полей
+ * [в скобках].
  *
- * Отличие от autofillDocx: таблицы заполняются ВСЕ (одно поле может занимать
- * несколько ячеек-«клеточек»), а абзацы и подчёркнутые пробелы — только первый
- * раз на поле. Так же, как в Python.
+ * Отличие от autofillDocx: таблицы заполняются все (одно поле может занимать
+ * несколько ячеек-"клеточек"), а абзацы и подчёркнутые пробелы - только первый
+ * раз на поле. Так же.
  */
 export function renderFieldPreviewDocx(content: Buffer): Buffer {
   const zip = new PizZip(content);
@@ -493,4 +490,3 @@ export function renderFieldPreviewDocx(content: Buffer): Buffer {
   zip.file('word/document.xml', serializeXml(doc));
   return zip.generate({ type: 'nodebuffer', compression: 'DEFLATE' }) as Buffer;
 }
-

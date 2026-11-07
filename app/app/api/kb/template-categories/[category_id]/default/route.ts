@@ -2,10 +2,14 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import { badRequest, notFound, requireKbEditor } from '@/lib/auth';
-import { internalError, jsonBody, parsePathId, pyInt } from '@/lib/kb';
+import { asUuid } from '@/lib/ids';
+import { jsonBody, parsePathId, uuidError } from '@/lib/kb';
 
 // Шаблон по умолчанию для категории.
-// Порт POST /api/kb/template-categories/{category_id}/default из backend/routes/kb.py.
+//
+// Раньше это была ссылка template_categories.default_template_id, теперь -
+// флаг doc_templates.is_default: частичный уникальный индекс в БД не даёт
+// отметить два шаблона одной категории.
 
 type Ctx = { params: Promise<{ category_id: string }> };
 
@@ -20,39 +24,39 @@ export async function POST(request: NextRequest, { params }: Ctx) {
   if ('response' in parsedBody) return parsedBody.response;
   const body = parsedBody.body;
 
-  const cat =
-    parsed.value === null
-      ? null
-      : await prisma.template_categories.findUnique({
-          where: { id: parsed.value },
-          select: { id: true },
-        });
+  const cat = await prisma.template_categories.findUnique({
+    where: { id: parsed.value },
+    select: { id: true },
+  });
   if (!cat) return notFound('Категория не найдена');
 
   const raw = body.template_id;
-  let defaultTemplateId: number | null = null;
+  let templateId: string | null = null;
 
-  // null/отсутствие — снять шаблон по умолчанию; иначе шаблон обязан
+  // null/отсутствие - снять шаблон по умолчанию; иначе шаблон обязан
   // принадлежать этой же категории.
   if (raw !== null && raw !== undefined) {
-    const templateId = pyInt(raw);
-    if (templateId === null) return internalError(); // SQLAlchemy упал бы на приведении типа
-    const tpl =
-      templateId >= -2147483648 && templateId <= 2147483647
-        ? await prisma.doc_templates.findUnique({
-            where: { id: templateId },
-            select: { category_id: true },
-          })
-        : null;
+    templateId = asUuid(raw);
+    if (templateId === null) return uuidError(['body', 'template_id'], raw);
+    const tpl = await prisma.doc_templates.findUnique({
+      where: { id: templateId },
+      select: { category_id: true },
+    });
     if (!tpl || tpl.category_id !== cat.id) {
       return badRequest('Шаблон не принадлежит этой категории');
     }
-    defaultTemplateId = templateId;
   }
 
-  await prisma.template_categories.update({
-    where: { id: cat.id },
-    data: { default_template_id: defaultTemplateId },
-  });
+  // Сначала снимаем прежний флаг, затем ставим новый - одной транзакцией,
+  // иначе уникальный индекс увидел бы два шаблона по умолчанию.
+  await prisma.$transaction([
+    prisma.doc_templates.updateMany({
+      where: { category_id: cat.id, is_default: true },
+      data: { is_default: false },
+    }),
+    ...(templateId
+      ? [prisma.doc_templates.update({ where: { id: templateId }, data: { is_default: true } })]
+      : []),
+  ]);
   return NextResponse.json({ success: true });
 }

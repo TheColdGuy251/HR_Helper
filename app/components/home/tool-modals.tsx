@@ -15,7 +15,7 @@ import {
   Workflow,
 } from 'lucide-react';
 import { apiPost, apiUpload } from '@/lib/api';
-import { ErrorCallout, PrimaryButton, SecondaryButton } from '@/components/ui';
+import { ErrorCallout, PrimaryButton, SecondaryButton, WarnCallout } from '@/components/ui';
 import {
   BusyNote,
   errText,
@@ -31,8 +31,6 @@ import {
 } from '@/components/home/modal-shell';
 
 // Модалки-мастера 8 инструментов главной страницы.
-// Формы запросов/ответов — один в один с HR Helper/routes/documents.py
-// и легаси-скриптами static/js/{characteristic,dpo_report,process_schema,b_tools}.js.
 
 export type ToolKey =
   | 'characteristic'
@@ -51,7 +49,7 @@ interface DocLinks {
   download_url: string;
 }
 
-/* ───────────────────────── Б1: Характеристика на награду ───────────────────────── */
+/* Б1: Характеристика на награду */
 
 const CHR_KEYS = ['award', 'basis', 'fio', 'position', 'department', 'degree', 'rank'] as const;
 const CHR_LABELS: Record<(typeof CHR_KEYS)[number], string> = {
@@ -241,7 +239,7 @@ function CharacteristicModal({ onClose, onDone }: { onClose: () => void; onDone:
   );
 }
 
-/* ───────────────────────── Б2: Отчёт по ДПО ───────────────────────── */
+/* Б2: Отчёт по ДПО */
 
 interface DpoResult extends DocLinks {
   text: string;
@@ -312,12 +310,12 @@ function DpoModal({ onClose, onDone }: { onClose: () => void; onDone: () => void
   );
 }
 
-/* ───────────────────────── Б3: Справка на работника ───────────────────────── */
+/* Б3: Справка на работника */
 
 function CertificateModal({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [result, setResult] = useState<(DocLinks & { summary: string }) | null>(null);
+  const [result, setResult] = useState<(DocLinks & { summary: string; warnings?: string[] }) | null>(null);
 
   const send = async (files: File[]) => {
     setBusy(true);
@@ -325,7 +323,12 @@ function CertificateModal({ onClose, onDone }: { onClose: () => void; onDone: ()
     const fd = new FormData();
     fd.append('file', files[0]);
     try {
-      setResult(await apiUpload<DocLinks & { summary: string }>('/api/documents/certificate/convert', fd));
+      setResult(
+        await apiUpload<DocLinks & { summary: string; warnings?: string[] }>(
+          '/api/documents/certificate/convert',
+          fd
+        )
+      );
       onDone();
     } catch (e) {
       setError(errText(e));
@@ -351,6 +354,7 @@ function CertificateModal({ onClose, onDone }: { onClose: () => void; onDone: ()
         <>
           <ResultHead>{result.title}</ResultHead>
           <Hint>{result.summary || ''}</Hint>
+          <WarnCallout items={result.warnings || []} />
           <div className="flex flex-wrap gap-2 pt-1">
             <SecondaryLink href={result.view_url}>Просмотреть</SecondaryLink>
             <PrimaryLink href={result.download_url}>Скачать .docx</PrimaryLink>
@@ -362,7 +366,7 @@ function CertificateModal({ onClose, onDone }: { onClose: () => void; onDone: ()
   );
 }
 
-/* ───────────────────────── Б4: Опись уволенных ───────────────────────── */
+/* Б4: Опись уволенных */
 
 interface InvResult {
   title: string;
@@ -372,6 +376,7 @@ interface InvResult {
   fired_total: number;
   skipped_rehired: number;
   items: { n: number; fio: string; position: string; unit: string; dismissed_at: string }[];
+  warnings?: string[];
 }
 
 function InventoryModal({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
@@ -432,6 +437,7 @@ function InventoryModal({ onClose, onDone }: { onClose: () => void; onDone: () =
               ['год', result.year],
             ]}
           />
+          <WarnCallout items={result.warnings || []} />
           {result.items.length ? (
             <SimpleTable
               head={['№', 'Ф.И.О.', 'Должность', 'Подразделение', 'Дата увольнения']}
@@ -452,7 +458,7 @@ function InventoryModal({ onClose, onDone }: { onClose: () => void; onDone: () =
   );
 }
 
-/* ───────────────────────── Б5: Объявление конкурса ППС ───────────────────────── */
+/* Б5: Объявление конкурса ППС */
 
 interface PpsResult extends DocLinks {
   date: string;
@@ -526,7 +532,7 @@ function PpsModal({ onClose, onDone }: { onClose: () => void; onDone: () => void
   );
 }
 
-/* ───────────────────────── Б6: Вакансия из инструкции ───────────────────────── */
+/* Б6: Вакансия из инструкции */
 
 interface VacResult extends DocLinks {
   text: string;
@@ -611,7 +617,7 @@ function VacancyModal({ onClose, onDone }: { onClose: () => void; onDone: () => 
   );
 }
 
-/* ───────────────────────── Б7: Дубликаты инструкций ОТ ───────────────────────── */
+/* Б7: Дубликаты инструкций ОТ */
 
 interface OtdResult {
   download_url: string;
@@ -717,7 +723,7 @@ function OtDedupModal({ onClose, onDone }: { onClose: () => void; onDone: () => 
   );
 }
 
-/* ───────────────────────── А10: Единая схема процесса ───────────────────────── */
+/* А10: Единая схема процесса */
 
 interface PrcResult {
   title: string | null;
@@ -802,7 +808,7 @@ function ProcessModal({ onClose }: { onClose: () => void }) {
               ['Ролей', result.roles],
             ]}
           />
-          {/* SVG приходит строкой из бэкенда (детерминированный рендер) — вставляем инлайн */}
+          {/* SVG приходит строкой из бэкенда (детерминированный рендер) - вставляем инлайн */}
           <div
             className="border border-gray-100 rounded-xl bg-white p-3 overflow-auto max-h-[50vh]"
             dangerouslySetInnerHTML={{ __html: result.svg }}
@@ -822,9 +828,9 @@ function ProcessModal({ onClose }: { onClose: () => void }) {
   );
 }
 
-/* ───────────────────────── Диспетчер модалок ───────────────────────── */
+/* Диспетчер модалок */
 
-/** Рендерит модалку выбранного инструмента. onDocsChanged — обновить «Мои документы». */
+/** Рендерит модалку выбранного инструмента. onDocsChanged - обновить "Мои документы". */
 export function ToolModal({
   tool,
   onClose,

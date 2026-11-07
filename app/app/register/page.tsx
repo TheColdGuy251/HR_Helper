@@ -4,8 +4,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { apiPost } from '@/lib/api';
 
-// Регистрация в HR-помощнике: поля формы FastAPI RegisterForm
-// (POST /api/auth/register), дизайн — карточка Tyuiu.bot-main.
+// Регистрация в HR-помощнике (POST /api/auth/register).
 
 const inputCls =
   'w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-blue-500 text-slate-700';

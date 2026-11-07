@@ -29,7 +29,7 @@ import { EmptyState, ErrorCallout, PrimaryButton, SearchInput, SecondaryButton }
 import GroupBlocks, { buildSections, type GroupSection } from '@/components/kb/group-blocks';
 import KbFilters, { type FilterDef } from '@/components/kb/filters-modal';
 
-// Вкладка «Документы» — порт логики kb.js (loadDocs/renderDocs/uploadDocument/pollDocStatus).
+// Вкладка "Документы": список, загрузка, отслеживание статуса индексации.
 
 interface DocProgress {
   label: string;
@@ -45,7 +45,7 @@ interface PiiWarning {
 }
 
 interface KbDoc {
-  id: number;
+  id: string;
   title: string;
   filename: string | null;
   source_type: string;
@@ -86,14 +86,14 @@ const STATUS_META: Record<string, { label: string; cls: string }> = {
 
 const PRIORITY_LABELS: Record<number, string> = { 1: 'Низкий', 2: 'Средний', 3: 'Высокий' };
 
-// Пункты быстрого меню приоритета — порядок и цвета точек как в kb.js:606.
+// Пункты быстрого меню приоритета.
 const PRIORITY_MENU: { value: number; label: string; color: string }[] = [
   { value: 3, label: 'Высокий', color: '#16a34a' },
   { value: 2, label: 'Средний', color: '#1e40af' },
   { value: 1, label: 'Низкий', color: '#ca8a04' },
 ];
 
-// Иконки групп документов (порт KIND_ICONS из kb.js:369).
+// Иконки групп документов.
 const KIND_ICONS: Record<string, LucideIcon> = {
   code: Book,
   law: Landmark,
@@ -104,11 +104,10 @@ const KIND_ICONS: Record<string, LucideIcon> = {
   web: Globe,
 };
 
-// Порядок групп: известные типы → веб → теги (по алфавиту) → «Прочее» в конце.
+// Порядок групп: известные типы -> веб -> теги (по алфавиту) -> "Прочее" в конце.
 const KIND_ORDER = ['code', 'law', 'regulation', 'order', 'manual', 'web'];
 
-/** Группа документа: тип (если указан и не «прочее») → первый тег → «Прочее».
- *  Порт docGroupOf из kb.js:375. */
+/** Группа документа: тип (если указан и не "прочее") -> первый тег -> "Прочее". */
 function docGroupOf(d: KbDoc): { key: string; name: string; icon: LucideIcon } {
   if (d.source_type === 'web') return { key: 'web', name: 'Веб-страницы', icon: Globe };
   const kind = d.document_kind;
@@ -120,7 +119,7 @@ function docGroupOf(d: KbDoc): { key: string; name: string; icon: LucideIcon } {
   return { key: 'other', name: 'Прочее', icon: FolderOpen };
 }
 
-/** Сортировка секций документов — порт docSections из kb.js:386. */
+/** Сортировка секций документов. */
 function sortDocSections(a: GroupSection, b: GroupSection): number {
   const rank = (s: GroupSection): [number, number, string] => {
     const i = KIND_ORDER.indexOf(s.key);
@@ -146,7 +145,7 @@ interface UploadBanner {
   percent: number;
 }
 
-/** Простая модалка в стиле Tyuiu.bot-main. */
+/** Простая модалка. */
 function Modal({
   title,
   subtitle,
@@ -186,15 +185,15 @@ export default function DocsTab({ canEdit }: { canEdit: boolean }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
-  // Фильтры вкладки — все живут в модалке «Фильтры» (kb.html:243-283).
+  // Фильтры вкладки - все живут в модалке "Фильтры".
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [banner, setBanner] = useState<UploadBanner | null>(null);
   const [metaDoc, setMetaDoc] = useState<KbDoc | null>(null);
 
   const fileRef = useRef<HTMLInputElement>(null);
   const zipRef = useRef<HTMLInputElement>(null);
-  // Документ, за которым следим после свежей загрузки (как pollDocStatus в kb.js).
-  const watchRef = useRef<{ id: number; title: string } | null>(null);
+  // Документ, за которым следим после свежей загрузки.
+  const watchRef = useRef<{ id: string; title: string } | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hideRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -235,14 +234,14 @@ export default function DocsTab({ canEdit }: { canEdit: boolean }) {
           });
           watchRef.current = null;
         } else if (!doc) {
-          // Дубликат — placeholder удалён индексатором.
+          // Дубликат - placeholder удалён индексатором.
           setBanner({ kind: 'success', text: 'Документ уже есть в базе знаний.', percent: 100 });
           watchRef.current = null;
           hideRef.current = setTimeout(() => setBanner(null), 4000);
         }
       }
 
-      // Пока есть документы в обработке — поллинг каждые 2 секунды.
+      // Пока есть документы в обработке - поллинг каждые 2 секунды.
       if (timerRef.current) clearTimeout(timerRef.current);
       const busy = items.some((d) => d.status === 'pending' || d.status === 'parsing');
       if (busy) timerRef.current = setTimeout(() => load(true), 2000);
@@ -267,7 +266,7 @@ export default function DocsTab({ canEdit }: { canEdit: boolean }) {
     const form = new FormData();
     form.append('file', file);
     try {
-      const data = await apiUpload<{ success: boolean; document: { id: number; title: string } }>(
+      const data = await apiUpload<{ success: boolean; document: { id: string; title: string } }>(
         '/api/kb/upload',
         form
       );
@@ -310,8 +309,8 @@ export default function DocsTab({ canEdit }: { canEdit: boolean }) {
     }
   };
 
-  // Быстрая смена приоритета из «пилюли» карточки (kb.js:606 showPriorityMenu).
-  const setPriority = async (id: number, priority: number) => {
+  // Быстрая смена приоритета из "пилюли" карточки.
+  const setPriority = async (id: string, priority: number) => {
     try {
       await apiPatch(`/api/kb/documents/${id}`, { priority });
       load(true);
@@ -320,7 +319,7 @@ export default function DocsTab({ canEdit }: { canEdit: boolean }) {
     }
   };
 
-  const deleteDoc = async (id: number) => {
+  const deleteDoc = async (id: string) => {
     if (!window.confirm('Удалить документ?')) return;
     try {
       await apiDelete(`/api/kb/documents/${id}`);
@@ -330,7 +329,7 @@ export default function DocsTab({ canEdit }: { canEdit: boolean }) {
     }
   };
 
-  // Клиентские фильтры — порт docPredicate из kb.js:196 + поиск + фильтр по группе.
+  // Клиентские фильтры + поиск + фильтр по группе.
   const q = search.trim().toLowerCase();
   const filtered = docs.filter((d) => {
     if (filters.group && docGroupOf(d).key !== filters.group) return false;
@@ -366,7 +365,7 @@ export default function DocsTab({ canEdit }: { canEdit: boolean }) {
   const expired = docs.filter((d) => d.review_status === 'expired').length;
   const due = docs.filter((d) => d.review_status === 'review_due').length;
 
-  // Опции фильтра «Группа» строим по ПОЛНОМУ списку (kb.js:165 fillGroupFilter),
+  // Опции фильтра "Группа" строим по полному списку,
   // иначе выбранная группа исчезала бы из списка вместе с отфильтрованными.
   const allSections = buildSections(docs, docGroupOf, (d) => ({ key: d.id, node: null }), sortDocSections);
   const filterDefs: FilterDef[] = [
@@ -421,7 +420,7 @@ export default function DocsTab({ canEdit }: { canEdit: boolean }) {
     },
   ];
 
-  // Сводка по актуальности — плашка над плиткой групп (kb.js:480 prefixHtml).
+  // Сводка по актуальности - плашка над плиткой групп.
   const summaryNote =
     expired > 0 || due > 0 ? (
       <div className="bg-amber-50 border border-amber-100 rounded-xl p-4 text-xs text-amber-700 font-medium flex items-center gap-2">
@@ -517,7 +516,7 @@ export default function DocsTab({ canEdit }: { canEdit: boolean }) {
 
       {error && <ErrorCallout>{error}</ErrorCallout>}
 
-      {/* Список документов: плитка сворачиваемых групп (kb.js:30 renderGroupBlocks) */}
+      {/* Список документов: плитка сворачиваемых групп */}
       {loading ? (
         <EmptyState>Загрузка…</EmptyState>
       ) : filtered.length === 0 ? (
@@ -550,8 +549,10 @@ export default function DocsTab({ canEdit }: { canEdit: boolean }) {
   );
 }
 
-/** «Пилюля» приоритета с быстрым меню (kb.js:341 priorityPill / :606 showPriorityMenu).
- *  Меню — position: fixed, иначе его обрежет overflow группы-блока. */
+/**
+ * "Пилюля" приоритета с быстрым меню.
+ *  Меню - position: fixed, иначе его обрежет overflow группы-блока.
+ */
 function PriorityPill({
   value,
   canEdit,
@@ -579,7 +580,7 @@ function PriorityPill({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setOpen(false);
     };
-    const onMove = () => setOpen(false); // прокрутка/ресайз уводят меню от «пилюли»
+    const onMove = () => setOpen(false); // прокрутка/ресайз уводят меню от "пилюли"
     document.addEventListener('mousedown', onDown, true);
     document.addEventListener('keydown', onKey);
     window.addEventListener('scroll', onMove, true);
@@ -657,7 +658,7 @@ function PriorityPill({
   );
 }
 
-/** Карточка документа внутри группы-блока (kb.js docItemHtml). */
+/** Карточка документа внутри группы-блока. */
 function DocCard({
   doc: d,
   canEdit,
@@ -668,8 +669,8 @@ function DocCard({
   doc: KbDoc;
   canEdit: boolean;
   onMeta: (d: KbDoc) => void;
-  onDelete: (id: number) => void;
-  onPriority: (id: number, priority: number) => void;
+  onDelete: (id: string) => void;
+  onPriority: (id: string, priority: number) => void;
 }) {
   const isWeb = d.source_type === 'web';
   const prog = d.status === 'pending' || d.status === 'parsing' ? d.progress : null;

@@ -3,9 +3,7 @@ import type { NextRequest } from 'next/server';
 import { notFound, requireUser } from '@/lib/auth';
 import { bodyParams, publishTyping, userById } from '@/lib/messenger';
 
-// HTTP-сигнал «печатает» (в Python основной канал — WebSocket /api/messenger/ws,
-// он не переносится; клиент на Next всегда ходит этим фолбэком).
-// Порт POST /api/messenger/typing из backend/routes/messenger.py.
+// HTTP-сигнал "печатает".
 
 export async function POST(request: NextRequest) {
   const gate = await requireUser();
@@ -15,7 +13,7 @@ export async function POST(request: NextRequest) {
   if ('response' in parsed) return parsed.response;
   const p = parsed.params;
 
-  const peerId = p.optInt('peer_id');
+  const peerId = p.optUuid('peer_id');
   const general = p.bool('general', false);
   const typing = p.bool('typing', true);
   const invalid = p.invalid();

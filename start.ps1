@@ -5,24 +5,24 @@
 #    .\start.ps1 -Dev          режим разработки (горячая перезагрузка)
 #    .\start.ps1 -NoLlm        без локальной модели (быстрый старт, mock-ответы)
 #    .\start.ps1 -SkipBuild    не пересобирать фронтенд
-#    .\start.ps1 -WithPython   поднять ещё и старый FastAPI (для сверки)
 #    .\start.ps1 -OpenFirewall открыть порт 3000 для домашней сети (от админа)
 #    .\start.ps1 -Stop         остановить всё
 #
 #  Что поднимается:
 #    PostgreSQL и Qdrant   — в Docker (docker-compose.yml)
+#    миграции Prisma       — схема БД доводится до app/prisma/migrations
 #    Next.js  :3000        — ВСЁ приложение, включая ассистента; сюда и заходить
 #    worker                — фоновые задания (ПДн, веб-источники, индексация)
 #
-#  Python больше не нужен: перенос завершён, FastAPI не запускается. Флаг
-#  -WithPython поднимает его на :8000 рядом — только чтобы сравнить поведение
-#  старой и новой реализации; на работу приложения это не влияет.
+#  Python больше не нужен: перенос завершён, FastAPI не запускается. Прежний
+#  флаг -WithPython (старый FastAPI рядом, для сверки) отключён: после перехода
+#  БД на UUID-ключи старый бэкенд со схемой несовместим.
 # ============================================================================
 param(
   [switch]$Dev,
   [switch]$NoLlm,
   [switch]$SkipBuild,
-  [switch]$WithPython,
+  [switch]$WithPython,  # отключён (см. шапку); оставлен, чтобы объяснить отказ
   [switch]$OpenFirewall,
   [switch]$NoPython,  # устарел: Python и так не запускается; оставлен, чтобы
                       # прежняя команда не падала с ошибкой параметра
@@ -32,8 +32,6 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 $app = Join-Path $root 'app'
-$backend = Join-Path $root 'backend'
-if (-not (Test-Path $backend)) { $backend = Join-Path $root 'HR Helper' }
 
 function Say($text, $color = 'Gray') { Write-Host $text -ForegroundColor $color }
 function Ok($text) { Say "  [ок] $text" 'Green' }
@@ -119,21 +117,18 @@ function Get-EnvValue($file, $key) {
 }
 if (-not (Get-EnvValue "$app\.env" 'SECRET_KEY')) { Die 'SECRET_KEY не задан в app\.env' }
 
-# Старый бэкенд нужен только для сверки, но если его поднимают — ключ подписи
-# сессионной cookie обязан совпадать, иначе вход в одном не виден другому.
+# Старый FastAPI знает только прежнюю схему с целочисленными id. Против
+# нынешней (UUIDv7, нормализованные таблицы) он падал бы на первом же запросе,
+# а успевшие пройти записи портили бы данные — поэтому не запускаем его вовсе.
 if ($WithPython) {
-  if (-not (Get-Command python -ErrorAction SilentlyContinue)) { Die 'Не найден Python' }
-  if (-not (Test-Path "$backend\.env")) { Die "Нет файла $backend\.env" }
-  if ((Get-EnvValue "$backend\.env" 'SECRET_KEY') -ne (Get-EnvValue "$app\.env" 'SECRET_KEY')) {
-    Die 'SECRET_KEY в backend\.env и app\.env различаются — сессии не будут работать'
-  }
-  Ok 'SECRET_KEY согласован с backend\.env'
+  Die ('-WithPython отключён: старый FastAPI несовместим со схемой БД на UUID ' +
+    '(app/prisma/migrations). Приложению Python не нужен — запускайте без флага.')
 }
 
 if (-not (Get-EnvValue "$app\.env" 'CRON_SECRET')) {
   Warn 'CRON_SECRET пуст — фоновые задания (в т.ч. автоудаление ПДн) не запустятся'
 }
-if (-not (Test-Path "$app\node_modules")) { Die "Нет зависимостей: cd app; npm install" }
+if (-not (Test-Path "$app\node_modules")) { Die "Нет зависимостей фронтенда: cd app; npm install" }
 Ok 'Зависимости на месте'
 
 # ── 2. Инфраструктура ───────────────────────────────────────────────────────
@@ -170,6 +165,21 @@ if ((Test-Port 5432) -and (Test-Port 6333)) {
   if (-not (Wait-Port 6333 30 'Qdrant')) { Warn 'Qdrant недоступен — поиск по базе знаний работать не будет' }
 }
 
+# Схема БД ведётся Prisma Migrate: применяем ещё не накатанные миграции (на
+# пустой базе — все). Уже применённые пропускаются, данные не трогаются.
+Push-Location $app
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+$migrateOut = & npx prisma migrate deploy *>&1
+$migrateFailed = $LASTEXITCODE -ne 0
+$ErrorActionPreference = $prevEap
+Pop-Location
+if ($migrateFailed) {
+  Say ($migrateOut | Select-Object -Last 5 | Out-String) 'DarkGray'
+  Die 'Не удалось применить миграции БД (cd app; npx prisma migrate deploy)'
+}
+Ok 'Схема БД актуальна'
+
 # ── 3. Сборка фронтенда ─────────────────────────────────────────────────────
 if (-not $Dev -and -not $SkipBuild) {
   Say "`n[3/5] Сборка фронтенда" 'Cyan'
@@ -190,22 +200,14 @@ if (-not $Dev -and -not $SkipBuild) {
 # ── 4. Запуск ───────────────────────────────────────────────────────────────
 Say "`n[4/5] Запуск сервисов" 'Cyan'
 
+# Старый FastAPI с прошлых запусков мог остаться висеть — с нынешней схемой он
+# несовместим, поэтому гасим и его.
 Stop-ByPort 8000 'Прежний FastAPI'
 Stop-ByPort 3000 'Прежний Next.js'
 
-# FastAPI поднимается только по явному запросу (-WithPython) — для сверки
-# ответов старой и новой реализации. Модель ему не отдаём: её держит Next.js,
-# вторая копия в видеопамять не поместится. Планировщик там тоже выключен
-# (SCHEDULER_ENABLED=false) — фоновые задания ведёт воркер, иначе выполнялись
-# бы дважды.
-if ($WithPython) {
-  Start-Process powershell -ArgumentList @(
-    '-NoExit', '-Command',
-    "`$host.UI.RawUI.WindowTitle='HR: FastAPI :8000 (сверка, не обязателен)'; " +
-    "Set-Location '$backend'; `$env:LLM_ENABLED='false'; python app.py"
-  )
-  Wait-Port 8000 90 'FastAPI' | Out-Null
-}
+# Окна Next.js и воркера наследуют окружение этого процесса, а значение из
+# окружения важнее app/.env - так -NoLlm отключает модель в обоих.
+if ($NoLlm) { $env:LLM_ENABLED = 'false' }
 
 $nextCmd = if ($Dev) { 'npm run dev' } else { 'npm run start' }
 Start-Process powershell -ArgumentList @(
@@ -257,9 +259,6 @@ if ($lanIp -and -not $fwRule) {
   Warn 'С телефона пока не откроется: брандмауэр не пропускает входящие на :3000'
   Say  '  Открыть порт (один раз, в PowerShell от администратора):' 'Gray'
   Say  "  .\start.ps1 -OpenFirewall" 'Gray'
-}
-if ($WithPython) {
-  Say "FastAPI на :8000 поднят для сверки — приложение к нему не обращается." 'DarkGray'
 }
 if (-not $NoLlm) {
   Say "`nПервый ответ ассистента займёт ~10 с: модель загружается в видеопамять." 'Gray'

@@ -8,10 +8,10 @@ import type { ActiveConv, Msg, MsgAttachment, PollPayload } from './types';
 import { messageText } from './types';
 
 // Поле ввода мессенджера: текст, вложения (скрепка / drag-and-drop / Ctrl+V),
-// ответ на сообщение, голосования и режим «Спросить ИИ».
-// Загрузка файлов — POST /api/messenger/upload (поле формы `file`, по одному).
+// ответ на сообщение, голосования и режим "Спросить ИИ".
+// Загрузка файлов - POST /api/messenger/upload (поле формы `file`, по одному).
 
-const MAX_FILES = 10;      // бэкенд не ограничивает, но легаси держит 10
+const MAX_FILES = 10; // вложений в одном сообщении
 const MAX_TEXTAREA = 140;  // авто-высота поля ввода
 const TYPING_THROTTLE = 2500;
 const TYPING_STOP = 3500;
@@ -31,7 +31,7 @@ export function Composer({
   onSend: (content: string, atts: MsgAttachment[]) => void;
   onAsk: (content: string) => void;
   onPoll: (payload: PollPayload) => void;
-  /** Корневой узел композера — нужен треду для отступа ленты. */
+  /** Корневой узел композера - нужен треду для отступа ленты. */
   rootRef?: RefObject<HTMLDivElement | null>;
 }) {
   const [text, setText] = useState('');
@@ -61,9 +61,9 @@ export function Composer({
     el.style.height = `${Math.min(el.scrollHeight, MAX_TEXTAREA)}px`;
   }, [text]);
 
-  // ── сигнал «печатает» (HTTP, debounce как в легаси) ───────────────────────
+  // сигнал "печатает" (HTTP, debounce)
   const pingTyping = (typing: boolean) => {
-    if (conv.notes) return; // в «Заметках» некому показывать
+    if (conv.notes) return; // в "Заметках" некому показывать
     const body = conv.general
       ? { general: true, typing }
       : { peer_id: conv.peerId, typing };
@@ -102,7 +102,7 @@ export function Composer({
     if (typingTimer.current) clearTimeout(typingTimer.current);
   }, []);
 
-  // ── вложения ──────────────────────────────────────────────────────────────
+  // вложения
   const addFiles = async (files: File[]) => {
     if (!files.length) return;
     setError('');
@@ -142,7 +142,7 @@ export function Composer({
     }
   };
 
-  // ── отправка ──────────────────────────────────────────────────────────────
+  // отправка
   const submit = () => {
     const t = text.trim();
     if (uploading) return;

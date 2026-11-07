@@ -1,44 +1,39 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
-import { notFound, requireUser } from '@/lib/auth';
+import { requireUser } from '@/lib/auth';
+import { asUuid } from '@/lib/ids';
 import { validationError } from '@/lib/news';
+import { requireOwnDialogue } from '@/lib/chat';
 
-// Отметка сообщений прочитанными. Порт POST /api/chat/mark-as-read.
+// Отметка сообщений прочитанными.
 
 export async function POST(request: NextRequest) {
   const gate = await requireUser();
   if ('response' in gate) return gate.response;
   const user = gate.user;
 
-  let body: { session_id?: unknown; message_ids?: unknown };
+  let body: { dialogue_id?: unknown; message_ids?: unknown };
   try {
     const raw = await request.text();
     body = raw ? JSON.parse(raw) : {};
   } catch {
     return validationError(['body', 0], 'json_invalid', 'JSON decode error', {});
   }
-  if (typeof body.session_id !== 'string') {
-    return validationError(['body', 'session_id'], 'missing', 'Field required', null);
-  }
 
-  const session = await prisma.chat_sessions.findUnique({
-    where: { id: body.session_id },
-    select: { id: true, dialogues: { select: { user_id: true } } },
-  });
-  if (!session || session.dialogues.user_id !== user.id) return notFound('Сессия не найдена');
+  const own = await requireOwnDialogue(body.dialogue_id, user.id, ['body', 'dialogue_id']);
+  if ('response' in own) return own.response;
 
   const ids = Array.isArray(body.message_ids)
-    ? body.message_ids.filter((v): v is number => typeof v === 'number' && Number.isInteger(v))
+    ? body.message_ids.map(asUuid).filter((v): v is string => v !== null)
     : [];
 
   if (ids.length) {
     await prisma.chat_messages.updateMany({
-      where: { session_id: body.session_id, id: { in: ids } },
+      where: { dialogue_id: own.id, id: { in: ids } },
       data: { is_read: true },
     });
-    // Python здесь публикует unread_changed в SSE-шину уведомлений — она живёт
-    // в процессе FastAPI и из Next недостижима (счётчик обновится по опросу).
+    // Событие unread_changed не публикуем: счётчик обновится по опросу.
   }
   return NextResponse.json({ success: true });
 }

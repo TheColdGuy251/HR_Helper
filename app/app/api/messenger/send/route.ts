@@ -6,15 +6,13 @@ import type { NextRequest } from 'next/server';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { badRequest, fullName, initials, notFound, requireUser } from '@/lib/auth';
-import { asDict, baseName, isFile, pyBool, pyStr, suffixOf } from '@/lib/kb';
+import { asDict, baseName, isFile, pyBool, suffixOf } from '@/lib/kb';
 import {
   GENERAL_KEY,
   UPLOAD_DIR,
   bodyParams,
   broadcastMessage,
   forwardSnapshot,
-  fromUploadPath,
-  toUploadPath,
   markRead,
   messageById,
   serializeMessage,
@@ -24,7 +22,6 @@ import {
 } from '@/lib/messenger';
 
 // Отправка сообщения (в т.ч. пересылка ответа ассистента и сообщений чата).
-// Порт POST /api/messenger/send из backend/routes/messenger.py.
 
 export async function POST(request: NextRequest) {
   const gate = await requireUser();
@@ -35,18 +32,18 @@ export async function POST(request: NextRequest) {
   if ('response' in parsed) return parsed.response;
   const p = parsed.params;
 
-  const peerId = p.optInt('peer_id');
+  const peerId = p.optUuid('peer_id');
   const general = p.bool('general', false);
   let content = p.str('content', '').trim();
-  const forwardMessageId = p.optInt('forward_message_id');
-  const forwardUserMessageId = p.optInt('forward_user_message_id');
-  const replyToId = p.optInt('reply_to_id');
-  const attachmentIds = p.optIntList('attachment_ids') ?? [];
+  const forwardMessageId = p.optUuid('forward_message_id');
+  const forwardUserMessageId = p.optUuid('forward_user_message_id');
+  const replyToId = p.optUuid('reply_to_id');
+  const attachmentIds = p.optUuidList('attachment_ids') ?? [];
   const invalid = p.invalid();
   if (invalid) return invalid;
 
   let forwardedMeta: Record<string, unknown> | null = null;
-  let forwardSrcId: number | null = null; // для переноса вложений при пересылке
+  let forwardSrcId: string | null = null; // для переноса вложений при пересылке
 
   if (forwardMessageId !== null) {
     // Пересылка сообщения ИИ-ассистента (из чата).
@@ -59,12 +56,12 @@ export async function POST(request: NextRequest) {
     forwardSrcId = src.id;
     const sfm = asDict(src.forwarded_meta);
     if (pyBool(sfm.ai) || pyBool(sfm.content)) {
-      forwardedMeta = sfm; // снимок ответа ассистента — переносим как есть
+      forwardedMeta = sfm; // снимок ответа ассистента - переносим как есть
     } else {
-      // обычное сообщение → помечаем, ОТ КОГО переслано (исходный автор).
+      // обычное сообщение -> помечаем, ОТ кого переслано (исходный автор).
       let origin: unknown;
       if (pyBool(sfm.from_user)) {
-        origin = sfm.from_user; // уже пересланное — сохраняем автора
+        origin = sfm.from_user; // уже пересланное - сохраняем автора
       } else {
         const origUser = await userById(src.sender_id);
         origin = origUser
@@ -88,7 +85,7 @@ export async function POST(request: NextRequest) {
   }
 
   if (!general) {
-    // peer_id == user.id — это «Заметки» (диалог с собой), разрешено.
+    // peer_id == user.id - это "Заметки" (диалог с собой), разрешено.
     if (!peerId || !(await userById(peerId))) return notFound('Получатель не найден');
   }
 
@@ -102,9 +99,6 @@ export async function POST(request: NextRequest) {
       forwarded_meta:
         forwardedMeta === null ? Prisma.DbNull : (forwardedMeta as Prisma.InputJsonValue),
       reply_to_id: replyTo,
-      is_pinned: false,
-      is_edited: false,
-      is_ai_query: false,
     },
   });
 
@@ -125,16 +119,15 @@ export async function POST(request: NextRequest) {
     const copies: Prisma.user_message_filesCreateManyInput[] = [];
     for (const sf of srcFiles) {
       try {
-        const sfAbs = fromUploadPath(sf.stored_path);
-        if (!(await isFile(sfAbs))) continue;
+        if (!(await isFile(sf.stored_path))) continue;
         const ext = suffixOf(baseName(sf.stored_path)).toLowerCase();
         const newPath = path.join(UPLOAD_DIR, `${randomUUID().replace(/-/g, '')}${ext}`);
-        await copyFile(sfAbs, newPath);
+        await copyFile(sf.stored_path, newPath);
         copies.push({
           message_id: msg.id,
           owner_id: me.id,
           original_name: sf.original_name,
-          stored_path: toUploadPath(newPath),
+          stored_path: newPath,
           content_type: sf.content_type,
           size_bytes: sf.size_bytes,
           is_image: sf.is_image,
@@ -142,7 +135,7 @@ export async function POST(request: NextRequest) {
           img_h: sf.img_h,
         });
       } catch {
-        // OSError в Python здесь тоже проглатывается — файл просто не переносится
+        // Ошибка файловой системы проглатывается - файл просто не переносится
       }
     }
     if (copies.length) await prisma.user_message_files.createMany({ data: copies });
@@ -150,7 +143,7 @@ export async function POST(request: NextRequest) {
 
   // Отправитель сразу считает своё сообщение прочитанным в этом диалоге.
   const where = threadWhere(me.id, peerId, general);
-  await markRead(me.id, general ? GENERAL_KEY : pyStr(peerId), where);
+  await markRead(me.id, general || !peerId ? GENERAL_KEY : peerId, where);
 
   await broadcastMessage(msg);
   return NextResponse.json(await serializeMessage(msg, me.id));

@@ -6,25 +6,23 @@ import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { Prisma } from '@prisma/client';
+import type { pii_action, pii_entity } from '@prisma/client';
 import { forbidden, requireUser, unauthorized, type CurrentUser } from './auth';
 import { isoUtc, prisma } from './db';
+import { asUuid } from './ids';
 import { pyBool, pyStr } from './kb';
 import { DOCS_DIR } from './news';
 
-// Общая логика контура персональных данных — порт backend/services/pii/*
-// (auth.py, crypto.py, storage.py, audit.py) и вспомогательных функций
-// backend/routes/pii.py (_person_payload, _parse_birth_date, _content_disposition).
+// Общая логика контура персональных данных: токен доступа к разделу,
+// шифрование файлов, хранилище и вспомогательные функции для /api/pii.
 //
-// Оба бэкенда работают с одними и теми же данными: cookie pii_token, выданная
-// FastAPI, должна приниматься Next.js и наоборот, а файл, зашифрованный Python,
-// обязан читаться здесь. Поэтому форматы подписи и шифрования воспроизведены
-// побайтово, а не «по мотивам».
+// Форматы подписи токена и шифрования менять нельзя: ими уже зашифрованы
+// файлы на диске и подписаны выданные cookie.
 
-// ── Токен доступа (services/pii/auth.py) ───────────────────────────────────
-// itsdangerous.TimestampSigner: "<payload>.<b64url(ts)>.<b64url(hmac-sha1)>".
-// Формат тот же, что у сессионной cookie (см. lib/session.ts), отличаются соль
-// и полезная нагрузка. Примитивы в session.ts не экспортированы, поэтому
-// повторены здесь — трогать чужой модуль ради этого нельзя.
+// Токен доступа
+// Формат "<payload>.<b64url(ts)>.<b64url(hmac-sha1)>" - тот же, что у
+// сессионной cookie (см. lib/session.ts), отличаются соль и полезная нагрузка.
+// Примитивы в session.ts не экспортированы, поэтому повторены здесь.
 
 export const PII_COOKIE = 'pii_token';
 export const PII_TOKEN_TTL_SEC = 60 * 15; // 15 минут
@@ -56,7 +54,7 @@ function signKey(): Buffer {
     .digest();
 }
 
-/** base64url без выравнивающих '=' — так кодирует itsdangerous. */
+/** base64url без выравнивающих '=' - так кодирует itsdangerous. */
 function b64urlEncode(buf: Buffer): string {
   return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
@@ -66,7 +64,7 @@ function b64urlDecode(s: string): Buffer {
   return Buffer.from(s.replace(/-/g, '+').replace(/_/g, '/') + pad, 'base64');
 }
 
-/** Целое → минимальное число байт big-endian (int_to_bytes из itsdangerous). */
+/** Целое -> минимальное число байт big-endian (int_to_bytes из itsdangerous). */
 function intToBytes(num: number): Buffer {
   if (num === 0) return Buffer.alloc(0);
   const bytes: number[] = [];
@@ -85,7 +83,7 @@ function bytesToInt(buf: Buffer): number {
 }
 
 /** Аналог issue_token: подписывает id пользователя текущей меткой времени. */
-export function issueToken(userId: number, now = Math.floor(Date.now() / 1000)): string {
+export function issueToken(userId: string, now = Math.floor(Date.now() / 1000)): string {
   const value = `${userId}${SEP}${b64urlEncode(intToBytes(now))}`;
   const sig = crypto.createHmac('sha1', signKey()).update(value, 'utf8').digest();
   return `${value}${SEP}${b64urlEncode(sig)}`;
@@ -93,7 +91,7 @@ export function issueToken(userId: number, now = Math.floor(Date.now() / 1000)):
 
 /**
  * Аналог unsign(max_age=TTL): проверяет подпись и срок.
- * null — подпись не сошлась, метка испорчена, токен просрочен или «из будущего»
+ * null - подпись не сошлась, метка испорчена, токен просрочен или "из будущего"
  * (itsdangerous считает отрицательный возраст истёкшим).
  */
 function unsignToken(token: string | null | undefined): { payload: string; issuedAt: number } | null {
@@ -104,8 +102,8 @@ function unsignToken(token: string | null | undefined): { payload: string; issue
   const signed = token.slice(0, sigSep);
   const sig = token.slice(sigSep + 1);
 
-  // itsdangerous сравнивает РАСКОДИРОВАННЫЕ подписи, поэтому лишнее выравнивание
-  // '=' в конце не делает токен невалидным — повторяем это поведение.
+  // itsdangerous сравнивает раскодированные подписи, поэтому лишнее выравнивание
+  // '=' в конце не делает токен невалидным - повторяем это поведение.
   let given: Buffer;
   let expected: Buffer;
   try {
@@ -129,18 +127,18 @@ function unsignToken(token: string | null | undefined): { payload: string; issue
   return { payload, issuedAt };
 }
 
-/** Полезная нагрузка токена — id пользователя (int() в Python допускает пробелы и знак). */
-function payloadUserId(payload: string): number | null {
-  return /^\s*[+-]?\d+\s*$/.test(payload) ? Number.parseInt(payload.trim(), 10) : null;
+/** Полезная нагрузка токена - UUID пользователя. */
+function payloadUserId(payload: string): string | null {
+  return asUuid(payload);
 }
 
-export function verifyToken(token: string | null | undefined, userId: number): boolean {
+export function verifyToken(token: string | null | undefined, userId: string): boolean {
   const res = unsignToken(token);
   return res !== null && payloadUserId(res.payload) === userId;
 }
 
-/** Сколько секунд осталось у токена. 0 — токен невалидный/просроченный/чужой. */
-export function tokenRemainingSeconds(token: string | null | undefined, userId: number): number {
+/** Сколько секунд осталось у токена. 0 - токен невалидный/просроченный/чужой. */
+export function tokenRemainingSeconds(token: string | null | undefined, userId: string): number {
   const res = unsignToken(token);
   if (!res || payloadUserId(res.payload) !== userId) return 0;
   const elapsed = Date.now() / 1000 - res.issuedAt;
@@ -150,10 +148,9 @@ export function tokenRemainingSeconds(token: string | null | undefined, userId: 
 /**
  * Заголовок Set-Cookie для pii_token.
  *
- * Через cookies().set() нельзя — Next прогоняет значение через
- * encodeURIComponent, а FastAPI ждёт его как есть (та же причина, что и у
- * serializeSessionCookie). Набор флагов повторяет response.set_cookie в
- * routes/pii.py: httponly + samesite=lax + path=/, без secure.
+ * Через cookies().set() нельзя - Next прогоняет значение через
+ * encodeURIComponent и портит подпись (та же причина, что и у
+ * serializeSessionCookie). Флаги: httponly + samesite=lax + path=/, без secure.
  */
 export function serializePiiCookie(value: string, maxAge = PII_TOKEN_TTL_SEC): string {
   return [`${PII_COOKIE}=${value}`, 'path=/', `Max-Age=${maxAge}`, 'httponly', 'samesite=lax'].join('; ');
@@ -166,8 +163,8 @@ export async function readPiiToken(): Promise<string | null> {
 }
 
 /**
- * Аналог Depends(require_pii_access): право can_access_pii + свежий токен.
- * Возвращает пользователя либо готовый ответ 401/403 с текстами из Python.
+ * Проверка доступа к ПДн: право can_access_pii + свежий токен.
+ * Возвращает пользователя либо готовый ответ 401/403.
  */
 export async function requirePiiAccess(): Promise<{ user: CurrentUser } | { response: NextResponse }> {
   const gate = await requireUser();
@@ -181,11 +178,10 @@ export async function requirePiiAccess(): Promise<{ user: CurrentUser } | { resp
   return { user: gate.user };
 }
 
-// ── Шифрование файлов (services/pii/crypto.py) ─────────────────────────────
-// AES-256-GCM, ключ — HKDF-SHA256 из SECRET_KEY с константной солью.
-// Формат блоба: [12 байт nonce][ciphertext][16 байт tag]. AESGCM в Python
-// дописывает tag в конец шифротекста, node:crypto отдаёт его отдельно — отсюда
-// ручная сборка/разбор; побайтово результат совпадает.
+// Шифрование файлов
+// AES-256-GCM, ключ - HKDF-SHA256 из SECRET_KEY с константной солью.
+// Формат блоба: [12 байт nonce][ciphertext][16 байт tag]. node:crypto отдаёт
+// tag отдельно, поэтому блоб собираем и разбираем вручную.
 
 const KEY_SALT = Buffer.from('hr-helper-pii-salt-v1', 'utf8');
 const KEY_INFO = Buffer.from('pii-file-encryption', 'utf8');
@@ -221,8 +217,8 @@ export function decryptBytes(blob: Buffer): Buffer {
   ]);
 }
 
-// ── Хранилище (services/pii/storage.py) ────────────────────────────────────
-// Тот же каталог, что у FastAPI: <docs_dir>/personal.
+// Хранилище
+// Каталог <docs_dir>/personal.
 
 const PERSONAL_DIR = path.join(DOCS_DIR, 'personal');
 
@@ -260,7 +256,7 @@ export async function loadDecrypted(storageName: string): Promise<Buffer | null>
   return decryptBytes(raw);
 }
 
-/** Удаление файла; отсутствие файла и ошибки ФС игнорируются, как в Python. */
+/** Удаление файла; отсутствие файла и ошибки ФС игнорируются. */
 export async function deleteStoredFile(storageName: string): Promise<void> {
   const file = resolveStored(storageName);
   if (!file) return;
@@ -271,7 +267,7 @@ export async function deleteStoredFile(storageName: string): Promise<void> {
   }
 }
 
-// ── Тело запроса в формате pydantic ────────────────────────────────────────
+// Разбор тела запроса
 
 export interface PydanticError {
   type: string;
@@ -281,14 +277,14 @@ export interface PydanticError {
   ctx?: Record<string, unknown>;
 }
 
-/** RequestValidationError: 422 со списком ошибок (pydantic отдаёт их разом). */
+/** 422 со списком всех ошибок валидации сразу. */
 export function pydanticErrors(errors: PydanticError[]): NextResponse {
   return NextResponse.json({ detail: errors }, { status: 422 });
 }
 
 /**
  * Разбор тела-модели (ReauthRequest, PersonCreate): тело обязательно и должно
- * быть объектом. Отличие от dict = Body(...) в lib/kb.ts — тип ошибки для
+ * быть объектом. Отличие от разбора тела в lib/kb.ts - тип ошибки для
  * не-объекта: у BaseModel это model_attributes_type, а не dict_type.
  */
 export async function modelBody(
@@ -304,7 +300,6 @@ export async function modelBody(
   try {
     parsed = JSON.parse(raw);
   } catch {
-    // FastAPI кладёт в loc позицию ошибки в JSON — её здесь не восстановить.
     return {
       response: pydanticErrors([
         { type: 'json_invalid', loc: ['body', 0], msg: 'JSON decode error', input: {} },
@@ -327,12 +322,12 @@ export async function modelBody(
   return { body: parsed as Record<string, unknown> };
 }
 
-// ── Журнал аудита (services/pii/audit.py) ──────────────────────────────────
+// Журнал аудита
 
 export async function piiLog(
-  userId: number | null,
-  action: string,
-  opts: { entity?: string | null; entityId?: number | null; extra?: Prisma.InputJsonValue } = {}
+  userId: string | null,
+  action: pii_action,
+  opts: { entity?: pii_entity | null; entityId?: string | null; extra?: Prisma.InputJsonValue } = {}
 ): Promise<void> {
   await prisma.pii_audit.create({
     data: {
@@ -345,17 +340,16 @@ export async function piiLog(
   });
 }
 
-// ── ФИО и дата рождения ────────────────────────────────────────────────────
+// ФИО и дата рождения
 
-/** full_name из data/pii.py: непустые части через пробел. */
+/** ФИО: непустые части через пробел. */
 export function fullName(p: { surname: string; name: string; patronymic: string | null }): string {
   return [p.surname, p.name, p.patronymic || ''].filter(Boolean).join(' ').trim();
 }
 
 /**
- * Нормализация ФИО перед записью, как в create_person: пробелы по краям
- * срезаются, а вот пустое отчество остаётся пустой строкой — Python приводит к
- * None только отсутствующее значение (`patronymic.strip() if patronymic else None`).
+ * Нормализация ФИО перед записью: пробелы по краям срезаются, пустое отчество
+ * остаётся пустой строкой (NULL только у отсутствующего).
  */
 export function normalizeFio(input: { surname: string; name: string; patronymic: string | null }) {
   return {
@@ -365,12 +359,12 @@ export function normalizeFio(input: { surname: string; name: string; patronymic:
   };
 }
 
-/** Признак ошибки формата даты — вызывающий отдаёт 400, как HTTPException в Python. */
+/** Признак ошибки формата даты - вызывающий отдаёт 400. */
 export const BAD_DATE = Symbol('bad-birth-date');
 
 /**
- * Аналог _parse_birth_date: принимает DD.MM.YYYY и YYYY-MM-DD.
- * Диапазоны цифр и допуск однозначных дня/месяца — как у strptime.
+ * Принимает DD.MM.YYYY и YYYY-MM-DD.
+ * Диапазоны цифр и допуск однозначных дня/месяца - как у strptime.
  */
 export function parseBirthDate(s: string | null | undefined): Date | null | typeof BAD_DATE {
   if (!s) return null;
@@ -388,10 +382,10 @@ export function parseBirthDate(s: string | null | undefined): Date | null | type
 
   const { y, m, d } = parts;
   if (m < 1 || m > 12 || d < 1 || d > 31) return BAD_DATE;
-  // Дата хранится как DATE — фиксируем полночь UTC, иначе часовой пояс сдвинет день.
+  // Дата хранится как DATE - фиксируем полночь UTC, иначе часовой пояс сдвинет день.
   const date = new Date(Date.UTC(y, m - 1, d));
   if (date.getUTCFullYear() !== y || date.getUTCMonth() !== m - 1 || date.getUTCDate() !== d) {
-    return BAD_DATE; // 31.02 и подобное — datetime в Python тоже не примет
+    return BAD_DATE; // 31.02 и другие несуществующие даты
   }
   return date;
 }
@@ -407,10 +401,10 @@ export function ruDate(isoValue: string): string {
   return `${d}.${m}.${y}`;
 }
 
-// ── Представление карточки (routes/pii.py::_person_payload) ────────────────
+// Представление карточки
 
 export interface PersonRow {
-  id: number;
+  id: string;
   surname: string;
   name: string;
   patronymic: string | null;
@@ -420,7 +414,7 @@ export interface PersonRow {
 }
 
 export interface DocumentRow {
-  id: number;
+  id: string;
   original_filename: string;
   mime_type: string | null;
   size_bytes: number;
@@ -429,7 +423,7 @@ export interface DocumentRow {
 }
 
 export interface PersonPayload {
-  id: number;
+  id: string;
   surname: string;
   name: string;
   patronymic: string | null;
@@ -439,7 +433,7 @@ export interface PersonPayload {
   created_at: string | null;
   documents_count?: number;
   documents?: {
-    id: number;
+    id: string;
     filename: string;
     mime_type: string | null;
     size_bytes: number;
@@ -449,16 +443,13 @@ export interface PersonPayload {
   full_name_with_dob?: string;
 }
 
-/** `p.meta or {}`: в Python пустой контейнер тоже даёт {}. */
+/** Пустая или отсутствующая meta - пустой объект. */
 function metaOrEmpty(meta: Prisma.JsonValue): unknown {
   if (!meta || (Array.isArray(meta) && meta.length === 0)) return {};
   return meta;
 }
 
-/**
- * documents уже должны быть отсортированы по uploaded_at DESC — Python сортирует
- * их в _person_payload, здесь это делает ORDER BY при выборке.
- */
+/** documents должны быть отсортированы по uploaded_at DESC (ORDER BY при выборке). */
 export function personPayload(
   p: PersonRow,
   opts: { documents?: DocumentRow[]; documentsCount?: number; withCount?: boolean } = {}
@@ -489,13 +480,13 @@ export function personPayload(
   return data;
 }
 
-// ── Эвристический детектор ПДн (services/pii/scan.py) ──────────────────────
-// А8: в ОБЩЕЙ базе знаний не должно быть персональных данных. Детектор
+// Эвристический детектор ПДн
+// А8: в общей базе знаний не должно быть персональных данных. Детектор
 // полностью детерминированный (без LLM) и вызывается при индексации документа
 // и при генерации документа по шаблону.
 //
-// В Python `\b` и `\w` знают кириллицу, в JS — только ASCII, поэтому границу
-// слова и класс слова подставляем явно (тот же приём, что в lib/ml/pipeline.ts).
+// В JS `\b` и `\w` знают только ASCII, поэтому границу слова и класс слова
+// подставляем явно (тот же приём, что в lib/ml/pipeline.ts).
 
 const PII_W = '0-9A-Za-zА-Яа-яЁё_';
 const PII_B = `(?:(?<![${PII_W}])(?=[${PII_W}])|(?<=[${PII_W}])(?![${PII_W}]))`;
@@ -504,8 +495,8 @@ function piiRe(pattern: string, flags = ''): RegExp {
   return new RegExp(pattern.replace(/\\b/g, PII_B).replace(/\\w/g, `[${PII_W}]`), flags);
 }
 
-// Полное ФИО: третье слово — отчество (…вич/…вна/…ична/…ичны). Требование
-// отчества отсекает случайные тройки заглавных слов («Российской Федерации …»).
+// Полное ФИО: третье слово - отчество (...вич/...вна/...ична/...ичны). Требование
+// отчества отсекает случайные тройки заглавных слов ("Российской Федерации ...").
 const FIO_FULL_RE = piiRe(
   '\\b([А-ЯЁ][а-яё]{2,})\\s+([А-ЯЁ][а-яё]{2,})\\s+' +
     '([А-ЯЁ][а-яё]+(?:вич|вна|ична|ичны|оглы|кызы))\\b',
@@ -521,8 +512,8 @@ const PII_ID_MARKERS: [string, RegExp][] = [
   ['личное дело', piiRe('личн\\w+\\s+дел\\w+\\s+№', 'i')],
 ];
 
-// Порог «похоже на список сотрудников»: столько РАЗНЫХ полных ФИО в тексте
-// у нормативного акта не бывает (подписанты — 1–3).
+// Порог "похоже на список сотрудников": столько разных полных ФИО в тексте
+// у нормативного акта не бывает (подписанты - 1-3).
 const FIO_LIST_THRESHOLD = 6;
 
 export interface PiiSignals {
@@ -534,8 +525,8 @@ export interface PiiSignals {
 
 /**
  * Признаки ПДн в тексте или null, если документ чист. Предупреждение
- * срабатывает, если разных полных ФИО ≥ 6 (похоже на список людей) ЛИБО есть
- * полное ФИО И критичный идентификатор (СНИЛС/паспорт/дата рождения…).
+ * срабатывает, если разных полных ФИО >= 6 (похоже на список людей) либо есть
+ * полное ФИО и критичный идентификатор (СНИЛС/паспорт/дата рождения...).
  */
 export function scanPiiSignals(text: string): PiiSignals | null {
   if (!text) return null;
@@ -550,7 +541,7 @@ export function scanPiiSignals(text: string): PiiSignals | null {
   const combo = fios.size > 0 && markers.length > 0;
   if (!listy && !combo) return null;
 
-  // Образцы маскируем: «Иванов И.» — достаточно, чтобы редактор понял, о ком речь.
+  // Образцы маскируем: "Иванов И." - достаточно, чтобы редактор понял, о ком речь.
   const mask = (fio: string) => {
     const parts = fio.split(' ');
     return parts.length > 1 ? `${parts[0]} ${parts[1].slice(0, 1)}.` : parts[0];
@@ -575,9 +566,9 @@ const PII_TEMPLATE_KEYS = new Set([
 ]);
 
 /**
- * Порт detect_pii_document: документ относится к ПДн, если это документ
+ * Документ относится к ПДн, если это документ
  * ПДн-инструмента либо сканер находит ПДн в значениях полей. Такие документы
- * скрыты из «Моих документов» и удаляются по TTL.
+ * скрыты из "Моих документов" и удаляются по TTL.
  */
 export function detectPiiDocument(templateKey: string | null, texts: unknown[]): boolean {
   if (PII_TEMPLATE_KEYS.has(templateKey || '')) return true;
@@ -585,7 +576,7 @@ export function detectPiiDocument(templateKey: string | null, texts: unknown[]):
   return Boolean(joined) && scanPiiSignals(joined) !== null;
 }
 
-// ── Отдача файла ───────────────────────────────────────────────────────────
+// Отдача файла
 
 /** urllib.parse.quote(s) с safe='/'. */
 function pyQuote(s: string): string {
@@ -598,10 +589,10 @@ function pyQuote(s: string): string {
   return out;
 }
 
-/** _content_disposition: ASCII-fallback + RFC 5987 для кириллических имён. */
+/** Content-Disposition: ASCII-fallback + RFC 5987 для кириллических имён. */
 export function contentDisposition(filename: string | null): string {
   const name = filename || 'document';
-  // name.encode("ascii", "ignore") — символы вне ASCII просто выбрасываются.
+  // name.encode("ascii", "ignore") - символы вне ASCII просто выбрасываются.
   const ascii =
     Array.from(name)
       .filter((ch) => (ch.codePointAt(0) ?? 0) < 128)

@@ -2,17 +2,16 @@ import 'server-only';
 import { prisma } from '@/lib/db';
 import { initStemmer, lemma } from './bm25';
 
-// Резолвер «связанных документов» FAQ → реальные скачиваемые файлы (А2/А3).
-// Порт services/rag/blank_forms.py с доработками поверх него:
+// Резолвер "связанных документов" FAQ -> реальные скачиваемые файлы (А2/А3).
 //
-// FAQ-таблицы называют документы свободным текстом («Заявление об увольнении»,
-// «Порядок аттестации…»). Здесь сопоставляем эти названия с реальными
-// шаблонами (doc_templates — бланки заявлений) и документами базы знаний,
-// чтобы бот отдавал кликабельные карточки «Скачать/Открыть», а не текст.
+// FAQ-таблицы называют документы свободным текстом ("Заявление об увольнении",
+// "Порядок аттестации..."). Здесь сопоставляем эти названия с реальными
+// шаблонами (doc_templates - бланки заявлений) и документами базы знаний,
+// чтобы бот отдавал кликабельные карточки "Скачать/Открыть", а не текст.
 //
-// Матчинг — по пересечению значимых ЛЕММ (Jaccard), локально, без LLM; та же
-// морфология, что и в BM25 (Az.js на словарях OpenCorpora), поэтому
-// «командировки» ≈ «командировках», «дети» ≈ «ребёнком». Порог консервативный:
+// Матчинг - по пересечению значимых лемм (Jaccard), локально, без LLM; та же
+// морфология, что и в BM25, поэтому
+// "командировки" ~ "командировках", "дети" ~ "ребёнком". Порог консервативный:
 // лучше не показать карточку, чем подсунуть чужой файл. Ссылка с URL становится
 // карточкой-переходом на страницу сайта, а не ищется среди файлов.
 
@@ -23,11 +22,11 @@ const STOP = new Set([
   'the', 'a', 'of', 'тиу', 'файл', 'приложен', 'приложены', 'шаблон', 'бланк',
   'пример', 'примеры', 'образец', 'образцы', 'скачать',
 ]);
-// Порог совпадения (Jaccard значимых лемм). ≥0.5 отсекает «отпуск≈отпуск» ложняки.
+// Порог совпадения (Jaccard значимых лемм). >=0.5 отсекает "отпуск~отпуск" ложняки.
 const HIT = 0.5;
 
 // Стоп-слова проверяются и по словоформе, и по лемме: список выше составлен
-// в словоформах («примеры»), а токены после нормализации — леммы («пример»).
+// в словоформах ("примеры"), а токены после нормализации - леммы ("пример").
 function tokens(s: string | null | undefined): Set<string> {
   const out = new Set<string>();
   for (const m of String(s || '').matchAll(WORD_RE)) {
@@ -53,9 +52,9 @@ function score(rt: Set<string>, ct: Set<string>): number {
   let jac = inter / union;
   if (inter === rt.size) {
     // Все значимые слова ссылки содержатся в названии кандидата. Для ссылки из
-    // 2+ слов это уверенное совпадение; одному слову («Программа») уверенности
-    // не хватает — раньше правило давало 0.8 и «Программа» превращалась в
-    // «Социальную программу университета» (жалоба HR). Теперь одиночное слово
+    // 2+ слов это уверенное совпадение; одному слову ("Программа") уверенности
+    // не хватает - раньше правило давало 0.8 и "Программа" превращалась в
+    // "Социальную программу университета" (жалоба HR). Теперь одиночное слово
     // получает ровно порог: неоднозначность решают жаккар и приоритет бланков.
     jac = Math.max(jac, rt.size >= 2 ? 0.8 : HIT);
   }
@@ -80,7 +79,7 @@ interface CatalogItem extends RelatedFile {
 const g = globalThis as unknown as { __hrBlankCatalog?: Promise<CatalogItem[]> };
 
 async function load(): Promise<CatalogItem[]> {
-  await initStemmer(); // токены — леммы той же морфологии, что и BM25/FAQ
+  await initStemmer(); // токены - леммы той же морфологии, что и BM25/FAQ
   const [templates, documents] = await Promise.all([
     prisma.doc_templates.findMany({ where: { is_enabled: true }, select: { id: true, title: true } }),
     prisma.kb_documents.findMany({
@@ -128,7 +127,7 @@ function catalog(): Promise<CatalogItem[]> {
   return g.__hrBlankCatalog;
 }
 
-/** Каталог устарел (индексация/удаление документа) — перечитать при след. запросе. */
+/** Каталог устарел (индексация/удаление документа) - перечитать при след. запросе. */
 export function invalidateBlankCatalog(): void {
   g.__hrBlankCatalog = undefined;
 }
@@ -136,9 +135,9 @@ export function invalidateBlankCatalog(): void {
 /** [{title, kind: template|document|link, url, view_url}] для распознанных ссылок. */
 export async function resolveDocRefs(docRefs: string[] | null | undefined): Promise<RelatedFile[]> {
   try {
-    // Морфология обязана быть готова ДО токенизации ссылок: каталог мог быть
+    // Морфология обязана быть готова до токенизации ссылок: каталог мог быть
     // прогрет другим экземпляром модуля (dev-перезагрузка), и тогда load() не
-    // вызовется, а lemma() без инициализации вернёт словоформы — токены ссылок
+    // вызовется, а lemma() без инициализации вернёт словоформы - токены ссылок
     // перестанут совпадать с леммами каталога.
     await initStemmer();
     const items = await catalog();
@@ -148,7 +147,7 @@ export async function resolveDocRefs(docRefs: string[] | null | undefined): Prom
     for (const ref of docRefs || []) {
       const text = String(ref || '');
 
-      // Ссылка с URL — карточка-переход на страницу сайта: искать её среди
+      // Ссылка с URL - карточка-переход на страницу сайта: искать её среди
       // файлов бессмысленно (адрес не совпадёт со словами названия никогда).
       const urlMatch = URL_RE.exec(text);
       if (urlMatch) {
@@ -164,7 +163,7 @@ export async function resolveDocRefs(docRefs: string[] | null | undefined): Prom
         out.push({
           title: label || url.replace(/^https?:\/\//i, ''),
           kind: 'link',
-          url: '', // скачивать нечего — только переход
+          url: '', // скачивать нечего - только переход
           view_url: url,
         });
         continue;
@@ -175,12 +174,12 @@ export async function resolveDocRefs(docRefs: string[] | null | undefined): Prom
       let best: CatalogItem | null = null;
       let bestScore = 0;
       for (const it of items) {
-        // Название документа ИЛИ имя исходного файла — что совпало сильнее.
+        // Название документа или имя исходного файла - что совпало сильнее.
         const sc = Math.max(score(rt, it.toks), it.fileToks ? score(rt, it.fileToks) : 0);
         // При равном счёте: сначала шаблон-бланк, затем более специфичное
-        // название (меньше слов, не покрытых ссылкой): «Программа» должна
-        // выбирать «Программу стажировки», а не длинное «Заявление … по
-        // социальной программе», у которого тот же балл из-за одиночного слова.
+        // название (меньше слов, не покрытых ссылкой): "Программа" должна
+        // выбирать "Программу стажировки", а не длинное "Заявление ... по
+        // социальной программе", у которого тот же балл из-за одиночного слова.
         const better =
           sc > bestScore ||
           (sc === bestScore &&
@@ -205,11 +204,11 @@ export async function resolveDocRefs(docRefs: string[] | null | undefined): Prom
     }
     return out;
   } catch {
-    return []; // резолв не удался — карточки просто не покажем
+    return []; // резолв не удался - карточки просто не покажем
   }
 }
 
-// Служебные слова запроса, не различающие конкретный бланк («дай бланк заявления …»).
+// Служебные слова запроса, не различающие конкретный бланк ("дай бланк заявления ...").
 const GENERIC = new Set([
   'заявление', 'заявления', 'заявлений', 'бланк', 'бланка', 'бланки', 'образец',
   'образца', 'образцы', 'шаблон', 'шаблона', 'форма', 'формы', 'форму', 'документ',
@@ -218,10 +217,78 @@ const GENERIC = new Set([
   'пришлите', 'пришли', 'предоставить', 'предоставьте', 'где', 'взять',
 ]);
 
+// Мини-канонизация родственных лемм: FAQ и запросы говорят "награждение",
+// названия файлов - "награды"; без сведения к общему корню матч не находится.
+const SYN_CANON: Record<string, string> = {
+  'награждение': 'награда',
+  'премирование': 'премия',
+  'увольнение': 'уволить',
+};
+
+function canonSet(src: Iterable<string>): Set<string> {
+  const out = new Set<string>();
+  for (const t of src) out.add(SYN_CANON[t] ?? t);
+  return out;
+}
+
 /**
- * Из карточек-бланков оставляет те, чьи названия содержат ОТЛИЧИТЕЛЬНЫЕ (не
- * служебные) слова запроса. «дай бланк заявления о переносе отпуска» → только
- * «Заявление о переносе отпуска». Нет совпадений — возвращаем все (как было).
+ * Кандидаты-бланки по самому запросу пользователя (а не по doc_refs FAQ).
+ * Нужен, когда просят существующий бланк, на который ни один FAQ-блок не
+ * ссылается ("форма служебной записки на исполнение обязанностей").
+ *
+ * Скоринг двусторонний: значимые слова запроса должны узнаваться в названии
+ * кандидата И покрывать его значимую часть. Возвращает до 3 уверенных
+ * кандидатов (шаблоны-бланки приоритетнее документов).
+ */
+export async function resolveBlankByQuery(query: string): Promise<RelatedFile[]> {
+  try {
+    await initStemmer();
+    const qSig = canonSet([...tokens(query)].filter((t) => !GENERIC.has(t)));
+    if (qSig.size < 1) return [];
+    const items = await catalog();
+
+    const scored: { score: number; it: CatalogItem }[] = [];
+    for (const it of items) {
+      const base = canonSet([...it.toks].filter((t) => !GENERIC.has(t)));
+      const file = it.fileToks ? canonSet([...it.fileToks].filter((t) => !GENERIC.has(t))) : null;
+      let best = 0;
+      for (const ct of [base, file]) {
+        if (!ct?.size) continue;
+        const inter = intersectionSize(qSig, ct);
+        if (!inter) continue;
+        const cover = inter / ct.size; // насколько запрос покрывает название
+        const qCover = inter / qSig.size; // насколько название узнаёт запрос
+        best = Math.max(best, (cover + qCover) / 2);
+      }
+      if (best > 0) scored.push({ score: best, it });
+    }
+    scored.sort(
+      (a, b) =>
+        b.score - a.score ||
+        // При равном счёте бланк-шаблон приоритетнее документа БЗ.
+        (a.it.kind === 'template' ? -1 : 1) - (b.it.kind === 'template' ? -1 : 1)
+    );
+
+    const out: RelatedFile[] = [];
+    const seen = new Set<string>();
+    for (const { score: sc, it } of scored) {
+      if (sc < 0.55) break;
+      const key = it.url || it.view_url;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ title: it.title, kind: it.kind, url: it.url, view_url: it.view_url });
+      if (out.length >= 3) break;
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Из карточек-бланков оставляет те, чьи названия содержат отличительные (не
+ * служебные) слова запроса. "дай бланк заявления о переносе отпуска" -> только
+ * "Заявление о переносе отпуска". Нет совпадений - возвращаем все (как было).
  */
 export function narrowByQuery(query: string, files: RelatedFile[]): RelatedFile[] {
   const qt = new Set([...tokens(query)].filter((t) => !GENERIC.has(t)));

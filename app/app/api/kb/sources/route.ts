@@ -6,7 +6,6 @@ import { internalError, jsonBody, pyBool, pyInt, pyStr } from '@/lib/kb';
 import { indexUrl } from '@/lib/ml/indexer';
 
 // Веб-источники базы знаний: список и добавление.
-// Порт GET/POST /api/kb/sources из backend/routes/kb.py (list_sources, create_source).
 
 export async function GET() {
   const gate = await requireUser();
@@ -14,7 +13,7 @@ export async function GET() {
 
   const items = await prisma.kb_sources.findMany({ orderBy: { id: 'asc' } });
 
-  // Проиндексированный документ для каждого URL (для предпросмотра «что распарсилось»).
+  // Проиндексированный документ для каждого URL (для предпросмотра "что распарсилось").
   const docs = await prisma.kb_documents.findMany({
     where: { source_type: 'web' },
     orderBy: { id: 'desc' },
@@ -37,7 +36,10 @@ export async function GET() {
         priority: s.priority,
         refresh_interval_hours: s.refresh_interval_hours,
         last_crawled_at: isoUtc(s.last_crawled_at),
-        last_status: s.last_status,
+        // Строка для показа: "ok" или "error: <текст>" - как было до разделения
+        // статуса и текста ошибки по колонкам.
+        last_status: s.last_status === 'error' ? `error: ${s.last_error ?? ''}` : s.last_status,
+        last_error: s.last_error,
         document_id: d ? d.id : null,
         doc_status: d ? d.status : null,
         chunks_count: d ? d.chunks_count : 0,
@@ -59,7 +61,8 @@ export async function POST(request: NextRequest) {
   if (!pyBool(name) || !pyBool(url)) return badRequest('name и url обязательны');
 
   const hours = pyInt(pyBool(body.refresh_interval_hours) ? body.refresh_interval_hours : 24);
-  if (hours === null) return internalError(); // int(...) в Python бросил бы исключение
+  if (hours === null) return internalError();
+  if (hours < 1) return badRequest('refresh_interval_hours должен быть положительным');
 
   const target = pyStr(url);
   const src = await prisma.kb_sources.create({
@@ -67,27 +70,22 @@ export async function POST(request: NextRequest) {
       name: pyStr(name),
       url: target,
       refresh_interval_hours: hours,
-      // Значений по умолчанию в схеме нет — повторяем default'ы модели KBSource.
-      is_enabled: true,
-      priority: 2,
     },
   });
 
-  // Начинаем парсинг СРАЗУ (в фоне), не дожидаясь планировщика. Порт
-  // _index_url_background: статус источника обновляется, ошибки не роняют сервис.
+  // Начинаем парсинг сразу (в фоне), не дожидаясь планировщика.
   after(async () => {
-    let status: string;
+    // Итог обхода: статус ok/error и текст ошибки - в отдельных колонках.
+    let result: { last_status: 'ok' | 'error'; last_error: string | null };
     try {
       await indexUrl(target);
-      status = 'ok';
+      result = { last_status: 'ok', last_error: null };
     } catch (e) {
-      status = `error: ${String(e instanceof Error ? e.message : e).slice(0, 200)}`;
+      result = { last_status: 'error', last_error: String(e instanceof Error ? e.message : e) || 'ошибка' };
     }
-    const fresh = await prisma.kb_sources.findUnique({ where: { id: src.id } });
-    if (!fresh) return; // источник успели удалить
     await prisma.kb_sources
-      .update({ where: { id: src.id }, data: { last_crawled_at: new Date(), last_status: status } })
-      .catch(() => undefined); // last_status — VARCHAR(32): длинный текст ошибки не влезет (как и в Python)
+      .update({ where: { id: src.id }, data: { ...result, last_crawled_at: new Date() } })
+      .catch(() => undefined); // источник успели удалить
   });
 
   return NextResponse.json({ success: true, id: src.id, queued: true });

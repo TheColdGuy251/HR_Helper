@@ -3,9 +3,8 @@ import { parsePathId } from '@/lib/kb';
 import { myDocumentView, viewResponse } from '@/lib/file-view';
 
 /**
- * Контекст просмотра документа пользователя («Мои документы») — те же режимы.
- * Порт GET /documents/{doc_id}/view?format=json из backend/routes/pages.py.
- * Про адрес /api/view/… см. комментарий в соседнем kb-document/route.ts.
+ * Контекст просмотра документа пользователя ("Мои документы") - те же режимы.
+ * Про адрес /api/view/... см. комментарий в соседнем kb-document/route.ts.
  */
 
 type Ctx = { params: Promise<{ document_id: string }> };

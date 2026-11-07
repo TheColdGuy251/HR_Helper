@@ -4,11 +4,9 @@ import { fullName, initials, requireAdmin, shortName } from '@/lib/auth';
 import type { CurrentUser } from '@/lib/auth';
 
 // Список пользователей для админки.
-// Порт GET /api/admin/users (backend/routes/admin.py, _user_brief).
 
-// Совпадает с _user_brief из Python — поля и порядок ключей. Копия живёт и в
-// [uid]/route.ts: Next разрешает route.ts экспортировать только обработчики,
-// поэтому вынести общий хелпер отсюда нельзя.
+// Копия живёт и в [uid]/route.ts: Next разрешает route.ts экспортировать
+// только обработчики, поэтому вынести общий хелпер отсюда нельзя.
 function userBrief(u: CurrentUser) {
   return {
     id: u.id,

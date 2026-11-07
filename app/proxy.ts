@@ -2,9 +2,8 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
 // В Next.js 16 файл `middleware.ts` переименован в `proxy.ts`.
-// Сессию ведёт FastAPI-бэкенд (cookie `hr_session`, подписана Starlette
-// SessionMiddleware). Проверить подпись здесь нельзя (секрет знает только
-// бэкенд), поэтому делаем оптимистичную проверку наличия cookie:
+// Здесь только оптимистичная проверка наличия cookie `hr_session`, подпись
+// проверяют сами API-маршруты:
 //  - нет cookie и страница закрытая  -> редирект на /login;
 //  - cookie есть, но протухла        -> API вернёт 401, клиент сам уведёт
 //    пользователя на /login (см. lib/api.ts).
@@ -35,7 +34,7 @@ export async function proxy(request: NextRequest) {
 export const config = {
   // API, ассеты Next и PWA-файлы не трогаем: для fetch редирект на /login
   // вернул бы HTML вместо данных. Все остальные страницы закрыты по умолчанию,
-  // поэтому новый раздел не нужно вносить в списки — он защищён сразу.
+  // поэтому новый раздел не нужно вносить в списки - он защищён сразу.
   matcher: [
     '/((?!api|auth|static|_next/static|_next/image|favicon.ico|sw.js|manifest.webmanifest|images|icons).*)',
   ],

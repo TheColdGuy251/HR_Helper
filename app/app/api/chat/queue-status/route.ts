@@ -2,8 +2,7 @@ import { NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
 import { queueStatus } from '@/lib/ml/llm';
 
-// Снимок очереди ассистента. Порт GET /api/chat/queue-status
-// (backend/routes/chat.py + services/assistant_queue.py: stats()).
+// Снимок очереди ассистента.
 
 export async function GET() {
   const gate = await requireUser();
@@ -12,9 +11,8 @@ export async function GET() {
   const s = await queueStatus();
   return NextResponse.json({
     success: true,
-    // Python называет число выполняющихся генераций `active`, lib/ml/llm.ts —
-    // `running`: приводим к имени Python. Поле `available` (загрузилась ли
-    // модель) в ответ не кладём — у FastAPI его нет.
+    // Число выполняющихся генераций в ответе называется `active` (в lib/ml/llm.ts
+    // - `running`). Поле `available` в ответ не кладём.
     active: s.running,
     waiting: s.waiting,
     max_concurrent: s.max_concurrent,

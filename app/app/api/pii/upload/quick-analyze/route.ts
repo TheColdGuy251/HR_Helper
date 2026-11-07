@@ -12,13 +12,8 @@ import { isoDate, personPayload, piiLog, requirePiiAccess, type PersonPayload } 
 import { recognizePerson } from '@/lib/pii-recognize';
 
 // Быстрая загрузка: разбираем документ, распознаём ФИО + дату рождения и
-// возвращаем «кандидатов» — существующих людей с похожим ФИО. Файл не
+// возвращаем "кандидатов" - существующих людей с похожим ФИО. Файл не
 // сохраняется, фронт отдаст его ещё раз на /upload/commit.
-// Порт POST /api/pii/upload/quick-analyze из backend/routes/pii.py.
-//
-// ВАЖНО: PDF, сканы и старый .doc в Next не разбираются (см. lib/parsers) —
-// такой запрос целиком уходит в FastAPI, который сам распознает и запишет
-// строку в аудит. Решение принимается по расширению, ДО чтения формы в File.
 
 const MAX_BYTES = 30 * 1024 * 1024; // 30 МБ
 const ANALYZABLE_EXT = new Set([
@@ -30,8 +25,6 @@ export async function POST(request: NextRequest) {
   const gate = await requirePiiAccess();
   if ('response' in gate) return gate.response;
 
-  // Тело читаем в буфер: если формат не наш, тот же байт-в-байт запрос уходит
-  // в FastAPI, а второй раз прочитать поток нельзя.
   const raw = await request.arrayBuffer();
   let form: FormData;
   try {
@@ -46,7 +39,7 @@ export async function POST(request: NextRequest) {
     return validationError(['body', 'file'], 'missing', 'Field required', null);
   }
 
-  // Расширение берётся от последней точки в ИМЕНИ КАК ПРИШЛО — как rsplit в Python.
+  // Расширение берётся от последней точки в имени файла как пришло.
   const filename = file.name || '';
   const suffix = filename.includes('.')
     ? `.${filename.slice(filename.lastIndexOf('.') + 1).toLowerCase()}`
@@ -59,7 +52,7 @@ export async function POST(request: NextRequest) {
   const data = Buffer.from(await file.arrayBuffer());
   if (data.length > MAX_BYTES) return badRequest('Файл больше 30 МБ');
 
-  // parse_file работает с путём — кладём во временный файл с тем же расширением.
+  // parse_file работает с путём - кладём во временный файл с тем же расширением.
   const tmp = path.join(tmpdir(), `pii-${randomUUID().replace(/-/g, '')}${suffix}`);
   let text = '';
   try {
@@ -78,7 +71,7 @@ export async function POST(request: NextRequest) {
 
   const recognized = await recognizePerson(text);
 
-  // Кандидаты в БД: ilike без «%» — это точное совпадение без учёта регистра.
+  // Кандидаты в БД: ilike без "%" - это точное совпадение без учёта регистра.
   let candidates: PersonPayload[] = [];
   if (recognized.surname) {
     const rows = await prisma.pii_persons.findMany({
@@ -89,9 +82,9 @@ export async function POST(request: NextRequest) {
           }
         : { surname: { equals: recognized.surname, mode: 'insensitive' } },
       take: 10,
-      include: { _count: { select: { pii_documents: true } } },
+      include: { _count: { select: { documents: true } } },
     });
-    candidates = rows.map((p) => personPayload(p, { documentsCount: p._count.pii_documents }));
+    candidates = rows.map((p) => personPayload(p, { documentsCount: p._count.documents }));
   }
 
   await piiLog(gate.user.id, 'quick_analyze', { extra: { filename } });

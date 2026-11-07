@@ -8,10 +8,10 @@ import { BookOpen, LogOut, Settings, ShieldCheck, User as UserIcon, Users } from
 import { useAuth } from '@/components/auth-context';
 import { NotificationsBell } from '@/components/notifications';
 
-// Шапка приложения в стиле Tyuiu.bot-main: плавающая белая «пилюля».
-// Навигация — разделы HR-помощника (бывший base.html).
+// Шапка приложения: плавающая белая "пилюля" с навигацией по разделам
+// HR-помощника.
 
-// Текстом в шапке — только то, чем пользуются каждый день.
+// Текстом в шапке - только то, чем пользуются каждый день.
 const NAV_LINKS = [
   { href: '/', label: 'Главная', exact: true },
   { href: '/dialogues', label: 'Диалоги', alsoActive: '/chat' },
@@ -19,7 +19,7 @@ const NAV_LINKS = [
   { href: '/news', label: 'Новости' },
 ];
 
-// Остальные разделы — иконками рядом с уведомлениями: заходят туда реже, а
+// Остальные разделы - иконками рядом с уведомлениями: заходят туда реже, а
 // текстом они растягивали навигацию и вытесняли её на мобильных.
 const ICON_LINKS: { href: string; label: string; icon: LucideIcon; adminOnly?: boolean }[] = [
   { href: '/kb', label: 'База знаний', icon: BookOpen },
@@ -27,7 +27,7 @@ const ICON_LINKS: { href: string; label: string; icon: LucideIcon; adminOnly?: b
   { href: '/admin', label: 'Админка', icon: Users, adminOnly: true },
 ];
 
-// ── Аватар по полу (порт loadAvatarIcon из scripts.js) ──────────────────────
+// Аватар по полу
 // Пол приходит из /api/auth/me в разных написаниях, поэтому нормализуем.
 
 const MALE_VALUES = ['мужской', 'м', 'male', 'm'];
@@ -40,7 +40,7 @@ function avatarSrc(sex?: string | null): string {
   return '';
 }
 
-/** Картинка по полу; пол неизвестен или файл не загрузился — показываем инициалы. */
+/** Картинка по полу; пол неизвестен или файл не загрузился - показываем инициалы. */
 export function UserAvatar({
   sex,
   initials,
@@ -53,7 +53,7 @@ export function UserAvatar({
   const src = avatarSrc(sex);
   const [failed, setFailed] = useState(false);
 
-  // Сменился пользователь — снова пробуем загрузить картинку.
+  // Сменился пользователь - снова пробуем загрузить картинку.
   useEffect(() => setFailed(false), [src]);
 
   const showImage = Boolean(src) && !failed;
@@ -85,7 +85,7 @@ function ProfileMenu() {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
 
-  // Закрытие по клику вне и по Esc — как у колокольчика уведомлений.
+  // Закрытие по клику вне и по Esc - как у колокольчика уведомлений.
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
@@ -182,7 +182,7 @@ export function Header() {
 
   return (
     <header className="bg-white mx-4 mt-4 px-6 py-3 rounded-2xl shadow-sm border border-gray-100 flex items-center justify-between gap-4 relative z-[70]">
-      {/* Только логотип — как в легаси (base.html:47-53). Подпись «HR-помощник»
+      {/* Только логотип. Подпись "HR-помощник"
           рядом с ним вела туда же и дублировала его. */}
       <Link
         href="/"
@@ -201,7 +201,7 @@ export function Header() {
         />
       </Link>
 
-      {/* Навигация центрируется по СТРАНИЦЕ, а не по остатку строки: логотип
+      {/* Навигация центрируется по странице, а не по остатку строки: логотип
           слева и блок пользователя справа разной ширины, поэтому при обычном
           justify-between середина уезжает вправо. Абсолютное позиционирование
           с translate ставит её ровно по центру шапки; на узких экранах правило

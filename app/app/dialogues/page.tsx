@@ -13,8 +13,7 @@ import {
 import { apiDelete, apiGet, apiPost, timeAgo } from '@/lib/api';
 import { ErrorCallout, PillTabs, SearchInput, StatusPill } from '@/components/ui';
 
-// «Мои диалоги» — список чат-сессий с ассистентом.
-// Порт static/js/dialogues.js, формы ответов — routes/dialogues.py.
+// "Мои диалоги" - список чат-сессий с ассистентом.
 
 const PAGE_SIZE = 20;
 
@@ -27,13 +26,12 @@ interface LastMessage {
 }
 
 interface DialogueItem {
-  id: number;
+  id: string;
   title: string;
   description: string | null;
   is_finished: boolean;
   created_at: string;
   last_activity: string;
-  session_id: string | null;
   last_message: LastMessage | null;
   unread: boolean;
 }
@@ -56,8 +54,7 @@ interface DialoguesResponse {
 
 interface CreateResponse {
   success: boolean;
-  dialogue_id: number;
-  session_id: string;
+  dialogue_id: string;
   title: string;
 }
 
@@ -75,7 +72,7 @@ export default function DialoguesPage() {
   const [items, setItems] = useState<DialogueItem[]>([]);
   const [stats, setStats] = useState<Stats>({ total: 0, active: 0, finished: 0 });
   const [total, setTotal] = useState(0);
-  const [pages, setPages] = useState(1); // сколько страниц подгружено («Показать ещё»)
+  const [pages, setPages] = useState(1); // сколько страниц подгружено ("Показать ещё")
   const [filter, setFilter] = useState<Filter>('active');
   const [search, setSearch] = useState('');
   const [query, setQuery] = useState(''); // поиск с debounce
@@ -85,7 +82,7 @@ export default function DialoguesPage() {
 
   const reqRef = useRef(0); // отсекаем ответы устаревших запросов
 
-  // Поиск: 250 мс без ввода → новый запрос с первой страницы.
+  // Поиск: 250 мс без ввода -> новый запрос с первой страницы.
   useEffect(() => {
     const t = setTimeout(() => {
       setQuery(search.trim());
@@ -111,8 +108,8 @@ export default function DialoguesPage() {
           })
         );
         if (seq !== reqRef.current) return;
-        // Страницы могли «съехать» между запросами — схлопываем дубли по id.
-        const byId = new Map<number, DialogueItem>();
+        // Страницы могли "съехать" между запросами - схлопываем дубли по id.
+        const byId = new Map<string, DialogueItem>();
         for (const r of responses) for (const it of r.items || []) byId.set(it.id, it);
         setItems([...byId.values()]);
         setStats(responses[0].stats);
@@ -131,7 +128,7 @@ export default function DialoguesPage() {
     void load();
   }, [load]);
 
-  // Push-события (SSE) + редкий фолбэк при видимой вкладке — как в dialogues.js.
+  // Push-события (SSE) + редкий фолбэк при видимой вкладке.
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
     const refresh = () => {
@@ -160,8 +157,8 @@ export default function DialoguesPage() {
     setCreating(true);
     try {
       const data = await apiPost<CreateResponse>('/api/dialogues', {});
-      if (data.session_id) router.push(`/chat/${data.session_id}`);
-      else setError('Сервер не вернул сессию диалога');
+      if (data.dialogue_id) router.push(`/chat/${data.dialogue_id}`);
+      else setError('Сервер не вернул id диалога');
     } catch (e) {
       setError(errMsg(e));
     } finally {
@@ -170,7 +167,7 @@ export default function DialoguesPage() {
   };
 
   const openDialogue = (d: DialogueItem) => {
-    if (d.session_id) router.push(`/chat/${d.session_id}`);
+    router.push(`/chat/${d.id}`);
   };
 
   const toggleFinished = async (d: DialogueItem) => {
@@ -212,7 +209,7 @@ export default function DialoguesPage() {
         </div>
 
         {/* justify-center + w-full: на узких экранах группа переносится на свою строку,
-            и без этого фильтры с кнопкой «прилипали» к левому краю. */}
+            и без этого фильтры с кнопкой "прилипали" к левому краю. */}
         <div className="flex w-full sm:w-auto flex-wrap items-center justify-center gap-3">
           <PillTabs
             tabs={TABS}
@@ -250,7 +247,7 @@ export default function DialoguesPage() {
         </div>
       </div>
 
-      {/* className="w-full": родитель — вертикальный flex, дефолтный flex-1 растянул бы
+      {/* className="w-full": родитель - вертикальный flex, дефолтный flex-1 растянул бы
           поиск по высоте и отбросил список диалогов к низу окна. */}
       <SearchInput
         value={search}
@@ -261,7 +258,7 @@ export default function DialoguesPage() {
 
       {error && <ErrorCallout>{error}</ErrorCallout>}
 
-      {/* Hero — когда диалогов ещё нет */}
+      {/* Hero - когда диалогов ещё нет */}
       {isEmptyOverall ? (
         <section className="flex flex-col items-center text-center gap-4 py-10">
           <h2 className="text-3xl md:text-4xl font-black text-[#0f1c3f] tracking-tight leading-tight">
@@ -292,7 +289,7 @@ export default function DialoguesPage() {
             </p>
           ) : (
             items.map((d) => (
-              // Вся карточка — одна кликабельная область (как в ленте новостей).
+              // Вся карточка - одна кликабельная область (как в ленте новостей).
               <article
                 key={d.id}
                 role="button"
@@ -308,9 +305,7 @@ export default function DialoguesPage() {
                     openDialogue(d);
                   }
                 }}
-                className={`group bg-white border border-gray-100 rounded-2xl p-6 shadow-sm flex flex-col gap-3 hover:shadow-md transition ${
-                  d.session_id ? 'cursor-pointer' : 'cursor-default'
-                }`}
+                className="group bg-white border border-gray-100 rounded-2xl p-6 shadow-sm flex flex-col gap-3 hover:shadow-md transition cursor-pointer"
               >
                 <div className="flex justify-between items-start gap-3">
                   <h2 className="font-bold text-lg text-[#0f1c3f] group-hover:text-[#2563eb] transition flex items-center gap-2 min-w-0">
@@ -346,7 +341,7 @@ export default function DialoguesPage() {
                   </div>
                 )}
 
-                {/* Кнопки внутри кликабельной карточки — гасим всплытие, чтобы не открыть чат. */}
+                {/* Кнопки внутри кликабельной карточки - гасим всплытие, чтобы не открыть чат. */}
                 <div className="flex items-center justify-between pt-2 border-t border-gray-50 mt-1">
                   <button
                     type="button"

@@ -3,21 +3,21 @@ import type { NextRequest } from 'next/server';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { badRequest, notFound, requireUser } from '@/lib/auth';
-import { validationError } from '@/lib/news';
+import { asUuid } from '@/lib/ids';
+import { uuidError, validationError } from '@/lib/news';
 import { collectHistoryBefore, genTextForUserMessage, registerStream, StreamState } from '@/lib/chat';
 import { runGeneration } from '@/lib/chat-generate';
 
-// Правка вопроса пользователя → НОВАЯ ветка диалога.
-// Порт POST /api/chat/edit из backend/routes/chat.py (edit_message).
+// Правка вопроса пользователя -> новая ветка диалога.
 //
-// Создаём новый вариант ВОПРОСА в той же variant_group (прежние гасим), под него
-// — пустую заготовку ответа, и запускаем генерацию в фоне. Клиенту возвращается
+// Создаём новый вариант вопроса в той же variant_group (прежние гасим), под него
+// - пустую заготовку ответа, и запускаем генерацию в фоне. Клиенту возвращается
 // только id ответа: текст он получит, подписавшись на POST /api/chat/stream
 // с assistant_message_id.
 
 export const dynamic = 'force-dynamic';
 
-/** Обязательное строковое поле pydantic-модели. */
+/** Обязательное строковое поле. */
 function requireStr(value: unknown, name: string): { value: string } | { response: NextResponse } {
   if (typeof value === 'string') return { value };
   return {
@@ -28,17 +28,15 @@ function requireStr(value: unknown, name: string): { value: string } | { respons
   };
 }
 
-/** Обязательное целое поле pydantic-модели (lax-режим: "12" тоже число). */
-function requireInt(value: unknown, name: string): { value: number } | { response: NextResponse } {
-  if (typeof value === 'number' && Number.isInteger(value)) return { value };
-  if (typeof value === 'string' && /^\s*[+-]?\d+\s*$/.test(value)) {
-    return { value: Number.parseInt(value.trim(), 10) };
-  }
+/** Обязательный идентификатор (UUID) в теле запроса. */
+function requireId(value: unknown, name: string): { value: string } | { response: NextResponse } {
+  const id = asUuid(value);
+  if (id) return { value: id };
   return {
     response:
       value === undefined
         ? validationError(['body', name], 'missing', 'Field required', null)
-        : validationError(['body', name], 'int_type', 'Input should be a valid integer', value),
+        : uuidError(['body', name], value),
   };
 }
 
@@ -55,37 +53,32 @@ export async function POST(request: NextRequest) {
     return validationError(['body', 0], 'json_invalid', 'JSON decode error', {});
   }
 
-  // Порядок проверок — как поля в EditMessageRequest: pydantic сообщает о них
-  // именно в этой последовательности.
-  const sessionField = requireStr(body.session_id, 'session_id');
-  if ('response' in sessionField) return sessionField.response;
-  const messageField = requireInt(body.message_id, 'message_id');
+  // Порядок проверок совпадает с порядком полей - в нём же возвращаются ошибки.
+  const dialogueField = requireId(body.dialogue_id, 'dialogue_id');
+  if ('response' in dialogueField) return dialogueField.response;
+  const messageField = requireId(body.message_id, 'message_id');
   if ('response' in messageField) return messageField.response;
   const textField = requireStr(body.text, 'text');
   if ('response' in textField) return textField.response;
 
-  const session = await prisma.chat_sessions.findUnique({
-    where: { id: sessionField.value },
-    select: {
-      id: true,
-      dialogues: { select: { id: true, user_id: true, memory_summary: true } },
-    },
+  const dialogue = await prisma.dialogues.findUnique({
+    where: { id: dialogueField.value },
+    select: { id: true, user_id: true, memory_summary: true },
   });
-  if (!session || session.dialogues.user_id !== user.id) return notFound('Сессия не найдена');
-  const dialogue = session.dialogues;
+  if (!dialogue || dialogue.user_id !== user.id) return notFound('Диалог не найден');
 
   const orig = await prisma.chat_messages.findUnique({
     where: { id: messageField.value },
     select: {
       id: true,
-      session_id: true,
+      dialogue_id: true,
       role: true,
       variant_group: true,
       forwarded_meta: true,
       branch_of: true,
     },
   });
-  if (!orig || orig.session_id !== session.id || orig.role !== 'user') {
+  if (!orig || orig.dialogue_id !== dialogue.id || orig.role !== 'user') {
     return notFound('Сообщение не найдено');
   }
 
@@ -93,14 +86,14 @@ export async function POST(request: NextRequest) {
   if (!text) return badRequest('Пустой текст сообщения');
 
   // Бэкфилл для старых сообщений без метаданных вариантов: группу нужно
-  // проставить ДО массового гашения — иначе исходный вопрос под него не попадёт.
+  // проставить до массового гашения - иначе исходный вопрос под него не попадёт.
   const group = orig.variant_group ?? orig.id;
   if (orig.variant_group === null) {
     await prisma.chat_messages.update({ where: { id: orig.id }, data: { variant_group: group } });
   }
 
-  // Новый вариант вопроса активен, прежние — нет. Фильтр по роли сохранён из
-  // Python: гасим только ветку вопросов, ответы живут своими группами.
+  // Новый вариант вопроса активен, прежние - нет. Гасим только ветку вопросов,
+  // ответы живут своими группами.
   await prisma.chat_messages.updateMany({
     where: { variant_group: group, role: 'user' },
     data: { variant_active: false },
@@ -108,16 +101,12 @@ export async function POST(request: NextRequest) {
 
   const newUser = await prisma.chat_messages.create({
     data: {
-      session_id: session.id,
+      dialogue_id: dialogue.id,
       role: 'user',
       content: text,
       is_read: true,
-      is_finished: true,
-      is_cancelled: false,
-      last_seq: 0,
       variant_group: group,
-      variant_active: true,
-      // Пересланный блок и якорь ветки принадлежат вопросу — наследуются вариантом.
+      // Пересланный блок и якорь ветки принадлежат вопросу - наследуются вариантом.
       forwarded_meta: orig.forwarded_meta
         ? (orig.forwarded_meta as unknown as Prisma.InputJsonValue)
         : Prisma.DbNull,
@@ -128,14 +117,9 @@ export async function POST(request: NextRequest) {
 
   const assistantMsg = await prisma.chat_messages.create({
     data: {
-      session_id: session.id,
+      dialogue_id: dialogue.id,
       role: 'assistant',
-      content: '',
-      is_read: false,
       is_finished: false,
-      is_cancelled: false,
-      last_seq: 0,
-      variant_active: true,
       reply_to: newUser.id,
     },
     select: { id: true },
@@ -151,20 +135,20 @@ export async function POST(request: NextRequest) {
     data: { last_activity: new Date() },
   });
 
-  // Контекст — сообщения до ИСХОДНОГО вопроса: новый вариант логически стоит
+  // Контекст - сообщения до исходного вопроса: новый вариант логически стоит
   // на его месте, хотя id у него больше.
-  const history = await collectHistoryBefore(session.id, orig.id);
+  const history = await collectHistoryBefore(dialogue.id, orig.id);
   // Вложения исходного вопроса переиспользуем как контекст.
-  const attached = await prisma.session_documents.findMany({
+  const attached = await prisma.chat_attachments.findMany({
     where: { message_id: orig.id },
     orderBy: { id: 'asc' },
     select: { id: true, filename: true, content: true, stored_path: true },
   });
 
-  // use_rag в EditMessageRequest нет — Python всегда передаёт True.
+  // При правке вопроса RAG всегда включён.
   const gen = genTextForUserMessage(text, orig.forwarded_meta, true);
 
-  const state = new StreamState(session.id, assistantMsg.id);
+  const state = new StreamState(dialogue.id, assistantMsg.id);
   registerStream(state);
   // Ответ уходит клиенту сразу, а генерация продолжается: after() не даёт Next
   // свернуть контекст запроса и убить её до подписки на стрим.

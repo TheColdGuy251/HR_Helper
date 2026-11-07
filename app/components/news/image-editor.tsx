@@ -4,14 +4,13 @@ import { Crop, RefreshCcw, RotateCcw, RotateCw, X } from 'lucide-react';
 import { apiUpload } from '@/lib/api';
 import { PrimaryButton, SecondaryButton } from '@/components/ui';
 
-// Встроенный редактор картинки новости — порт news.js:394-530
-// (ieDraw / loadIntoCanvas / openImageEditor / rotate / stageToCanvas).
-// Поворот ±90°, обрезка выделением мыши, масштаб 10–100 %, сброс.
-// Итог уходит в существующий POST /api/news/upload (поле file), форма запроса та же.
+// Встроенный редактор картинки новости: поворот на 90 градусов, обрезка
+// выделением мыши, масштаб 10-100 %, сброс. Итог уходит в POST /api/news/upload
+// (поле file).
 
-/** Ответ POST /api/news/upload → {success, media}. */
+/** Ответ POST /api/news/upload -> {success, media}. */
 interface UploadedMedia {
-  id: number;
+  id: string;
   name: string;
   size: number;
   is_image: boolean;
@@ -126,7 +125,7 @@ export default function NewsImageEditor({
     return () => document.removeEventListener('keydown', onKey, true);
   }, [onCancel]);
 
-  /** Экранные координаты → пиксели холста (порт stageToCanvas). */
+  /** Экранные координаты -> пиксели холста. */
   const toCanvas = (clientX: number, clientY: number): { x: number; y: number } => {
     const c = canvasRef.current;
     if (!c) return { x: 0, y: 0 };
@@ -164,7 +163,7 @@ export default function NewsImageEditor({
     window.addEventListener('mouseup', stop);
   };
 
-  /** Поворот на 90° через временный холст (порт rotate). */
+  /** Поворот на 90 град. через временный холст. */
   const rotate = (dir: 'l' | 'r') => {
     const c = canvasRef.current;
     if (!c || !ready) return;
@@ -209,7 +208,7 @@ export default function NewsImageEditor({
   const outW = Math.max(1, Math.round(size.w * clamp(scale / 100, 0.1, 1)));
   const outH = Math.max(1, Math.round(size.h * clamp(scale / 100, 0.1, 1)));
 
-  /** Применить: масштабируем, экспортируем PNG, грузим как новое media. */
+  /** Применить: масштабируем, экспортируем PNG, грузим как новое медиа. */
   const apply = async () => {
     const c = canvasRef.current;
     if (!c || !ready || busy) return;
@@ -241,7 +240,7 @@ export default function NewsImageEditor({
     }
   };
 
-  // Рамка выделения — в процентах от холста, поэтому не зависит от масштаба показа.
+  // Рамка выделения - в процентах от холста, поэтому не зависит от масштаба показа.
   const cropStyle: React.CSSProperties | null =
     crop && size.w && size.h
       ? {

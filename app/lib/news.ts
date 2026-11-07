@@ -1,17 +1,16 @@
 import 'server-only';
 import path from 'node:path';
 import { NextResponse } from 'next/server';
+import type { news_media, news_posts, polls } from '@prisma/client';
 import { isoUtc, prisma } from './db';
+import { asUuid } from './ids';
 
-// Общая логика домена «Новости» — порт вспомогательных функций
-// backend/routes/news.py (_post_dict, _preview, _poll_edit_dict, _poll_state,
-// _author_name, _resolve_attachments, _bind_media, _save_poll).
-// Вынесена сюда, потому что её делят между собой пять route-handler'ов.
+// Общая логика домена "Новости": сериализация постов, превью, опросы, автор,
+// вложения. Её делят между собой пять route-handler'ов.
 
-// ── пути к файлам ──────────────────────────────────────────────────────────
-// Файлы новостей лежат там же, где их кладёт FastAPI: backend/docs/news.
-// Иначе старые и новые вложения окажутся в разных каталогах и часть
-// медиа перестанет открываться. process.cwd() в Next — корень app/.
+// Пути к файлам
+// Файлы новостей лежат в backend/docs/news. process.cwd() в Next - корень
+// frontend/.
 
 const BACKEND_DIR = process.env.BACKEND_DIR
   ? path.resolve(process.env.BACKEND_DIR)
@@ -21,18 +20,12 @@ export const DOCS_DIR = path.join(BACKEND_DIR, 'docs');
 export const NEWS_DIR = path.join(DOCS_DIR, 'news');
 
 /**
- * Абсолютный путь к файлу, если он внутри docs_dir (аналог resolve() +
- * relative_to() в Python). Иначе null — наружу отдавать/удалять нельзя.
- * На Windows сравниваем без учёта регистра, как это делает pathlib.
- *
- * В БД пути хранятся относительно docs_dir — так переезд или переименование
- * каталога проекта не ломает ссылки. Абсолютные значения (записи старых
- * версий) тоже принимаются.
+ * Абсолютный путь к файлу, если он внутри docs_dir, иначе null - наружу
+ * отдавать и удалять нельзя. На Windows сравниваем без учёта регистра.
  */
 export function resolveInsideDocs(stored: string): string | null {
   if (!stored) return null;
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(stored)) return null; // URL — не файл
-  const target = path.isAbsolute(stored) ? path.resolve(stored) : path.resolve(DOCS_DIR, stored);
+  const target = path.resolve(stored);
   const root = path.resolve(DOCS_DIR);
   const norm = (s: string) => (process.platform === 'win32' ? s.toLowerCase() : s);
   const a = norm(target);
@@ -41,24 +34,9 @@ export function resolveInsideDocs(stored: string): string | null {
   return a.startsWith(b.endsWith(path.sep) ? b : b + path.sep) ? target : null;
 }
 
-/** Абсолютный fs-путь по хранимому значению (без проверки принадлежности). */
-export function fromDocsPath(stored: string): string {
-  return path.isAbsolute(stored) ? stored : path.resolve(DOCS_DIR, stored);
-}
+// Строковые утилиты
 
-/**
- * Вид пути для записи в БД: относительный к docs_dir. Значение вне docs_dir
- * (в том числе URL или уже относительный путь) возвращается как есть.
- */
-export function toDocsPath(p: string): string {
-  if (!p || !path.isAbsolute(p)) return p;
-  const inside = resolveInsideDocs(p);
-  return inside ? path.relative(path.resolve(DOCS_DIR), inside) : p;
-}
-
-// ── строковые утилиты в стиле pathlib/pydantic ─────────────────────────────
-
-/** Обрезка по кодовым точкам — Python режет строки так же, а не по UTF-16. */
+/** Обрезка по кодовым точкам, а не по UTF-16: суррогатные пары не разрываются. */
 export function cut(s: string, n: number): string {
   const chars = Array.from(s);
   return chars.length <= n ? s : chars.slice(0, n).join('');
@@ -70,7 +48,7 @@ export function baseName(filename: string): string {
   return parts[parts.length - 1] ?? '';
 }
 
-/** Расширение по правилам Path.suffix: у «.gitignore» и «file.» его нет. */
+/** Расширение по правилам Path.suffix: у ".gitignore" и "file." его нет. */
 export function suffixOf(name: string): string {
   const i = name.lastIndexOf('.');
   return i > 0 && i < name.length - 1 ? name.slice(i) : '';
@@ -82,9 +60,9 @@ export function stemOf(name: string): string {
   return suffix ? name.slice(0, name.length - suffix.length) : name;
 }
 
-// ── ошибки в формате FastAPI ───────────────────────────────────────────────
+// Ошибки валидации
 
-/** RequestValidationError FastAPI: 422 со списком detail. */
+/** 422 со списком detail. */
 export function validationError(
   loc: (string | number)[],
   type: string,
@@ -94,30 +72,24 @@ export function validationError(
   return NextResponse.json({ detail: [{ type, loc, msg, input }] }, { status: 422 });
 }
 
-/** Числовой параметр пути: нечисловой сегмент FastAPI отвергает с 422. */
-export function parseIntParam(
-  raw: string,
-  name: string
-): { value: number } | { response: NextResponse } {
-  if (!/^[+-]?\d+$/.test(raw)) {
-    return {
-      response: validationError(
-        ['path', name],
-        'int_parsing',
-        'Input should be a valid integer, unable to parse string as an integer',
-        raw
-      ),
-    };
-  }
-  return { value: Number.parseInt(raw, 10) };
+/** 422 на некорректный UUID для поля типа UUID. */
+export function uuidError(loc: (string | number)[], input: unknown): NextResponse {
+  return validationError(loc, 'uuid_parsing', 'Input should be a valid UUID', input);
 }
 
-// ── типы ответов ───────────────────────────────────────────────────────────
+/** Идентификатор записи в пути (UUID). */
+export function parseIdParam(
+  raw: string,
+  name: string
+): { value: string } | { response: NextResponse } {
+  const id = asUuid(raw);
+  return id ? { value: id } : { response: uuidError(['path', name], raw) };
+}
 
-// Именно type, а не interface: только у псевдонима типа есть неявная
-// индексная сигнатура, без которой массив не подходит под Prisma.InputJsonValue.
+// типы ответов
+
 export type AttachmentDict = {
-  media_id: number;
+  media_id: string;
   name: string;
   size: number;
   is_image: boolean;
@@ -133,10 +105,10 @@ export interface PollDraft {
 }
 
 export interface PostDict {
-  id: number;
+  id: string;
   title: string;
   body_html: string;
-  attachments: unknown[];
+  attachments: AttachmentDict[];
   preview_image: string | null;
   excerpt: string;
   poll: PollDraft | null;
@@ -152,7 +124,7 @@ export interface PollVoterDict {
 }
 
 export interface PollOptionDict {
-  id: number;
+  id: string;
   text: string;
   votes: number;
   mine: boolean;
@@ -160,7 +132,7 @@ export interface PollOptionDict {
 }
 
 export interface PollStateDict {
-  id: number;
+  id: string;
   question: string;
   description: string | null;
   allow_multiple: boolean;
@@ -169,18 +141,9 @@ export interface PollStateDict {
   options: PollOptionDict[];
 }
 
-export interface PostRow {
-  id: number;
-  title: string;
-  body_html: string;
-  attachments: unknown;
-  author_id: number | null;
-  is_pinned: boolean;
-  created_at: Date;
-  updated_at: Date | null;
-}
+export type PostRow = news_posts;
 
-// ── превью ─────────────────────────────────────────────────────────────────
+// превью
 
 const IMG_SRC_RE = /<img[^>]+src="([^"]+)"/i;
 const TAG_RE = /<[^>]+>/g;
@@ -195,7 +158,7 @@ export function preview(bodyHtml: string): [string | null, string] {
   return [img, excerpt];
 }
 
-// ── сборка ответа по посту ─────────────────────────────────────────────────
+// сборка ответа по посту
 
 function fullNameOf(u: { surname: string; name: string; patronymic: string | null }): string {
   return [u.surname, u.name, u.patronymic || ''].filter(Boolean).join(' ').trim();
@@ -207,47 +170,71 @@ function initialsOf(u: { surname: string; name: string }): string {
   return (last + first).toUpperCase();
 }
 
+function attachmentDict(m: news_media): AttachmentDict {
+  return {
+    media_id: m.id,
+    name: m.original_name,
+    size: m.size,
+    is_image: m.is_image,
+    url: `/api/news/media/${m.id}`,
+  };
+}
+
 /**
- * _post_dict для набора постов сразу: авторы и голосования подтягиваются
- * пакетно (в Python на каждый пост шёл отдельный запрос — результат тот же).
+ * Сериализация набора постов сразу: авторы, вложения и голосования
+ * подтягиваются пакетно.
  */
 export async function postDicts(posts: PostRow[]): Promise<PostDict[]> {
   if (!posts.length) return [];
+  const postIds = posts.map((p) => p.id);
 
-  const authorIds = [...new Set(posts.map((p) => p.author_id).filter((v): v is number => !!v))];
-  const authors = authorIds.length
-    ? await prisma.users.findMany({
-        where: { id: { in: authorIds } },
-        select: { id: true, surname: true, name: true, patronymic: true },
-      })
-    : [];
-  const nameById = new Map<number, string>(authors.map((u) => [u.id, fullNameOf(u)]));
+  const authorIds = [...new Set(posts.map((p) => p.author_id).filter((v): v is string => !!v))];
+  const [authors, pollRows, media] = await Promise.all([
+    authorIds.length
+      ? prisma.users.findMany({
+          where: { id: { in: authorIds } },
+          select: { id: true, surname: true, name: true, patronymic: true },
+        })
+      : Promise.resolve([]),
+    prisma.polls.findMany({
+      where: { post_id: { in: postIds } },
+      include: { options: { orderBy: { position: 'asc' } } },
+    }),
+    // Вложения поста - файлы с номером в списке; встроенные в текст - без номера.
+    prisma.news_media.findMany({
+      where: { post_id: { in: postIds }, attachment_order: { not: null } },
+      orderBy: { attachment_order: 'asc' },
+    }),
+  ]);
+  const nameById = new Map<string, string>(authors.map((u) => [u.id, fullNameOf(u)]));
 
-  const polls = await prisma.news_polls.findMany({
-    where: { post_id: { in: posts.map((p) => p.id) } },
-    orderBy: { id: 'asc' },
-    include: { news_poll_options: { orderBy: { position: 'asc' } } },
-  });
-  const pollByPost = new Map<number, PollDraft>();
-  for (const poll of polls) {
-    if (pollByPost.has(poll.post_id)) continue; // как .first() в Python — берём один
+  const pollByPost = new Map<string, PollDraft>();
+  for (const poll of pollRows) {
+    if (!poll.post_id) continue;
     pollByPost.set(poll.post_id, {
       question: poll.question,
       description: poll.description || '',
       allow_multiple: poll.allow_multiple,
       show_voters: poll.show_voters,
-      options: poll.news_poll_options.map((o) => o.text),
+      options: poll.options.map((o) => o.text),
     });
+  }
+
+  const attachmentsByPost = new Map<string, AttachmentDict[]>();
+  for (const m of media) {
+    if (!m.post_id) continue;
+    const list = attachmentsByPost.get(m.post_id);
+    if (list) list.push(attachmentDict(m));
+    else attachmentsByPost.set(m.post_id, [attachmentDict(m)]);
   }
 
   return posts.map((p) => {
     const [previewImage, excerpt] = preview(p.body_html);
-    const attachments = Array.isArray(p.attachments) ? p.attachments : [];
     return {
       id: p.id,
       title: p.title,
       body_html: p.body_html,
-      attachments,
+      attachments: attachmentsByPost.get(p.id) ?? [],
       preview_image: previewImage,
       excerpt,
       poll: pollByPost.get(p.id) ?? null, // для префилла редактора
@@ -264,7 +251,7 @@ export async function postDict(post: PostRow): Promise<PostDict> {
   return dict;
 }
 
-// ── вложения и привязка медиа ──────────────────────────────────────────────
+// вложения и привязка медиа
 
 /**
  * По списку от клиента берём media_id, перепроверяем существование в БД и
@@ -273,64 +260,65 @@ export async function postDict(post: PostRow): Promise<PostDict> {
 export async function resolveAttachments(raw: unknown): Promise<AttachmentDict[]> {
   if (!Array.isArray(raw) || !raw.length) return [];
 
-  const ids: number[] = [];
+  const ids: string[] = [];
   for (const item of raw) {
     if (!item || typeof item !== 'object') continue;
-    const value = (item as Record<string, unknown>).media_id;
-    const id =
-      typeof value === 'number'
-        ? Math.trunc(value)
-        : typeof value === 'string' && /^[+-]?\d+$/.test(value.trim())
-          ? Number.parseInt(value, 10)
-          : 0;
-    if (!id) continue;
-    ids.push(id);
+    const id = asUuid((item as Record<string, unknown>).media_id);
+    if (id && !ids.includes(id)) ids.push(id);
   }
   if (!ids.length) return [];
 
-  const media = await prisma.news_media.findMany({ where: { id: { in: [...new Set(ids)] } } });
+  const media = await prisma.news_media.findMany({ where: { id: { in: ids } } });
   const byId = new Map(media.map((m) => [m.id, m] as const));
-
-  const out: AttachmentDict[] = [];
-  for (const id of ids) {
+  return ids.flatMap((id) => {
     const m = byId.get(id);
-    if (!m) continue;
-    out.push({
-      media_id: m.id,
-      name: m.original_name,
-      size: m.size,
-      is_image: m.is_image,
-      url: `/api/news/media/${m.id}`,
-    });
-  }
-  return out;
-}
-
-/**
- * Привязываем к посту media из вложений и встроенные в текст картинки/документы —
- * чтобы при удалении поста файлы удалились каскадом.
- */
-export async function bindMedia(
-  postId: number,
-  attachments: AttachmentDict[],
-  bodyHtml: string
-): Promise<void> {
-  const ids = new Set<number>();
-  for (const a of attachments) {
-    if (a.media_id) ids.add(a.media_id);
-  }
-  for (const m of (bodyHtml || '').matchAll(/\/api\/news\/media\/(\d+)/g)) {
-    ids.add(Number.parseInt(m[1], 10));
-  }
-  if (!ids.size) return;
-  // post_id: null — привязываем только «ничьи» медиа, как в Python.
-  await prisma.news_media.updateMany({
-    where: { id: { in: [...ids] }, post_id: null },
-    data: { post_id: postId },
+    return m ? [attachmentDict(m)] : [];
   });
 }
 
-// ── голосования ────────────────────────────────────────────────────────────
+const MEDIA_URL_RE = /\/api\/news\/media\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/gi;
+
+/**
+ * Привязываем к посту media из вложений и встроенные в текст картинки/документы -
+ * чтобы при удалении поста файлы удалились каскадом - и заново нумеруем список
+ * вложений поста.
+ */
+export async function bindMedia(
+  postId: string,
+  attachments: AttachmentDict[],
+  bodyHtml: string
+): Promise<void> {
+  const attachIds = attachments.map((a) => a.media_id);
+  const ids = new Set(attachIds);
+  for (const m of (bodyHtml || '').matchAll(MEDIA_URL_RE)) {
+    const id = asUuid(m[1]);
+    if (id) ids.add(id);
+  }
+
+  await prisma.$transaction(async (tx) => {
+    if (ids.size) {
+      // post_id: null - привязываем только "ничьи" медиа.
+      await tx.news_media.updateMany({
+        where: { id: { in: [...ids] }, post_id: null },
+        data: { post_id: postId },
+      });
+    }
+    // Файлы, убранные из вложений, остаются привязанными к посту (могут быть
+    // встроены в текст), но из списка вложений уходят.
+    await tx.news_media.updateMany({
+      where: { post_id: postId, attachment_order: { not: null } },
+      data: { attachment_order: null },
+    });
+    for (const [order, id] of attachIds.entries()) {
+      await tx.news_media.updateMany({
+        where: { id, post_id: postId },
+        data: { attachment_order: order },
+      });
+    }
+  });
+}
+
+// голосования
 
 export interface PollPayload {
   question: string;
@@ -341,17 +329,17 @@ export interface PollPayload {
 }
 
 /**
- * Создаёт/заменяет голосование поста. null или <2 вариантов — удаляет.
+ * Создаёт/заменяет голосование поста. null или <2 вариантов - удаляет.
  * Замена сбрасывает прежние голоса (каскадом).
  */
-export async function savePoll(postId: number, pp: PollPayload | null): Promise<void> {
-  const existing = await prisma.news_polls.findFirst({
+export async function savePoll(postId: string, pp: PollPayload | null): Promise<void> {
+  const existing = await prisma.polls.findUnique({
     where: { post_id: postId },
-    orderBy: { id: 'asc' },
+    include: { options: { orderBy: { position: 'asc' }, select: { text: true } } },
   });
   const opts = (pp?.options ?? []).map((o) => o.trim()).filter((o) => o);
   if (!pp || !pp.question.trim() || opts.length < 2) {
-    if (existing) await prisma.news_polls.delete({ where: { id: existing.id } });
+    if (existing) await prisma.polls.delete({ where: { id: existing.id } });
     return;
   }
 
@@ -360,67 +348,46 @@ export async function savePoll(postId: number, pp: PollPayload | null): Promise<
   const trimmed = opts.slice(0, 12).map((o) => cut(o, 300));
 
   if (existing) {
-    const curOpts = await prisma.news_poll_options.findMany({
-      where: { poll_id: existing.id },
-      orderBy: { position: 'asc' },
-      select: { text: true },
-    });
     const unchanged =
       existing.question === q &&
       existing.description === desc &&
       existing.allow_multiple === pp.allow_multiple &&
       existing.show_voters === pp.show_voters &&
-      curOpts.length === trimmed.length &&
-      curOpts.every((o, i) => o.text === trimmed[i]);
-    if (unchanged) return; // опрос не изменился — сохраняем голоса
-    await prisma.news_polls.delete({ where: { id: existing.id } });
+      existing.options.length === trimmed.length &&
+      existing.options.every((o, i) => o.text === trimmed[i]);
+    if (unchanged) return; // опрос не изменился - сохраняем голоса
+    await prisma.polls.delete({ where: { id: existing.id } });
   }
 
-  const poll = await prisma.news_polls.create({
+  // В новостях голос всегда можно снять повторным кликом, ассистент не голосует.
+  await prisma.polls.create({
     data: {
       post_id: postId,
       question: q,
       description: desc,
       allow_multiple: pp.allow_multiple,
       show_voters: pp.show_voters,
+      allow_change: true,
+      allow_bot: false,
+      options: { create: trimmed.map((text, i) => ({ text, position: i })) },
     },
   });
-  await prisma.news_poll_options.createMany({
-    data: trimmed.map((text, i) => ({ poll_id: poll.id, text, position: i })),
-  });
 }
 
-export interface PollRow {
-  id: number;
-  question: string;
-  description: string | null;
-  allow_multiple: boolean;
-  show_voters: boolean;
-}
+export type PollRow = Pick<polls, 'id' | 'question' | 'description' | 'allow_multiple' | 'show_voters'>;
 
-/** Состояние голосования для конкретного пользователя (_poll_state). */
-export async function pollState(poll: PollRow, userId: number): Promise<PollStateDict> {
-  const options = await prisma.news_poll_options.findMany({
+/** Состояние голосования для конкретного пользователя. */
+export async function pollState(poll: PollRow, userId: string): Promise<PollStateDict> {
+  const options = await prisma.poll_options.findMany({
     where: { poll_id: poll.id },
     orderBy: { position: 'asc' },
+    include: { votes: { orderBy: { created_at: 'asc' }, select: { user_id: true } } },
   });
-  const votes = await prisma.news_poll_votes.findMany({
-    where: { poll_id: poll.id },
-    orderBy: { id: 'asc' },
-  });
-
-  const byOpt = new Map<number, number[]>();
-  for (const v of votes) {
-    const list = byOpt.get(v.option_id);
-    if (list) list.push(v.user_id);
-    else byOpt.set(v.option_id, [v.user_id]);
-  }
-  const mine = new Set(votes.filter((v) => v.user_id === userId).map((v) => v.option_id));
 
   // Имена голосовавших нужны только в открытом опросе.
-  const voterById = new Map<number, PollVoterDict>();
+  const voterById = new Map<string, PollVoterDict>();
   if (poll.show_voters) {
-    const uids = [...new Set(votes.map((v) => v.user_id))];
+    const uids = [...new Set(options.flatMap((o) => o.votes.map((v) => v.user_id)))];
     if (uids.length) {
       const users = await prisma.users.findMany({
         where: { id: { in: uids } },
@@ -438,23 +405,20 @@ export async function pollState(poll: PollRow, userId: number): Promise<PollStat
     description: poll.description,
     allow_multiple: poll.allow_multiple,
     show_voters: poll.show_voters,
-    total_votes: votes.length,
-    options: options.map((o) => {
-      const uids = byOpt.get(o.id) ?? [];
-      return {
-        id: o.id,
-        text: o.text,
-        votes: uids.length,
-        mine: mine.has(o.id),
-        voters: poll.show_voters
-          ? uids.map((uid) => voterById.get(uid)).filter((v): v is PollVoterDict => !!v)
-          : [],
-      };
-    }),
+    total_votes: options.reduce((n, o) => n + o.votes.length, 0),
+    options: options.map((o) => ({
+      id: o.id,
+      text: o.text,
+      votes: o.votes.length,
+      mine: o.votes.some((v) => v.user_id === userId),
+      voters: poll.show_voters
+        ? o.votes.map((v) => voterById.get(v.user_id)).filter((v): v is PollVoterDict => !!v)
+        : [],
+    })),
   };
 }
 
-// ── разбор тела запроса (PostPayload) ──────────────────────────────────────
+// разбор тела запроса (PostPayload)
 
 export interface PostPayload {
   title: string;
@@ -480,7 +444,7 @@ function parsePoll(raw: unknown): PollPayload | null {
   };
 }
 
-/** Значения по умолчанию — как у PostPayload/PollPayload (pydantic). */
+/** Значения по умолчанию для поста и опроса. */
 export function parsePostPayload(raw: unknown): PostPayload {
   const o = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
   return {

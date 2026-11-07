@@ -1,24 +1,20 @@
 import 'server-only';
 import { generateText, isLlmAvailable } from './llm';
 
-// Структурированная генерация JSON (порт LLMClient.generate_json).
+// Структурированная генерация JSON.
 //
-// ОТЛИЧИЕ ОТ PYTHON. Там доступны два режима: жёсткий (GBNF-грамматика) и
-// мягкий (`response_format={"type":"json_object"}`). node-llama-cpp умеет и то,
-// и другое, но наш llm.ts не пробрасывает эти опции в сессию, а переписывать
-// его в рамках переноса нельзя. Поэтому режим здесь один — «попроси JSON и
-// разбери ответ»: схему подсказываем в промпте, а результат достаём
-// брекет-скан­нером и валидируем на стороне вызывающего кода (normalizePlan и
-// т.п.). Для планировщика это тот же путь, что в Python при выключенной
-// грамматике, и он там признан надёжным.
+// Режим один - "попроси JSON и разбери ответ": схему подсказываем в промпте, а
+// результат достаём брекет-сканнером и валидируем на стороне вызывающего кода
+// (normalizePlan и т.п.). GBNF-грамматика и response_format не используются:
+// llm.ts не пробрасывает эти опции в сессию.
 
 const THINK_RE = /<think>[\s\S]*?<\/think>/gi;
 const FENCE_RE = /```(?:json)?/gi;
 
 /**
  * Вырезает первый сбалансированный JSON-объект (или массив) из текста.
- * Модель любит добавлять преамбулу и ```-заборы — плоский `JSON.parse` на них
- * падает, а «первая { … последняя }» ломается на вложенных объектах.
+ * Модель любит добавлять преамбулу и ```-заборы - плоский `JSON.parse` на них
+ * падает, а "первая { ... последняя }" ломается на вложенных объектах.
  */
 export function extractJson(raw: string, open: '{' | '[' = '{'): unknown {
   const close = open === '{' ? '}' : ']';
@@ -53,12 +49,12 @@ export function extractJson(raw: string, open: '{' | '[' = '{'): unknown {
   return null;
 }
 
-// Потолок ответа берём из настроек, как settings.llm_max_tokens в Python.
+// Потолок ответа берём из настроек (LLM_MAX_TOKENS).
 const MAX_TOKENS = Number(process.env.LLM_MAX_TOKENS || 2048);
 
 /**
- * JSON-ответ модели или null. null означает «модель недоступна либо ответила
- * не-JSON» — вызывающий код обязан безопасно деградировать, как в Python при
+ * JSON-ответ модели или null. null означает "модель недоступна либо ответила
+ * не-JSON" - вызывающий код обязан безопасно деградировать при
  * `{"_mock": true}`.
  */
 export async function generateJson(
@@ -66,9 +62,9 @@ export async function generateJson(
   user: string,
   schemaHint: string,
   maxTokens = MAX_TOKENS,
-  userId: number | null = null
+  userId: string | null = null
 ): Promise<Record<string, unknown> | null> {
-  // Без модели llm.ts вернул бы текст-заглушку — не тратим на него разбор.
+  // Без модели llm.ts вернул бы текст-заглушку - не тратим на него разбор.
   if (!(await isLlmAvailable())) return null;
   const raw = await generateText({
     system,
@@ -84,15 +80,14 @@ export async function generateJson(
 }
 
 /**
- * То же самое, но с питоновским контрактом возврата: словарь всегда, а признак
- * «модель не отвечала» — ключ `_mock` (client.py:296). По нему отличают
- * заглушку от настоящего пустого разбора — см. characteristic.py:81.
+ * То же самое, но всегда возвращает объект; признак "модель не отвечала" -
+ * ключ `_mock`. По нему отличают заглушку от настоящего пустого разбора.
  */
 export async function generateJsonOrMock(
   system: string,
   user: string,
   schemaHint: string,
-  userId: number | null = null
+  userId: string | null = null
 ): Promise<Record<string, unknown>> {
   if (!(await isLlmAvailable())) {
     return { _mock: true, _note: 'LLM недоступна, возвращён пустой объект' };

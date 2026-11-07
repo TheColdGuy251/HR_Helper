@@ -16,7 +16,6 @@ import {
 import { previewPdfResponse } from '@/lib/file-preview';
 
 // Отдача файла шаблона.
-// Порт GET /api/kb/templates/{template_id}/download из backend/routes/kb.py.
 
 type Ctx = { params: Promise<{ template_id: string }> };
 
@@ -46,27 +45,26 @@ export async function GET(request: NextRequest, { params }: Ctx) {
         });
   if (!tpl) return notFound('Шаблон не найден');
 
-  // Относительный путь Python достраивает от docs/templates.
+  // Относительный путь достраиваем от docs/templates.
   const src = path.isAbsolute(tpl.file_path)
     ? tpl.file_path
     : path.join(TEMPLATES_DIR, tpl.file_path);
-  // Отсутствие исходника Python ловит как FileNotFoundError (подвид OSError) —
-  // то есть отвечает 403, а не 404. Повторяем.
+  // Отсутствие исходника - 403, а не 404.
   if (!(await isFile(src))) return forbidden('Доступ к файлу запрещён');
 
   const file = resolveInsideDocs(await templateDisplayPath(tpl.id, src));
   if (!file) return forbidden('Доступ к файлу запрещён');
   if (!(await isFile(file))) return notFound('Файл шаблона отсутствует');
 
-  // Шаблоны бывают только .docx/.pdf — превью для них не собирается (как и в
-  // Python) и уйдёт оригинал. Ветка оставлена ради единообразия с документами.
+  // Шаблоны бывают только .docx/.pdf - превью для них не собирается и уйдёт
+  // оригинал. Ветка оставлена ради единообразия с документами.
   const suffix = suffixOf(baseName(file)).toLowerCase();
   if (asFormat === 'pdf') {
     const preview = await previewPdfResponse(file);
     if (preview) return preview;
   }
 
-  // Имя для скачивания — по оригиналу (у превью-файла имя = id).
+  // Имя для скачивания - по оригиналу (у превью-файла имя = id).
   const resp = await fileResponse(file, {
     filename: baseName(tpl.file_path),
     mediaType: TEMPLATE_MIME[suffix] || 'application/octet-stream',

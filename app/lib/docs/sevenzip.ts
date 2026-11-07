@@ -3,8 +3,8 @@ import type { ZipEntry } from './zip';
 
 /**
  * Чтение 7z-архива инструкций (Б7) тем же интерфейсом, что и ZIP.
- * Отдел охраны труда жмёт инструкции 7-Zip'ом — по отзыву УРП от 21.07 их
- * архив «охрана труда.7z» инструмент дедупликации не принимал вовсе.
+ * Отдел охраны труда жмёт инструкции 7-Zip'ом - по отзыву УРП от 21.07 их
+ * архив "охрана труда.7z" инструмент дедупликации не принимал вовсе.
  *
  * Распаковывает 7z-wasm (официальный 7-Zip, собранный в WebAssembly): без
  * внешних бинарей, работает и после `next build`. Имена в 7z всегда UTF-16,
@@ -32,7 +32,7 @@ function sevenZip(): Promise<SevenZipModule> {
   if (!g.__hrSevenZip) {
     g.__hrSevenZip = (async () => {
       const factory = (await import('7z-wasm')).default;
-      // stdout/stderr 7-Zip'а в логи не нужны — вывод листинга большого архива
+      // stdout/stderr 7-Zip'а в логи не нужны - вывод листинга большого архива
       // только замусорит консоль сервера.
       return factory({ print: () => undefined, printErr: () => undefined });
     })().catch((e) => {
@@ -71,7 +71,7 @@ export async function readSevenZipEntries(data: Buffer): Promise<ZipEntry[]> {
 
   mod.FS.writeFile(archive, data);
   mod.FS.mkdir(outDir);
-  // x — распаковка с путями; -y — отвечать «да» (перезапись без вопросов).
+  // x - распаковка с путями; -y - отвечать "да" (перезапись без вопросов).
   mod.callMain(['x', archive, `-o${outDir}`, '-y']);
 
   const entries: ZipEntry[] = [];

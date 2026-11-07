@@ -5,22 +5,14 @@ import type { NextRequest } from 'next/server';
 import PizZip from 'pizzip';
 import { prisma } from '@/lib/db';
 import { badRequest, requireKbEditor } from '@/lib/auth';
-import { DOCS_DIR, baseName, stemOf, suffixOf, toDocsPath, validationError } from '@/lib/news';
+import { DOCS_DIR, baseName, stemOf, suffixOf, validationError } from '@/lib/news';
 import { indexPendingFile } from '@/lib/ml/indexer';
 
-// Импорт документов из файловой выгрузки 1С (ZIP-архив).
-// Порт POST /api/kb/import/1c из backend/routes/kb.py (import_1c_documents).
-//
-// ФОРМАТЫ, КОТОРЫЕ NEXT НЕ РАЗБИРАЕТ (pdf, doc, xls, odt, ods, ppt, odp), из
-// архива всё равно сохраняются и заводятся pending-записью — как в Python.
-// Отдельный файл при загрузке через /api/kb/upload проксируется в FastAPI, но
-// для архива такой путь невозможен: пришлось бы делить один ZIP на два
-// бэкенда и сводить счётчики. Поэтому такие документы индексатор честно
-// переведёт в failed с причиной («PDF разбирает PyMuPDF…»), а счётчики
-// queued/skipped/ids останутся один-в-один с Python: skipped считает только
-// чужой формат, превышение размера и битые элементы архива.
+// Импорт документов из файловой выгрузки 1С (ZIP-архив). Файлы сохраняются и
+// заводятся pending-записью, дальше их забирает индексатор. skipped считает
+// только чужой формат, превышение размера и битые элементы архива.
 
-/** settings.docs_local — туда же кладёт файлы FastAPI. */
+/** Каталог локальных документов базы знаний. */
 const DOCS_LOCAL = path.join(DOCS_DIR, 'local');
 
 const KB_IMPORT_EXT = new Set([
@@ -39,7 +31,7 @@ async function exists(p: string): Promise<boolean> {
   }
 }
 
-/** Не перезатираем уже существующий файл с тем же именем (порт _unique_path). */
+/** Не перезатираем уже существующий файл с тем же именем. */
 async function uniquePath(dir: string, filename: string): Promise<string> {
   const base = stemOf(filename);
   const ext = suffixOf(filename);
@@ -86,11 +78,11 @@ export async function POST(request: NextRequest) {
 
   await mkdir(DOCS_LOCAL, { recursive: true });
 
-  const queued: number[] = [];
-  const jobs: [number, string][] = [];
+  const queued: string[] = [];
+  const jobs: [string, string][] = [];
   let skipped = 0;
 
-  // Порядок ключей PizZip — порядок записей в архиве, как у zf.infolist().
+  // Порядок ключей PizZip - порядок записей в архиве, как у zf.infolist().
   for (const info of Object.values(zip.files)) {
     if (info.dir) continue;
     if (queued.length >= KB_IMPORT_MAX_FILES) break;
@@ -120,24 +112,20 @@ export async function POST(request: NextRequest) {
     }
 
     const target = await uniquePath(DOCS_LOCAL, fname);
-    let docId: number;
+    let docId: string;
     try {
       await writeFile(target, content);
       const doc = await prisma.kb_documents.create({
         data: {
           title: baseName(target),
           source_type: 'local',
-          source_uri: toDocsPath(target),
+          source_uri: target,
           status: 'pending',
-          // Значения по умолчанию из модели SQLAlchemy (в схеме Prisma их нет).
-          priority: 2,
-          is_archived: false,
-          chunks_count: 0,
         },
       });
       docId = doc.id;
     } catch {
-      // «1С-импорт: пропуск {fname}» — файл не записался или запись не создалась
+      // "1С-импорт: пропуск {fname}" - файл не записался или запись не создалась
       skipped += 1;
       continue;
     }
@@ -146,7 +134,6 @@ export async function POST(request: NextRequest) {
     jobs.push([docId, target]);
   }
 
-  // В Python задания уходят в пул из ОДНОГО воркера; здесь очередь не нужна —
   // indexPendingFile сериализуется внутренним withIndexLock. after() продлевает
   // жизнь запроса, иначе Next свернёт контекст сразу после ответа.
   after(async () => {

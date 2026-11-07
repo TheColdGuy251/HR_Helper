@@ -2,18 +2,15 @@ import 'server-only';
 import path from 'node:path';
 import { existsSync } from 'node:fs';
 
-// Локальная LLM (GGUF) через node-llama-cpp. Порт services/llm/client.py
-// и services/assistant_queue.py.
+// Локальная LLM (GGUF) через node-llama-cpp.
 //
-// Важное отличие от Python: llama-cpp-python не потокобезопасен, поэтому там
-// все генерации сериализованы одним локом. node-llama-cpp умеет несколько
-// независимых последовательностей в одном контексте и считает их параллельно
-// в общем батче — поэтому здесь работает пул на LLM_MAX_CONCURRENT слотов,
-// а не «один запрос за раз».
+// node-llama-cpp умеет несколько независимых последовательностей в одном
+// контексте и считает их параллельно в общем батче, поэтому генерации идут
+// через пул на LLM_MAX_CONCURRENT слотов, а не "один запрос за раз".
 //
 // Сверх лимита запросы ждут в очереди и получают свою позицию (её показывает
 // интерфейс чата). Очередь ограничена по длине и по числу запросов от одного
-// пользователя — как в assistant_queue.py.
+// пользователя.
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
@@ -40,14 +37,23 @@ const MAX_WAITING = Math.max(1, Number(process.env.ASSISTANT_QUEUE_MAXSIZE || 50
 /** Сколько запросов одного пользователя могут ждать одновременно (анти-флуд). */
 const MAX_PER_USER = Math.max(1, Number(process.env.ASSISTANT_MAX_PER_USER || 3));
 
-// Слои модели на видеокарте. В node-llama-cpp значение 'max' означает «все»;
-// число -1 из конфигурации Python здесь не работает и оставит модель на CPU.
+// Слои модели на видеокарте. В node-llama-cpp значение 'max' означает "все";
+// число -1 здесь не работает и оставит модель на CPU.
 function gpuLayersSetting(): 'max' | 'auto' | number {
   const raw = process.env.LLM_N_GPU_LAYERS ?? 'max';
   if (raw === 'max' || raw === 'auto') return raw;
   const n = Number(raw);
   if (!Number.isFinite(n)) return 'max';
   return n < 0 ? 'max' : n;
+}
+
+// Сколько видеопамяти оставить свободной при расчёте 'auto' (слои) и
+// {max: N} (контекст). По умолчанию node-llama-cpp оставляет лишь 6% - на 4 ГБ
+// это ~250 МБ, и первая же генерация роняет процесс "ggml-cuda.cu:106: CUDA
+// error". Не задано - поведение node-llama-cpp по умолчанию.
+function vramPaddingSetting(): number | undefined {
+  const mb = Number(process.env.LLM_VRAM_PADDING_MB);
+  return Number.isFinite(mb) && mb > 0 ? mb * 1024 * 1024 : undefined;
 }
 
 export class QueueRejected extends Error {
@@ -84,7 +90,7 @@ interface Engine {
 
 const g = globalThis as unknown as {
   __hrLlm?: Promise<Engine | null>;
-  __hrLlmWaiters?: { userId: number | null; resolve: (slot: Slot) => void }[];
+  __hrLlmWaiters?: { userId: string | null; resolve: (slot: Slot) => void }[];
   __hrLlmWarmup?: Promise<void>;
 };
 
@@ -103,17 +109,19 @@ async function getEngine(): Promise<Engine | null> {
       try {
         const { getLlama, LlamaChatSession } = await import('node-llama-cpp');
         const backend = process.env.LLM_GPU_BACKEND;
-        const llama = await getLlama(
-          backend ? { gpu: backend === 'false' ? false : (backend as 'cuda' | 'vulkan') } : {}
-        );
+        const vramPadding = vramPaddingSetting();
+        const llama = await getLlama({
+          ...(backend ? { gpu: backend === 'false' ? false : (backend as 'cuda' | 'vulkan') } : {}),
+          ...(vramPadding ? { vramPadding } : {}),
+        });
         const model = await llama.loadModel({ modelPath, gpuLayers: gpuLayersSetting() });
 
         // Один контекст с несколькими последовательностями: они считаются
         // параллельно, но делят общий объём KV-кэша.
         //
         // Размер задаём как верхнюю границу, а не жёстко: при полной выгрузке
-        // слоёв на видеокарту KV-кэш на 16k × несколько слотов уже не помещается
-        // в 12 ГБ вместе с весами, и загрузка падает с «CUDA out of memory».
+        // слоёв на видеокарту KV-кэш на 16k x несколько слотов уже не помещается
+        // в 12 ГБ вместе с весами, и загрузка падает с "CUDA out of memory".
         // node-llama-cpp сам уменьшит окно до того, что реально влезает.
         const context = await model.createContext({
           contextSize: { max: N_CTX },
@@ -147,7 +155,7 @@ async function getEngine(): Promise<Engine | null> {
           },
         };
       } catch {
-        return null; // не собралось/модель не открылась — уходим в заглушку
+        return null; // не собралось/модель не открылась - уходим в заглушку
       }
     })();
   }
@@ -157,14 +165,14 @@ async function getEngine(): Promise<Engine | null> {
 /**
  * Прогрев LLM: загрузка движка, контекста и одна генерация в 1 токен.
  *
- * ПОРЯДОК ЗАГРУЗКИ КРИТИЧЕН. Если onnxruntime (эмбеддер Transformers.js)
+ * Порядок загрузки критичен. Если onnxruntime
  * оказывается в процессе раньше llama.cpp, первая же CUDA-генерация роняет
- * весь процесс: «ggml-cuda.cu:106: CUDA error» — конфликт рантаймов в одном
+ * весь процесс: "ggml-cuda.cu:106: CUDA error" - конфликт рантаймов в одном
  * процессе (воспроизведён на драйвере NVIDIA 591.86 / CUDA 13.1; обратный
- * порядок стабилен, включая генерации ПОСЛЕ загрузки onnxruntime).
+ * порядок стабилен, включая генерации после загрузки onnxruntime).
  *
  * Прогрев запускает instrumentation.ts на старте сервера, а эмбеддер
- * (lib/ml/embeddings.ts) дополнительно ждёт его перед своей инициализацией —
+ * (lib/ml/embeddings.ts) дополнительно ждёт его перед своей инициализацией -
  * это закрывает и dev-режим, и случаи, когда instrumentation не успел.
  * Бонус: первый ответ ассистента больше не платит ~10 секунд за загрузку.
  */
@@ -173,7 +181,7 @@ export function warmupLlm(): Promise<void> {
     g.__hrLlmWarmup = (async () => {
       try {
         const engine = await getEngine();
-        if (!engine) return; // LLM выключена или модель не нашлась — нечего греть
+        if (!engine) return; // LLM выключена или модель не нашлась - нечего греть
         const slot = engine.slots.find((s) => !s.busy);
         if (!slot) return;
         slot.busy = true;
@@ -184,14 +192,14 @@ export function warmupLlm(): Promise<void> {
           slot.busy = false;
         }
       } catch {
-        /* прогрев не удался — чат ответит заглушкой, эмбеддер работает дальше */
+        /* прогрев не удался - чат ответит заглушкой, эмбеддер работает дальше */
       }
     })();
   }
   return g.__hrLlmWarmup;
 }
 
-/** Текущее состояние очереди — отдаётся эндпоинтом статуса. */
+/** Текущее состояние очереди - отдаётся эндпоинтом статуса. */
 export async function queueStatus() {
   const engine = await getEngine();
   const running = engine ? engine.slots.filter((s) => s.busy).length : 0;
@@ -206,12 +214,12 @@ export async function queueStatus() {
 }
 
 /**
- * Занимает свободный слот. Если свободных нет — встаёт в очередь и сообщает
+ * Занимает свободный слот. Если свободных нет - встаёт в очередь и сообщает
  * свою позицию через onPosition, пока ждёт.
  */
 async function acquireSlot(
   engine: Engine,
-  userId: number | null,
+  userId: string | null,
   onPosition?: (position: number, total: number) => void
 ): Promise<Slot> {
   const free = engine.slots.find((s) => !s.busy);
@@ -266,7 +274,7 @@ export function isLlmAvailable(): Promise<boolean> {
 
 /**
  * Потоковая генерация: асинхронный итератор кусков текста, готовый к отдаче в SSE.
- * Пока запрос ждёт слот, вызывается onPosition — интерфейс показывает очередь.
+ * Пока запрос ждёт слот, вызывается onPosition - интерфейс показывает очередь.
  */
 export async function* chatStream({
   system,
@@ -284,7 +292,7 @@ export async function* chatStream({
   temperature?: number;
   maxTokens?: number;
   signal?: AbortSignal;
-  userId?: number | null;
+  userId?: string | null;
   onPosition?: (position: number, total: number) => void;
 }): AsyncGenerator<string> {
   const engine = await getEngine();
@@ -338,7 +346,7 @@ export async function* chatStream({
     while (queue.length) yield queue.shift() as string;
     if (failure) yield `\n[Ошибка генерации: ${(failure as Error).message}]`;
   } finally {
-    // Потребитель мог прерваться (закрыл вкладку) — дожидаемся завершения
+    // Потребитель мог прерваться (закрыл вкладку) - дожидаемся завершения
     // генерации, иначе слот останется занятым навсегда.
     await run.catch(() => undefined);
   }
@@ -358,7 +366,7 @@ export async function generateText({
   history?: ChatMessage[];
   temperature?: number;
   maxTokens?: number;
-  userId?: number | null;
+  userId?: string | null;
 }): Promise<string> {
   const parts: string[] = [];
   for await (const chunk of chatStream({

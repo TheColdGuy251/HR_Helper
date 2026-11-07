@@ -1,25 +1,18 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { prisma } from '@/lib/db';
+import { isoUtc, prisma } from '@/lib/db';
 import { requireUser } from '@/lib/auth';
-import { isOnline, isoUtcTz, lastSeenOf } from '@/lib/events';
-import { requiredIntQuery } from '@/lib/messenger';
+import { isOnline, lastSeenOf } from '@/lib/events';
+import { requiredIdQuery } from '@/lib/messenger';
 
 // Онлайн-статус собеседника.
-// Порт GET /api/messenger/presence из backend/routes/messenger.py.
 //
-// «Онлайн» — есть ли у пользователя открытый SSE-поток (lib/events), ровно как
-// в Python (notify.is_online).
+// "Онлайн" - есть ли у пользователя открытый SSE-поток (lib/events).
 //
-// ОТЛИЧИЕ ОТ PYTHON: момент «был(а) в сети» Python берёт ТОЛЬКО из памяти
-// процесса, поэтому после перезапуска сервера он пропадает («не в сети» без
-// даты). Здесь память — приоритетный источник, а если её нет (перезапуск,
-// пользователь ещё ни разу не подключался в этом процессе), берём последнюю
-// активность из БД: позднейшее из «отправил сообщение» и «отметил прочтение».
-async function lastSeenFromDb(peerId: number): Promise<Date | null> {
-  // id вне int4 в БД не существует — Prisma на таком значении бросила бы ошибку,
-  // а Python просто отдал бы «нет данных».
-  if (!Number.isInteger(peerId) || peerId < -2147483648 || peerId > 2147483647) return null;
+// Момент "был(а) в сети" берём из памяти процесса, а если её нет (перезапуск,
+// пользователь ещё ни разу не подключался в этом процессе) - последнюю
+// активность из БД: позднейшее из "отправил сообщение" и "отметил прочтение".
+async function lastSeenFromDb(peerId: string): Promise<Date | null> {
   const [message, read] = await Promise.all([
     prisma.user_messages.aggregate({
       where: { sender_id: peerId },
@@ -41,12 +34,12 @@ export async function GET(request: NextRequest) {
   const gate = await requireUser();
   if ('response' in gate) return gate.response;
 
-  const peer = requiredIntQuery(request.nextUrl.searchParams.get('peer_id'), 'peer_id');
+  const peer = requiredIdQuery(request.nextUrl.searchParams.get('peer_id'), 'peer_id');
   if ('response' in peer) return peer.response;
   const peerId = peer.value;
 
   const online = isOnline(peerId);
   const lastSeen = lastSeenOf(peerId) ?? (await lastSeenFromDb(peerId));
 
-  return NextResponse.json({ online, last_seen: isoUtcTz(lastSeen) });
+  return NextResponse.json({ online, last_seen: isoUtc(lastSeen) });
 }

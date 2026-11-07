@@ -1,18 +1,13 @@
 import 'server-only';
 
 /**
- * Минимальный безопасный markdown → HTML для страницы просмотра документов.
- * Порт backend/utils/markdown.py (md_to_html) — построчно, включая порядок
- * инлайновых замен: от него зависит, что получится из вложенной разметки.
+ * Минимальный безопасный markdown -> HTML для страницы просмотра документов.
  *
- * Почему не переиспользуется formatMessageContent из lib/msgfmt.ts: тот —
- * порт static/js/message_format.js для ОТВЕТОВ БОТА (перенумерация цитат,
- * блок «Источники», карточки документов, свои CSS-классы). Здесь нужен другой
- * контракт: чистый HTML без служебной разметки чата, ровно тот, что уже сейчас
- * отдаёт Python для режимов markdown и web-документов.
+ * formatMessageContent из lib/msgfmt.ts не подходит: он рассчитан на пузыри
+ * чата, а здесь нужен чистый HTML без служебной разметки чата.
  */
 
-/** html.escape(s, quote=True) — апостроф Python кодирует как &#x27;, не &#39;. */
+/** Экранирование HTML; апостроф кодируется как &#x27;. */
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, '&amp;')
@@ -22,7 +17,7 @@ function escapeHtml(s: string): string {
     .replace(/'/g, '&#x27;');
 }
 
-/** _inline: строка УЖЕ экранирована, применяем инлайновые преобразования. */
+/** _inline: строка уже экранирована, применяем инлайновые преобразования. */
 function inline(s: string): string {
   let out = s.replace(/`([^`]+?)`/g, '<code>$1</code>');
   out = out.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
@@ -86,8 +81,8 @@ export function mdToHtml(text: string | null | undefined): string {
       i += 1;
       continue;
     }
-    // Списки: маркированный и нумерованный собираются в ОДИН блок — тег
-    // выбирается по первой строке, как в Python.
+    // Списки: маркированный и нумерованный собираются в один блок - тег
+    // выбирается по первой строке.
     if (/^[-*+]\s+/.test(stripped) || /^\d+[.)]\s+/.test(stripped)) {
       flushPara();
       const ordered = /^\d+[.)]\s+/.test(stripped);
@@ -112,7 +107,7 @@ export function mdToHtml(text: string | null | undefined): string {
     i += 1;
   }
 
-  // Незакрытый ``` — код всё равно отдаём (иначе потеряли бы хвост документа).
+  // Незакрытый ``` - код всё равно отдаём (иначе потеряли бы хвост документа).
   if (inCode) out.push('<pre><code>' + escapeHtml(codeBuf.join('\n')) + '</code></pre>');
   flushPara();
   return out.join('\n');

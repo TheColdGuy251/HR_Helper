@@ -13,8 +13,7 @@ import {
 } from '@/lib/docs/common';
 import { createVacancy } from '@/lib/docs/vacancy';
 
-// Б6: должностная инструкция → текст вакансии для job-сайтов.
-// Порт POST /api/documents/vacancy/generate из backend/routes/documents.py.
+// Б6: должностная инструкция -> текст вакансии для job-сайтов.
 //
 // Файл не сохраняется в базе знаний.
 

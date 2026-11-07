@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { badRequest, notFound } from '@/lib/auth';
 import { isoUtc, prisma } from '@/lib/db';
+import { asUuid } from '@/lib/ids';
 import {
   BAD_DATE,
   normalizeFio,
@@ -15,12 +16,11 @@ import {
 
 // Окончательная загрузка после quick-analyze: документ либо привязывается к
 // существующей карточке (person_id), либо к новой, созданной по ФИО из формы.
-// Порт POST /api/pii/upload/commit из backend/routes/pii.py (upload_commit).
 
 const ALLOWED_EXT = new Set(['.pdf', '.docx', '.doc', '.txt', '.md', '.jpg', '.jpeg', '.png']);
 const MAX_BYTES = 30 * 1024 * 1024; // 30 МБ
 
-/** `str | None = Form(default=None)`: отсутствующее поле — None. */
+/** Необязательное поле формы: отсутствующее - null. */
 function formStr(value: FormDataEntryValue | null): string | null {
   return typeof value === 'string' ? value : null;
 }
@@ -38,25 +38,25 @@ export async function POST(request: NextRequest) {
     ]);
   }
 
-  // FastAPI проверяет все поля формы разом, до тела обработчика, и отдаёт
-  // список ошибок в порядке объявления параметров: сначала file, затем person_id.
+  // Поля формы проверяются разом, до основной работы; ошибки возвращаются
+  // списком в порядке объявления: сначала file, затем person_id.
   const errors: PydanticError[] = [];
   const file = form.get('file');
   if (!(file instanceof File)) {
     errors.push({ type: 'missing', loc: ['body', 'file'], msg: 'Field required', input: null });
   }
-  let personId: number | null = null;
+  let personId: string | null = null;
   const personIdRaw = formStr(form.get('person_id'));
-  if (personIdRaw !== null) {
-    if (!/^\s*[+-]?\d+\s*$/.test(personIdRaw)) {
+  // Пустое поле формы - то же, что его отсутствие (карточка создаётся по ФИО).
+  if (personIdRaw !== null && personIdRaw.trim() !== '') {
+    personId = asUuid(personIdRaw);
+    if (personId === null) {
       errors.push({
-        type: 'int_parsing',
+        type: 'uuid_parsing',
         loc: ['body', 'person_id'],
-        msg: 'Input should be a valid integer, unable to parse string as an integer',
+        msg: 'Input should be a valid UUID',
         input: personIdRaw,
       });
-    } else {
-      personId = Number.parseInt(personIdRaw, 10);
     }
   }
   if (errors.length || !(file instanceof File)) return pydanticErrors(errors);
@@ -67,7 +67,7 @@ export async function POST(request: NextRequest) {
   const birthDate = formStr(form.get('birth_date'));
   const note = formStr(form.get('note'));
 
-  // Расширение берётся от последней точки в ИМЕНИ КАК ПРИШЛО — как rsplit в Python.
+  // Расширение берётся от последней точки в имени файла как пришло.
   const filename = file.name || '';
   const suffix = filename.includes('.')
     ? `.${filename.slice(filename.lastIndexOf('.') + 1).toLowerCase()}`
@@ -77,14 +77,13 @@ export async function POST(request: NextRequest) {
   const data = Buffer.from(await file.arrayBuffer());
   if (data.length > MAX_BYTES) return badRequest('Файл больше 30 МБ');
 
-  let person: { id: number };
+  let person: { id: string };
   if (personId) {
-    // `if person_id:` в Python — 0 уходит в ветку создания, а не в поиск.
     const found = await prisma.pii_persons.findUnique({ where: { id: personId } });
     if (!found) return notFound('Сотрудник не найден');
     person = found;
   } else {
-    // Проверяется сырое значение: ФИО из одних пробелов Python тоже пропускает.
+  // Проверяется сырое значение: ФИО из одних пробелов проходит.
     if (!(surname && name)) {
       return badRequest('Не указан person_id и нет ФИО для создания группы');
     }

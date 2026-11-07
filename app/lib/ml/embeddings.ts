@@ -2,12 +2,9 @@ import 'server-only';
 import path from 'node:path';
 import type { FeatureExtractionPipeline } from '@huggingface/transformers';
 
-// Эмбеддер: та же ONNX-модель, что использует Python (FastEmbed берёт сборки
-// xenova — автора Transformers.js), поэтому векторы совпадают по направлению
-// и уже проиндексированная коллекция Qdrant остаётся валидной.
-//
-// Разница только в длине вектора: Python отдаёт ненормированный, здесь —
-// единичный. Для метрики Cosine это безразлично, Qdrant нормирует сам.
+// Эмбеддер: ONNX-сборка модели от xenova - те же веса, которыми проиндексирована
+// коллекция Qdrant, поэтому векторы совместимы. Векторы нормируются до единичной
+// длины; для метрики Cosine это безразлично, Qdrant нормирует сам.
 
 const MODEL_ID = 'xenova/paraphrase-multilingual-mpnet-base-v2';
 
@@ -19,14 +16,14 @@ function modelsDir(): string {
 
 type Extractor = FeatureExtractionPipeline;
 
-// Устройство эмбеддера. По умолчанию CPU — как FastEmbed в Python, и по той же
-// причине: видеопамять целиком нужна llama.cpp. Если onnxruntime успевает
+// Устройство эмбеддера. По умолчанию CPU: видеопамять целиком нужна
+// llama.cpp. Если onnxruntime успевает
 // захватить CUDA раньше загрузки модели, та падает с CUDA error и роняет
-// процесс. Переопределяется через EMBEDDINGS_DEVICE (например, 'cuda') — но
+// процесс. Переопределяется через EMBEDDINGS_DEVICE (например, 'cuda') - но
 // тогда следите за объёмом VRAM и уменьшайте LLM_N_GPU_LAYERS.
 const DEVICE = (process.env.EMBEDDINGS_DEVICE || 'cpu') as 'cpu' | 'cuda' | 'auto';
 
-// Загрузка модели занимает секунды и сотни мегабайт — держим один экземпляр на
+// Загрузка модели занимает секунды и сотни мегабайт - держим один экземпляр на
 // процесс. globalThis нужен из-за hot-reload в dev: иначе модель грузилась бы
 // заново при каждом изменении файла.
 const g = globalThis as unknown as { __hrEmbedder?: Promise<Extractor> };
@@ -34,9 +31,9 @@ const g = globalThis as unknown as { __hrEmbedder?: Promise<Extractor> };
 async function getExtractor(): Promise<Extractor> {
   if (!g.__hrEmbedder) {
     g.__hrEmbedder = (async () => {
-      // ПОРЯДОК ВАЖЕН: llama.cpp (CUDA) должен инициализироваться и сделать
-      // первую генерацию ДО загрузки onnxruntime, иначе процесс падает с
-      // «ggml-cuda.cu:106: CUDA error» — подробности в warmupLlm().
+      // Порядок важен: llama.cpp (CUDA) должен инициализироваться и сделать
+      // первую генерацию до загрузки onnxruntime, иначе процесс падает с
+      // "ggml-cuda.cu:106: CUDA error" - подробности в warmupLlm().
       const { warmupLlm } = await import('./llm');
       await warmupLlm();
       const { env, pipeline } = await import('@huggingface/transformers');

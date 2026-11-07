@@ -1,25 +1,21 @@
 import 'server-only';
 import crypto from 'node:crypto';
 
-// Совместимая с FastAPI сессия: читает и пишет ту же cookie `hr_session`,
-// что и Starlette SessionMiddleware (itsdangerous.TimestampSigner).
-//
-// Это ключ к постепенной миграции: пока часть эндпоинтов ещё на Python,
-// оба бэкенда понимают сессию друг друга — пользователь не разлогинивается
-// при переносе очередного домена.
+// Сессия: подписанная cookie `hr_session` в формате itsdangerous.TimestampSigner.
 //
 // Формат значения cookie:  base64(json) "." base64url(timestamp) "." base64url(hmac-sha1)
 // Подпись считается от строки  base64(json) "." base64url(timestamp).
-// Ключ: sha1(salt + "signer" + secret).digest()  — режим "django-concat" itsdangerous.
+// Ключ: sha1(salt + "signer" + secret).digest()  - режим "django-concat" itsdangerous.
 
 export const SESSION_COOKIE = 'hr_session';
 const SALT = 'itsdangerous.Signer';
 const SEP = '.';
-// Starlette по умолчанию: 14 дней (см. session_max_age_sec в backend/config.py).
+// Срок жизни сессии - 14 дней.
 export const SESSION_MAX_AGE = 14 * 24 * 60 * 60;
 
 export interface SessionData {
-  user_id?: number;
+  /** UUID пользователя. Cookie со старым числовым id сессией не считается. */
+  user_id?: string;
   [key: string]: unknown;
 }
 
@@ -42,7 +38,7 @@ function deriveKey(secret: string): Buffer {
     .digest();
 }
 
-/** base64url без выравнивающих '=' — так кодирует itsdangerous. */
+/** base64url без выравнивающих '=' - так кодирует itsdangerous. */
 function b64urlEncode(buf: Buffer): string {
   return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
@@ -52,7 +48,7 @@ function b64urlDecode(s: string): Buffer {
   return Buffer.from(s.replace(/-/g, '+').replace(/_/g, '/') + pad, 'base64');
 }
 
-/** Целое → минимальное число байт big-endian (int_to_bytes из itsdangerous). */
+/** Целое -> минимальное число байт big-endian (int_to_bytes из itsdangerous). */
 function intToBytes(num: number): Buffer {
   if (num === 0) return Buffer.alloc(0);
   const bytes: number[] = [];
@@ -77,7 +73,7 @@ function signature(value: string, key: Buffer): string {
 /** Собирает значение cookie для переданных данных сессии. */
 export function signSession(data: SessionData, now = Math.floor(Date.now() / 1000)): string {
   const key = deriveKey(getSecret());
-  // Starlette кодирует полезную нагрузку обычным base64 (не urlsafe).
+  // Полезная нагрузка кодируется обычным base64 (не urlsafe).
   const payload = Buffer.from(JSON.stringify(data), 'utf8').toString('base64');
   const ts = b64urlEncode(intToBytes(now));
   const value = `${payload}${SEP}${ts}`;
@@ -101,7 +97,7 @@ export function verifySession(cookieValue: string | undefined | null): SessionDa
   const payload = signedPart.slice(0, tsSep);
   const tsPart = signedPart.slice(tsSep + 1);
 
-  // Сравнение подписи — в постоянном времени.
+  // Сравнение подписи - в постоянном времени.
   let expected: string;
   try {
     expected = signature(signedPart, deriveKey(getSecret()));
@@ -131,7 +127,7 @@ export function verifySession(cookieValue: string | undefined | null): SessionDa
   }
 }
 
-/** Параметры записи cookie — те же флаги, что выставляет Starlette. */
+/** Параметры записи cookie. */
 export function sessionCookieOptions() {
   return {
     httpOnly: true,
@@ -143,12 +139,9 @@ export function sessionCookieOptions() {
 }
 
 /**
- * Собирает заголовок Set-Cookie вручную.
- *
- * Через cookies().set() нельзя: Next прогоняет значение через
- * encodeURIComponent, и завершающие '=' base64 превращаются в '%3D'.
- * Starlette декодирование не делает и такую cookie не принимает — сессия,
- * выданная Next.js, переставала работать в FastAPI.
+ * Собирает заголовок Set-Cookie вручную: cookies().set() прогоняет значение
+ * через encodeURIComponent, и завершающие '=' base64 превращаются в '%3D' -
+ * формат перестаёт совпадать с itsdangerous.
  *
  * Чтение остаётся штатным: decodeURIComponent не портит base64 (символа '%'
  * в нём нет), поэтому cookies().get() возвращает значение как есть.

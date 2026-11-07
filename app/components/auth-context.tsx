@@ -2,10 +2,9 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { apiGet, apiPost } from '@/lib/api';
 
-// Текущий пользователь приходит из FastAPI: GET /api/auth/me
-// (см. HR Helper/routes/auth.py, api_router).
+// Текущий пользователь приходит из GET /api/auth/me
 export interface AuthUser {
-  id: number;
+  id: string;
   username: string;
   email: string;
   surname: string;

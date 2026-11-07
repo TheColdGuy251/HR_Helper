@@ -4,7 +4,7 @@ import path from 'node:path';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { finishTool, persistAndFinish, type StreamState } from '@/lib/chat';
-import { baseName, fromDocsPath, stemOf, suffixOf, toDocsPath } from '@/lib/news';
+import { baseName, stemOf, suffixOf } from '@/lib/news';
 import { isNativelyParsable, parseFile } from '@/lib/parsers';
 import type { AttachedDoc } from '@/lib/ml/pipeline';
 import {
@@ -20,30 +20,27 @@ import {
 } from './common';
 import { extractProcessGraph, renderProcessSvg } from './processes';
 import { readZipEntries } from './zip';
-// Регэкспы-триггеры Б1/Б2/Б6 проверяет вызывающий код (lib/chat-generate.ts) —
-// как и в Python, где они импортируются прямо в _run_generation.
-import { createCharacteristic, parsePetition } from './characteristic';
-import { createDpoReport } from './dpo-report';
+// Регэкспы-триггеры Б1/Б2/Б6 проверяет вызывающий код (lib/chat-generate.ts).
+import { CHARACTERISTIC_REQUEST_RE, createCharacteristic, parsePetition } from './characteristic';
+import { createDpoReport, DPO_REQUEST_RE } from './dpo-report';
 import { createVacancy, extractDutiesSection } from './vacancy';
 import { createInventory, INVENTORY_REQUEST_RE } from './dismissed-inventory';
 import { CERTIFICATE_EMP_REQUEST_RE, createCertificate } from './employee-certificate';
+import { extractWorkbookPhoto } from './workbook-image';
 import { OT_DEDUP_REQUEST_RE, runDedup } from './ot-dedup';
 import { createAnnouncement, parseForm2Rows, PPS_REQUEST_RE, type Form2 } from './pps-announcement';
 
 /**
- * Инструменты главной страницы, вызванные ЧАТ-КОМАНДОЙ с вложением.
- * Порт _handle_tool_request / _handle_dpo_report / _handle_characteristic /
- * _handle_vacancy и веток _tool_* из backend/routes/chat.py.
+ * Инструменты главной страницы, вызванные чат-командой с вложением.
  *
- * ОТЛИЧИЕ ОТ PYTHON ПО ФОРМЕ, НЕ ПО СМЫСЛУ: питоновские create_* принимают путь
- * к файлу и сами его читают, а портированные lib/docs/* — уже разобранные
- * строки/текст (так же, как их зовут HTTP-эндпоинты в app/api/documents/**).
- * Поэтому чтение и разбор вложения делается здесь, а не внутри генератора.
+ * Генераторы lib/docs/* принимают уже разобранные строки/текст (так же их зовут
+ * HTTP-эндпоинты в app/api/documents/**), поэтому чтение и разбор вложения
+ * делается здесь.
  */
 
 export interface ToolCtx {
-  assistantMessageId: number;
-  userId: number;
+  assistantMessageId: string;
+  userId: string;
   state: StreamState;
   setStatus: (stage: string) => void;
 }
@@ -73,12 +70,18 @@ async function attempt<T>(
   }
 }
 
+/** Предупреждения валидации - блоком в конце ответа (документ уже готов). */
+function formatWarnings(warnings: string[] | undefined): string {
+  if (!warnings?.length) return '';
+  return '\n\n⚠️ Обратите внимание:\n' + warnings.map((w) => `- ${w}`).join('\n');
+}
+
 // ---------------------------------------------------------------------------
-// Б2: отчёт по ДПО из xlsx-выгрузки «ПК за год»
+// Б2: отчёт по ДПО из xlsx-выгрузки "ПК за год"
 // ---------------------------------------------------------------------------
 
 /**
- * Пользователь прикрепил xlsx-выгрузку «ПК за год» и просит отчёт по ДПО.
+ * Пользователь прикрепил xlsx-выгрузку "ПК за год" и просит отчёт по ДПО.
  * Все числа считаются детерминированно из таблицы (без LLM).
  */
 export async function handleDpoReport(
@@ -87,7 +90,7 @@ export async function handleDpoReport(
 ): Promise<boolean> {
   const src = attachBySuffix(attached, new Set(['.xlsx', '.xlsm']));
   if (!src) {
-    // Вложение не табличное — подсказываем, но не гоним запрос в RAG.
+    // Вложение не табличное - подсказываем, но не гоним запрос в RAG.
     ctx.setStatus('generate');
     ctx.state.append(
       'Для отчёта по ДПО прикрепите **xlsx-выгрузку** из 1С:ЗиК ' +
@@ -101,8 +104,8 @@ export async function handleDpoReport(
 
   ctx.setStatus('render_doc');
   const built = await attempt(async () => {
-    const data = await readFile(fromDocsPath(src.stored_path as string));
-    // openpyxl берёт первый лист книги (wb.worksheets[0]), а не активный.
+    const data = await readFile(src.stored_path as string);
+    // Берём первый лист книги, а не активный.
     const rows = sheetTextRows(firstSheet(readWorkbook(data)));
     return createDpoReport(ctx.userId, rows);
   });
@@ -135,7 +138,7 @@ export async function handleDpoReport(
 
 /**
  * Пользователь прикрепил ходатайство о награждении и просит характеристику.
- * Возвращает true, если запрос обработан этой веткой (иначе — обычный поток:
+ * Возвращает true, если запрос обработан этой веткой (иначе - обычный поток:
  * вложение не похоже на ходатайство, пусть RAG/чат объяснит, что нужно).
  */
 export async function handleCharacteristic(
@@ -147,12 +150,12 @@ export async function handleCharacteristic(
 
   ctx.setStatus('extract_fields');
   const fields = await parsePetition(text, ctx.userId).catch(() => null);
-  if (!fields) return false; // parse_petition упал — отдаём сообщение обычному потоку
-  // Вложение не похоже на ходатайство — не перехватываем запрос.
+  if (!fields) return false; // parse_petition упал - отдаём сообщение обычному потоку
+  // Вложение не похоже на ходатайство - не перехватываем запрос.
   if (!fields.fio && !fields.achievements) return false;
 
   ctx.setStatus('render_doc');
-  // category=null — как в Python: категория выводится внутри, из должности.
+  // category=null: категория выводится внутри, из должности.
   const built = await attempt(() => createCharacteristic(ctx.userId, fields, null));
   if (!built.ok) {
     ctx.state.append(
@@ -181,12 +184,12 @@ export async function handleCharacteristic(
 
 /**
  * Пользователь прикрепил должностную инструкцию и просит текст вакансии.
- * Раздел 2 «Должностные обязанности» переписывается LLM в форму для job-сайтов.
+ * Раздел 2 "Должностные обязанности" переписывается LLM в форму для job-сайтов.
  */
 export async function handleVacancy(attached: AttachedDoc[], ctx: ToolCtx): Promise<boolean> {
   const text = (attached[0]?.content || '').trim();
   if (!text) return false;
-  // Вложение не похоже на должностную инструкцию — пусть обычный чат объяснит.
+  // Вложение не похоже на должностную инструкцию - пусть обычный чат объяснит.
   if (!extractDutiesSection(text) && !text.toLowerCase().includes('должностн')) return false;
 
   ctx.setStatus('render_doc');
@@ -215,18 +218,61 @@ export async function handleVacancy(attached: AttachedDoc[], ctx: ToolCtx): Prom
 }
 
 // ---------------------------------------------------------------------------
-// Ветки Б3/Б4/Б5/Б7/А10 — диспетчер инструментов
+// Ветки Б3/Б4/Б5/Б7/А10 - диспетчер инструментов
 // ---------------------------------------------------------------------------
 
-// Триггер чат-команды: «приведи схему к единому виду», «перерисуй схему процесса».
-// В Python константа лежит в services/processes.py; портированный
-// lib/docs/processes.ts её не заводит (нужна только чату) — держим здесь.
+// Триггер чат-команды: "приведи схему к единому виду", "перерисуй схему процесса".
+// Нужен только чату, поэтому живёт здесь, а не в lib/docs/processes.ts.
 const PROCESS_REQUEST_RE = ru(
   '(един\\w+\\s+(?:вид|стил)|схем\\w+\\s+процесс|перерису\\w+\\s+схем|стилизу\\w+\\s+схем)',
   'i'
 );
 
 type ToolHandler = (src: AttachedDoc, attached: AttachedDoc[], ctx: ToolCtx) => Promise<boolean>;
+
+// ---------------------------------------------------------------------------
+// Подсказка "прикрепите файл", когда команда инструмента пришла без вложения
+// ---------------------------------------------------------------------------
+// Раньше весь блок инструментов гейтился наличием вложения, и "найди дубликаты
+// инструкций по охране труда" без файла уходил в RAG, который выдавал
+// псевдоанализ дублей по чанкам БЗ. Вопросительные формулировки ("как найти
+// дубликаты?") по-прежнему идут в RAG - подсказка только для императивов.
+
+const TOOL_QUESTION_RE = ru('\\b(как|какие|каков\\w*|можно ли|нужно ли|что|почему|где|когда|зачем)\\b');
+// Просьба бланка/образца ("нужен образец характеристики") - не команда
+// инструменту: её обслуживает бланк-ветка пайплайна карточками файлов.
+const TOOL_BLANK_RE = ru('\\b(бланк\\w*|образ(?:ец|цы|ца|цов)|шаблон\\w*|пример\\w*)\\b');
+
+const NO_ATTACHMENT_HINTS: [RegExp, string][] = [
+  [OT_DEDUP_REQUEST_RE,
+    'Чтобы найти однотипные инструкции, прикрепите **архив ZIP или 7z** с файлами инструкций (docx/doc/pdf/rtf/txt, до 500 файлов) — я сравню тексты и покажу пары с совпадением и группы однотипных.'],
+  [INVENTORY_REQUEST_RE,
+    'Для описи личных дел прикрепите **отчёт «Принято уволено»** из 1С:ЗиК (xls/xlsx) — я исключу повторно принятых и соберу опись по образцу УРП.'],
+  [CERTIFICATE_EMP_REQUEST_RE,
+    'Для читабельной справки прикрепите **выгрузку «Справка на сотрудника»** из 1С:ЗиК (xls/xlsx).'],
+  [PPS_REQUEST_RE,
+    'Для объявления о конкурсе прикрепите **выгрузки «Форма 2»** из 1С:ЗиК (xls/xlsx, по одному файлу на должность).'],
+  [DPO_REQUEST_RE,
+    'Для отчёта по ДПО прикрепите **xlsx-выгрузку «ПК за период»** из 1С:ЗиК — я посчитаю агрегаты и соберу отчёт.'],
+  [CHARACTERISTIC_REQUEST_RE,
+    'Чтобы подготовить характеристику, прикрепите **файл ходатайства о награждении** из 1С:Документооборот (docx/doc/pdf) — я извлеку данные и соберу текст по образцу.'],
+];
+
+/**
+ * Императивная команда инструмента без вложения -> подсказка, какой файл нужен.
+ * Возвращает true, если подсказка отправлена (запрос обработан).
+ */
+export async function maybeToolHint(userTextRouted: string, ctx: ToolCtx): Promise<boolean> {
+  const q = (userTextRouted || '').trim();
+  if (!q || TOOL_QUESTION_RE.test(q) || TOOL_BLANK_RE.test(q)) return false;
+  for (const [rx, hint] of NO_ATTACHMENT_HINTS) {
+    if (rx.test(q)) {
+      ctx.setStatus('generate');
+      return finishTool(ctx.assistantMessageId, ctx.state, hint);
+    }
+  }
+  return false;
+}
 
 /**
  * Инструменты главной страницы по чат-команде с вложением: единая схема
@@ -240,8 +286,8 @@ export async function handleToolRequest(
   ctx: ToolCtx
 ): Promise<boolean> {
   const tools: [RegExp, ToolHandler, Set<string>, string][] = [
-    [OT_DEDUP_REQUEST_RE, toolOtDedup, new Set(['.zip']),
-      'Прикрепите **ZIP-архив** с инструкциями (docx/doc/pdf/rtf/txt) — я сравню тексты и найду однотипные.'],
+    [OT_DEDUP_REQUEST_RE, toolOtDedup, new Set(['.zip', '.7z']),
+      'Прикрепите **архив ZIP или 7z** с инструкциями (docx/doc/pdf/rtf/txt) — я сравню тексты и найду однотипные.'],
     [INVENTORY_REQUEST_RE, toolInventory, XL,
       'Для описи прикрепите **отчёт «Принято уволено»** из 1С:ЗиК (xls/xlsx).'],
     [CERTIFICATE_EMP_REQUEST_RE, toolCertificate, XL,
@@ -274,31 +320,40 @@ export async function handleToolRequest(
   return false;
 }
 
-// ── Б3: справка на работника ───────────────────────────────────────────────
+// Б3: справка на работника
 
 async function toolCertificate(src: AttachedDoc, _attached: AttachedDoc[], ctx: ToolCtx) {
-  const data = await readFile(fromDocsPath(src.stored_path as string));
-  const { rec, fields } = await createCertificate(ctx.userId, sheetRows(activeSheet(readWorkbook(data))));
+  const storedPath = src.stored_path as string;
+  const data = await readFile(storedPath);
+  const suffix = `.${(src.filename || storedPath).split('.').pop() || ''}`.toLowerCase();
+  const photo = await extractWorkbookPhoto(data, suffix);
+  const { rec, fields, warnings, photoUsed } = await createCertificate(
+    ctx.userId,
+    sheetRows(activeSheet(readWorkbook(data))),
+    photo
+  );
 
   const pk = fields['Повышение квалификации'];
   const work = fields['Работа по окончании ВУЗа'];
   const bits: string[] = [];
   if (Array.isArray(pk)) bits.push(`повышение квалификации — ${pk.length} записей за последние 3 года`);
   if (Array.isArray(work)) bits.push(`работа по должностям — ${work.length} строк без дублей приказов`);
+  bits.push(photoUsed ? 'фото из выгрузки добавлено' : 'фото в выгрузке не нашлось — оставлена рамка под фото');
   return finishTool(
     ctx.assistantMessageId,
     ctx.state,
     `Справка преобразована в читабельный вид (${bits.join('; ') || 'готово'}). ` +
-      'Файл доступен ниже для скачивания.',
+      'Файл доступен ниже для скачивания.' +
+      formatWarnings(warnings),
     rec.id
   );
 }
 
-// ── Б4: опись личных дел уволенных ─────────────────────────────────────────
+// Б4: опись личных дел уволенных
 
 async function toolInventory(src: AttachedDoc, _attached: AttachedDoc[], ctx: ToolCtx) {
-  const data = await readFile(fromDocsPath(src.stored_path as string));
-  // all_categories=False — как значение по умолчанию в create_inventory.
+  const data = await readFile(src.stored_path as string);
+  // all_categories=False - как значение по умолчанию в create_inventory.
   const { rec, result } = await createInventory(
     ctx.userId,
     sheetRows(activeSheet(readWorkbook(data))),
@@ -310,12 +365,13 @@ async function toolInventory(src: AttachedDoc, _attached: AttachedDoc[], ctx: To
     `Опись сформирована: в неё попали ${result.items.length} из ${result.fired_total} ` +
       `уволенных в ${result.year} году (категории АУП/АХП/УВП, повторно принятые ` +
       `исключены: ${result.skipped_rehired}). Даты увольнения — «дата записи» минус ` +
-      'один день. Файл xlsx доступен ниже.',
+      'один день. Файл xlsx доступен ниже.' +
+      formatWarnings(result.warnings),
     rec.id
   );
 }
 
-// ── Б5: объявление о выборах и конкурсе ППС ────────────────────────────────
+// Б5: объявление о выборах и конкурсе ППС
 
 async function toolPps(_src: AttachedDoc, attached: AttachedDoc[], ctx: ToolCtx) {
   const form2List: Form2[] = [];
@@ -323,7 +379,7 @@ async function toolPps(_src: AttachedDoc, attached: AttachedDoc[], ctx: ToolCtx)
     if (!a.stored_path) continue;
     const name = a.filename || a.stored_path;
     if (!XL.has(path.extname(name).toLowerCase())) continue;
-    const data = await readFile(fromDocsPath(a.stored_path));
+    const data = await readFile(a.stored_path);
     form2List.push(parseForm2Rows(sheetRows(activeSheet(readWorkbook(data))), baseName(name)));
   }
   const { rec, data } = await createAnnouncement(ctx.userId, form2List);
@@ -338,17 +394,23 @@ async function toolPps(_src: AttachedDoc, attached: AttachedDoc[], ctx: ToolCtx)
   );
 }
 
-// ── Б7: дубликаты инструкций по охране труда ───────────────────────────────
+// Б7: дубликаты инструкций по охране труда
 
 const OT_ALLOWED = new Set(['.docx', '.doc', '.pdf', '.rtf', '.txt', '.odt']);
 const OT_MAX_FILES = 500;
 
 async function toolOtDedup(src: AttachedDoc, _attached: AttachedDoc[], ctx: ToolCtx) {
-  // Порт run_dedup_zip: распаковка → парсинг → сравнение. Разбор ZIP живёт
-  // здесь, потому что TS-порт runDedup принимает уже готовые тексты.
-  const zipData = await readFile(fromDocsPath(src.stored_path as string));
+  // Распаковка -> парсинг -> сравнение. Разбор архива живёт здесь, потому что
+  // runDedup принимает уже готовые тексты. 7z поддержан так же, как в
+  // /api/documents/ot/dedup: отдел охраны труда приносит архивы в .7z.
+  const storedPath = src.stored_path as string;
+  const zipData = await readFile(storedPath);
+  const isSevenZip = `${src.filename || storedPath}`.toLowerCase().endsWith('.7z');
+  const entries = isSevenZip
+    ? await (await import('./sevenzip')).readSevenZipEntries(zipData)
+    : readZipEntries(zipData);
   const picked: { name: string; suffix: string; read: () => Buffer }[] = [];
-  for (const entry of readZipEntries(zipData)) {
+  for (const entry of entries) {
     if (entry.dir || picked.length >= OT_MAX_FILES) continue;
     const fname = baseName(entry.name);
     const suffix = suffixOf(fname).toLowerCase();
@@ -386,9 +448,9 @@ async function toolOtDedup(src: AttachedDoc, _attached: AttachedDoc[], ctx: Tool
   );
 }
 
-// ── А10: единая схема процесса ─────────────────────────────────────────────
+// А10: единая схема процесса
 
-/** `datetime.utcnow().strftime('%Y%m%d_%H%M%S')` — имя SVG считается по UTC. */
+/** `datetime.utcnow().strftime('%Y%m%d_%H%M%S')` - имя SVG считается по UTC. */
 function utcTimestamp(): string {
   const d = new Date();
   const p = (n: number) => String(n).padStart(2, '0');
@@ -399,7 +461,7 @@ function utcTimestamp(): string {
 }
 
 async function toolProcessSchema(src: AttachedDoc, _attached: AttachedDoc[], ctx: ToolCtx) {
-  const graph = await extractProcessGraph(fromDocsPath(src.stored_path as string));
+  const graph = await extractProcessGraph(src.stored_path as string);
   if (graph === null) {
     return finishTool(
       ctx.assistantMessageId,
@@ -409,7 +471,7 @@ async function toolProcessSchema(src: AttachedDoc, _attached: AttachedDoc[], ctx
     );
   }
   if (!graph.title) {
-    // «!процесс вакансии ИИ.docx» → «Процесс вакансии»
+    // "!процесс вакансии ИИ.docx" -> "Процесс вакансии"
     const stem = stemOf(baseName(src.filename || 'схема'))
       .replace(/^[!_ ]+/, '')
       .replace(/\s*ИИ\s*$/, '')
@@ -424,8 +486,8 @@ async function toolProcessSchema(src: AttachedDoc, _attached: AttachedDoc[], ctx
     data: {
       user_id: ctx.userId,
       title: graph.title ? `Единая схема: ${graph.title}` : 'Единая схема процесса',
-      template_key: 'process_schema',
-      file_path: toDocsPath(filePath),
+      generator: 'process_schema',
+      file_path: filePath,
       progress: 100,
       status: 'ready',
       fields: { nodes: graph.nodes.length, edges: graph.edges.length } as Prisma.InputJsonValue,

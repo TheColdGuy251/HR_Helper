@@ -1,15 +1,13 @@
 import { unlink } from 'node:fs/promises';
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { forbidden, notFound, requireUser } from '@/lib/auth';
-import { asDict, asList, boolQuery, parsePathId, pyBool } from '@/lib/kb';
+import { asDict, boolQuery, parsePathId, pyBool } from '@/lib/kb';
 import { publish } from '@/lib/events';
 import { messageById, peerKeyOf, recipientsOf, resolveInsideUpload } from '@/lib/messenger';
 
-// Удаление сообщения: «у себя» (hidden_for) или «для всех».
-// Порт DELETE /api/messenger/messages/{message_id} из backend/routes/messenger.py.
+// Удаление сообщения: "у себя" (hidden_for) или "для всех".
 
 type Ctx = { params: Promise<{ message_id: string }> };
 
@@ -29,14 +27,13 @@ export async function DELETE(request: NextRequest, { params }: Ctx) {
   if (!isParticipant) return forbidden('Нет доступа');
 
   if (!forAll.value) {
-    // «Удалить у себя» — можно для любого сообщения диалога (в т.ч. чужого).
-    const hidden = asList(msg.hidden_for);
-    if (!hidden.includes(me)) {
-      await prisma.user_messages.update({
-        where: { id: msg.id },
-        data: { hidden_for: [...hidden, me] as Prisma.InputJsonValue },
-      });
-    }
+    // "Удалить у себя" - можно для любого сообщения диалога (в т.ч. чужого).
+    const key = { message_id: msg.id, user_id: me };
+    await prisma.user_message_hidden.upsert({
+      where: { message_id_user_id: key },
+      create: key,
+      update: {},
+    });
     return NextResponse.json({ ok: true, for_all: false });
   }
 
@@ -44,7 +41,7 @@ export async function DELETE(request: NextRequest, { params }: Ctx) {
   if (pyBool(asDict(msg.forwarded_meta).system)) {
     return forbidden('Системное сообщение можно удалить только у себя');
   }
-  // «Удалить для всех» — только своё сообщение.
+  // "Удалить для всех" - только своё сообщение.
   if (msg.sender_id !== me) return forbidden('Для всех можно удалять только свои сообщения');
 
   const recipients = [...new Set(await recipientsOf(msg))];
@@ -56,7 +53,7 @@ export async function DELETE(request: NextRequest, { params }: Ctx) {
   });
   for (const f of files) {
     const file = resolveInsideUpload(f.stored_path);
-    if (!file) continue; // файл вне каталога вложений — не наш, не трогаем
+    if (!file) continue; // файл вне каталога вложений - не наш, не трогаем
     await unlink(file).catch(() => {}); // missing_ok=True
   }
 

@@ -2,22 +2,22 @@ import 'server-only';
 import bcrypt from 'bcryptjs';
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
+import type { user_sex } from '@prisma/client';
 import { prisma } from './db';
+import { asUuid } from './ids';
 import { SESSION_COOKIE, serializeSessionCookie, signSession, verifySession } from './session';
 
-// Авторизация в точности повторяет поведение FastAPI (backend/utils/auth_deps.py
-// и utils/security.py): та же сессионная cookie, тот же bcrypt, те же коды
-// ответов и тексты ошибок — фронтенду всё равно, кто обслужил запрос.
+// Авторизация: сессионная cookie, bcrypt, единые коды ответов и тексты ошибок.
 
 export interface CurrentUser {
-  id: number;
+  id: string;
   username: string;
   email: string;
   surname: string;
   name: string;
   patronymic: string | null;
   position: string;
-  sex: string | null;
+  sex: user_sex | null;
   is_active: boolean;
   is_admin: boolean;
   is_kb_editor: boolean;
@@ -25,9 +25,8 @@ export interface CurrentUser {
   created_at: Date;
 }
 
-// ── Пароли ─────────────────────────────────────────────────────────────────
-// bcrypt в Python обрезает пароль до 72 байт (utils/security.py:_prepare),
-// поэтому обрезаем так же — иначе длинные пароли перестанут подходить.
+// Пароли
+// bcrypt учитывает только первые 72 байта пароля - обрезаем явно.
 
 const MAX_PW_BYTES = 72;
 
@@ -37,7 +36,7 @@ function preparePassword(password: string): string {
 }
 
 export async function hashPassword(password: string): Promise<string> {
-  return bcrypt.hash(preparePassword(password), 12); // rounds=12 — как в бэкенде
+  return bcrypt.hash(preparePassword(password), 12); // rounds=12 - как в бэкенде
 }
 
 export async function verifyPassword(password: string, hashed: string): Promise<boolean> {
@@ -48,20 +47,20 @@ export async function verifyPassword(password: string, hashed: string): Promise<
   }
 }
 
-// ── Текущий пользователь ───────────────────────────────────────────────────
+// Текущий пользователь
 
 /** Читает пользователя по сессионной cookie. null, если сессии нет или она протухла. */
 export async function currentUser(): Promise<CurrentUser | null> {
   const store = await cookies();
   const data = verifySession(store.get(SESSION_COOKIE)?.value);
-  const userId = data?.user_id;
-  if (typeof userId !== 'number') return null;
+  const userId = asUuid(data?.user_id);
+  if (!userId) return null;
 
   const user = await prisma.users.findUnique({ where: { id: userId } });
   return user as CurrentUser | null;
 }
 
-/** Ответ 401 в формате FastAPI (HTTPException отдаёт {"detail": ...}). */
+/** Ответ 401 в формате {"detail": ...}. */
 export function unauthorized(detail = 'Требуется авторизация') {
   return NextResponse.json({ detail }, { status: 401 });
 }
@@ -84,7 +83,7 @@ export function conflict(detail: string) {
 
 /**
  * Аналог Depends(require_user). Возвращает либо пользователя, либо готовый
- * ответ 401 — вызывающий код делает `if ('response' in gate) return gate.response`.
+ * ответ 401 - вызывающий код делает `if ('response' in gate) return gate.response`.
  */
 export async function requireUser(): Promise<{ user: CurrentUser } | { response: NextResponse }> {
   const user = await currentUser();
@@ -112,12 +111,12 @@ export async function requireKbEditor(): Promise<{ user: CurrentUser } | { respo
   return { user };
 }
 
-// ── Управление сессией ─────────────────────────────────────────────────────
+// Управление сессией
 // Cookie ставится заголовком вручную (см. serializeSessionCookie): штатный
-// cookies().set() кодирует значение и ломает совместимость с FastAPI.
+// cookies().set() кодирует значение.
 
 /** Добавляет к ответу сессионную cookie для указанного пользователя. */
-export function withSession(response: NextResponse, userId: number): NextResponse {
+export function withSession(response: NextResponse, userId: string): NextResponse {
   response.headers.append('Set-Cookie', serializeSessionCookie(signSession({ user_id: userId })));
   return response;
 }
@@ -128,10 +127,9 @@ export function withoutSession(response: NextResponse): NextResponse {
   return response;
 }
 
-// ── Представление пользователя для клиента ─────────────────────────────────
-// Формат должен совпадать с _user_json из backend/routes/auth.py.
+// Представление пользователя для клиента
 
-export function fullName(u: CurrentUser): string {
+export function fullName(u: Pick<CurrentUser, 'surname' | 'name' | 'patronymic'>): string {
   return [u.surname, u.name, u.patronymic || ''].filter(Boolean).join(' ').trim();
 }
 
@@ -140,7 +138,7 @@ export function shortName(u: CurrentUser): string {
   return `${u.surname}${first ? ` ${first[0]}.` : ''}`.trim();
 }
 
-export function initials(u: CurrentUser): string {
+export function initials(u: Pick<CurrentUser, 'surname' | 'name'>): string {
   const first = (u.name || '').trim().slice(0, 1);
   const last = (u.surname || '').trim().slice(0, 1);
   return (last + first).toUpperCase();

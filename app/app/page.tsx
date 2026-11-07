@@ -29,9 +29,9 @@ import { ErrorCallout, SearchInput, StatusPill } from '@/components/ui';
 import { ToolModal, type ToolKey } from '@/components/home/tool-modals';
 
 // Главная страница: hero, поиск по инструментам, 3 группы карточек-мастеров
-// и грид «Мои документы» (порт HR Helper/templates/index.html).
+// и грид "Мои документы".
 
-/* ───────────────────────── Каталог инструментов ───────────────────────── */
+/* Каталог инструментов */
 
 interface ToolDef {
   key: ToolKey;
@@ -40,7 +40,7 @@ interface ToolDef {
   keywords: string;
   action: string;
   icon: LucideIcon;
-  tile: string; // градиент плитки — цвета из легаси home.css
+  tile: string; // градиент плитки
 }
 
 interface ToolGroup {
@@ -94,7 +94,7 @@ const GROUPS: ToolGroup[] = [
         keywords: 'дпо отчёт повышение квалификации обучение переподготовка год',
         action: 'Создать',
         icon: BarChart3,
-        tile: 'from-[#2563eb] to-[#7C3AED]', // indigo (blue → purple)
+        tile: 'from-[#2563eb] to-[#7C3AED]', // indigo (blue -> purple)
       },
       {
         key: 'inventory',
@@ -142,11 +142,11 @@ const GROUPS: ToolGroup[] = [
   },
 ];
 
-/* ───────────────────────── Мои документы ───────────────────────── */
+/* Мои документы */
 
-// Форма ответа GET /api/documents (routes/documents.py:264)
+// Форма ответа GET /api/documents
 interface DocItem {
-  id: number;
+  id: string;
   title: string | null;
   template_key: string | null;
   status: string | null;
@@ -230,14 +230,14 @@ function DocCard({ doc, onDelete }: { doc: DocItem; onDelete: (doc: DocItem) => 
   );
 }
 
-/* ─────────────────── Поле запроса к ассистенту ─────────────────── */
+/* Поле запроса к ассистенту */
 
 /**
  * Спросить ассистента прямо с главной: создаём диалог и уходим в него с
- * вопросом в `?q=` — страница чата отправит его сама.
+ * вопросом в `?q=` - страница чата отправит его сама.
  *
  * Тело запроса намеренно пустое: POST /api/dialogues без title переиспользует
- * уже существующий пустой диалог (route.ts:248), поэтому «спросил и передумал»
+ * уже существующий пустой диалог (route.ts:248), поэтому "спросил и передумал"
  * не плодит чаты, а заголовок подберётся автоматически по первому ответу.
  */
 function AskAssistant() {
@@ -261,9 +261,9 @@ function AskAssistant() {
     setSending(true);
     setError('');
     try {
-      // В адресе чата стоит session_id, а не id диалога (app/chat/[id]).
-      const d = await apiPost<{ session_id: string }>('/api/dialogues');
-      router.push(`/chat/${d.session_id}?q=${encodeURIComponent(question)}`);
+      // Адрес чата - /chat/{dialogue_id} (app/chat/[id]).
+      const d = await apiPost<{ dialogue_id: string }>('/api/dialogues');
+      router.push(`/chat/${d.dialogue_id}?q=${encodeURIComponent(question)}`);
     } catch {
       setError('Не удалось открыть диалог. Попробуйте ещё раз.');
       setSending(false);
@@ -284,7 +284,7 @@ function AskAssistant() {
             autoGrow();
           }}
           onKeyDown={(e) => {
-            // Enter отправляет, Shift+Enter переносит строку — как в чате.
+            // Enter отправляет, Shift+Enter переносит строку - как в чате.
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault();
               submit();
@@ -310,7 +310,7 @@ function AskAssistant() {
   );
 }
 
-/* ───────────────────────── Страница ───────────────────────── */
+/* Страница */
 
 export default function HomePage() {
   const [query, setQuery] = useState('');
@@ -334,7 +334,7 @@ export default function HomePage() {
     loadDocs();
   }, [loadDocs]);
 
-  // Удаление с confirm — оптимистично, при ошибке возвращаем список
+  // Удаление с confirm - оптимистично, при ошибке возвращаем список
   const handleDelete = async (doc: DocItem) => {
     const title = (doc.title || '').trim();
     if (!confirm(`Удалить документ${title ? ` «${title}»` : ''}? Файл будет безвозвратно стёрт.`)) return;
@@ -349,7 +349,7 @@ export default function HomePage() {
   };
 
   // Живой поиск: карточка видна, если каждое слово запроса найдено
-  // в названии, описании или ключевых словах (как в легаси index.html)
+  // в названии, описании или ключевых словах
   const q = query.trim().toLowerCase();
   const matches = (t: ToolDef) => {
     if (!q) return true;
@@ -362,9 +362,9 @@ export default function HomePage() {
 
   return (
     <div className="max-w-6xl w-full mx-auto px-4 py-8 flex-1 flex flex-col gap-10 md:gap-16">
-      {/* ── Hero ──
+      {/* Hero
           Логотип ТИУ убран: он уже стоит в шапке, а на первом экране только
-          отодвигал вниз то, ради чего сюда заходят — строку запроса. */}
+          отодвигал вниз то, ради чего сюда заходят - строку запроса. */}
       <section className="flex flex-col items-center text-center gap-3 pt-2">
         <h1 className="text-3xl md:text-4xl font-black tracking-tight leading-tight">
           <span className="text-gradient">Что нужно сделать?</span>
@@ -374,11 +374,11 @@ export default function HomePage() {
           схемы собираются из выгрузок 1С за пару кликов.
         </p>
 
-        {/* Спросить ассистента прямо отсюда — не заходя в раздел диалогов. */}
+        {/* Спросить ассистента прямо отсюда - не заходя в раздел диалогов. */}
         <AskAssistant />
       </section>
 
-      {/* ── Мастера документов: шапка с поиском и группы карточек ── */}
+      {/* Мастера документов: шапка с поиском и группы карточек */}
       <section className="flex flex-col gap-8">
         <div className="flex flex-col items-center gap-4">
           <h2 className="text-xl font-bold text-[#0f1c3f] flex items-center gap-2">
@@ -396,7 +396,7 @@ export default function HomePage() {
 
         {visibleGroups.map((group) => (
           <div key={group.title} className="flex flex-col gap-4">
-            {/* Подзаголовок группы — на ступень мельче заголовка раздела,
+            {/* Подзаголовок группы - на ступень мельче заголовка раздела,
                 иначе два уровня выглядят одинаково и иерархия теряется. */}
             <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-gray-400">
               <group.icon size={15} className="text-[#2563eb]" /> {group.title}
@@ -442,7 +442,7 @@ export default function HomePage() {
         )}
       </section>
 
-      {/* ── Мои документы ── */}
+      {/* Мои документы */}
       <section className="flex flex-col gap-4">
         <div className="flex items-center gap-3">
           <h2 className="text-xl font-bold text-[#0f1c3f]">Мои документы</h2>
@@ -470,7 +470,7 @@ export default function HomePage() {
         )}
       </section>
 
-      {/* ── Модалка активного мастера ── */}
+      {/* Модалка активного мастера */}
       {activeTool && (
         <ToolModal tool={activeTool} onClose={() => setActiveTool(null)} onDocsChanged={loadDocs} />
       )}

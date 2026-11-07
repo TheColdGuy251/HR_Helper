@@ -14,13 +14,12 @@ import {
 
 // Продвинутые надстройки RAG: HyDE, декомпозиция запроса, переписывание при
 // отрицаниях, классификация тем, self-check ответа и сводка диалога.
-// Порт одноимённых методов RAGPipeline (services/rag/pipeline.py).
 //
 // Все они опциональны и управляются флагами RAG_* (см. config.ts): при
 // недоступной модели или неразобранном ответе каждая функция молча возвращает
-// исходное значение — основной путь ответа от этого не ломается.
+// исходное значение - основной путь ответа от этого не ломается.
 
-// Отрицания: «не выплатить», «нельзя», «запрещено», «без согласия».
+// Отрицания: "не выплатить", "нельзя", "запрещено", "без согласия".
 const W = '0-9A-Za-zА-Яа-яЁё_';
 const B = `(?:(?<![${W}])(?=[${W}])|(?<=[${W}])(?![${W}]))`;
 const NEGATION_RE = new RegExp(
@@ -32,7 +31,7 @@ export function hasNegation(q: string): boolean {
   return NEGATION_RE.test(q || '');
 }
 
-// Сравнение: триггер «сравни/разниц/отлич…» И связка «и/с/от/против/vs».
+// Сравнение: триггер "сравни/разниц/отлич..." И связка "и/с/от/против/vs".
 const COMPARE_TRIGGER = new RegExp(`сравн[${W}]*|разниц[${W}]*|различ[${W}]*|отлич[${W}]*|противопостав[${W}]*`, 'i');
 const COMPARE_CONNECTOR = /\s+(?:и|с|от|против|vs)\s+/i;
 
@@ -42,8 +41,7 @@ export function isCompareQuery(q: string): boolean {
 
 /**
  * Дописывает к поисковому запросу гипотетический параграф нормативки (HyDE).
- * Аббревиатуры/синонимы раскрывает вызывающий код (prepareSearchQuery), как в
- * Python внутри _maybe_hyde.
+ * Аббревиатуры/синонимы раскрывает вызывающий код (prepareSearchQuery).
  */
 export async function maybeHyde(query: string): Promise<string> {
   if (!RAG.useHyde) return query;
@@ -78,26 +76,26 @@ async function decomposeViaLlm(query: string): Promise<string[] | null> {
 }
 
 /**
- * Разбивает сложный вопрос на 1–N подвопросов. Сравнительные запросы
- * декомпозируются всегда — для них семантический поиск одним вектором работает
+ * Разбивает сложный вопрос на 1-N подвопросов. Сравнительные запросы
+ * декомпозируются всегда - для них семантический поиск одним вектором работает
  * плохо.
  */
 export async function maybeDecompose(query: string): Promise<string[]> {
   if (!(await isLlmAvailable())) return [query];
 
   if (isCompareQuery(query)) {
-    // Принудительно декомпозируем — пусть LLM выдаст подвопросы про X и про Y.
+    // Принудительно декомпозируем - пусть LLM выдаст подвопросы про X и про Y.
     try {
       const sub = await decomposeViaLlm(expandAbbreviations(query));
       if (sub && sub.length >= 2) return sub.slice(0, RAG.decompositionMax);
     } catch {
-      /* не получилось — идём общим путём */
+      /* не получилось - идём общим путём */
     }
   }
   if (!RAG.useDecomposition) return [query];
   if (query.length < 35) return [query];
-  // Дробим ТОЛЬКО реально многосоставные вопросы: раньше триггером была любая
-  // запятая/«и», и одно-интентные вопросы разваливались на узкие подвопросы,
+  // Дробим только реально многосоставные вопросы: раньше триггером была любая
+  // запятая/"и", и одно-интентные вопросы разваливались на узкие подвопросы,
   // притягивая нерелевантные статьи (шум).
   if (!/\?[\s\S]*\?|\sа также\s|\sкроме того\s|\sи ещё\s|\sи еще\s|\sнаряду\s|перечисл/i.test(query)) {
     return [query];
@@ -112,7 +110,7 @@ export async function maybeDecompose(query: string): Promise<string[]> {
 
 /**
  * Запрос с отрицанием переформулируем в утвердительную форму (эмбеддинги плохо
- * обрабатывают NOT) и КОНКАТЕНИРУЕМ с оригиналом: BM25 ищет по терминам
+ * обрабатывают NOT) и конкатенируем с оригиналом: BM25 ищет по терминам
  * исходника, dense ловит семантику расширенной формы.
  */
 export async function maybeRewriteQuery(query: string): Promise<string> {
@@ -128,12 +126,12 @@ export async function maybeRewriteQuery(query: string): Promise<string> {
     const rewritten = (raw || '').trim().replace(/^[«"']+|[»"']+$/g, '').replace(/\.+$/, '').trim();
     if (rewritten.length >= 5) return `${query}\n${rewritten}`;
   } catch {
-    /* переписывание не удалось — ищем по оригиналу */
+    /* переписывание не удалось - ищем по оригиналу */
   }
   return query;
 }
 
-/** До 3 тем запроса — для приоритизации тегов в Qdrant. */
+/** До 3 тем запроса - для приоритизации тегов в Qdrant. */
 export async function classifyTopics(query: string): Promise<string[]> {
   if (!(await isLlmAvailable())) return [];
   try {

@@ -23,11 +23,12 @@ import {
   type MessageAttachment,
   type MessageSource,
 } from '@/lib/msgfmt';
+import { isUuid } from '@/lib/ids';
 
-// ── Типы сообщений чата (формы см. routes/chat.py: _message_item) ────────────
+// Типы сообщений чата
 
 export interface UserAttachment {
-  id: number;
+  id: string;
   name: string;
 }
 
@@ -38,7 +39,7 @@ export interface RelatedFile {
   view_url?: string;
 }
 
-/** Уточняющий вопрос FAQ: чипы-варианты под ответом (порт renderClarifyChips). */
+/** Уточняющий вопрос FAQ: чипы-варианты под ответом. */
 export interface ClarifyMeta {
   question?: string;
   options?: (string | { text?: string; label?: string; value?: string })[];
@@ -64,7 +65,7 @@ export interface FactCheck {
 }
 
 export interface ChatMsg {
-  id: number | string; // string — временный клиентский id до ответа сервера
+  id: string; // UUID из БД либо временный клиентский id (u-..., a-...) до ответа сервера
   role: 'user' | 'assistant';
   content: string;
   is_read?: boolean;
@@ -85,7 +86,7 @@ export interface ChatMsg {
   queue_total?: number;
 }
 
-// ── Статусы генерации (SSE-кадры {status}) ──────────────────────────────────
+// Статусы генерации (SSE-кадры {status})
 
 const STATUS_LABELS: Record<string, string> = {
   queued: 'Ожидание в очереди…',
@@ -106,7 +107,7 @@ export function statusLabel(status?: string, pos?: number, total?: number): stri
   return STATUS_LABELS[status || ''] || 'Обработка…';
 }
 
-// Время сообщения: сегодня → «HH:MM», раньше → «DD.MM.YYYY HH:MM».
+// Время сообщения: сегодня -> "HH:MM", раньше -> "DD.MM.YYYY HH:MM".
 export function formatMsgTime(iso?: string | null): string {
   if (!iso) return '';
   const d = new Date(iso);
@@ -121,7 +122,7 @@ export function formatMsgTime(iso?: string | null): string {
   return sameDay ? hm : `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()} ${hm}`;
 }
 
-// ── Связанные бланки/документы FAQ (meta.related_files) как HTML-карточки ────
+// Связанные бланки/документы FAQ (meta.related_files) как HTML-карточки
 
 const SVG_FILE =
   '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>';
@@ -157,15 +158,15 @@ function relatedFilesHtml(meta?: ChatMeta | null): string {
     })
     .filter(Boolean)
     .join('');
-  // Шапка со скрепкой — как в renderRelatedFiles (chat.js:1358).
+  // Шапка со скрепкой - как в renderRelatedFiles.
   return cards
     ? `<div class="chat-related-files"><div class="chat-related-title">${SVG_PAPERCLIP} Бланки и документы</div>${cards}</div>`
     : '';
 }
 
-// ── Контакт подразделения со ссылками ───────────────────────────────────────
-// Импорт FAQ превращает пометку «(ссылка на телефонный справочник)» в
-// markdown-ссылку [Отдел …](https://www.tyuiu.ru/phones/) — рендерим её
+// Контакт подразделения со ссылками
+// Импорт FAQ превращает пометку "(ссылка на телефонный справочник)" в
+// markdown-ссылку [Отдел ...](https://www.tyuiu.ru/phones/) - рендерим её
 // кликабельной. Прочий текст остаётся как есть.
 
 const CONTACT_LINK_RE = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g;
@@ -194,7 +195,7 @@ function contactNodes(contact: string): ReactNode[] {
   return out;
 }
 
-// ── Индикатор «бот думает» ──────────────────────────────────────────────────
+// Индикатор "бот думает"
 
 function Thinking({ label }: { label: string }) {
   return (
@@ -213,14 +214,14 @@ function Thinking({ label }: { label: string }) {
   );
 }
 
-// ── Контекстное меню сообщения (как в мессенджере) ──────────────────────────
+// Контекстное меню сообщения (как в мессенджере)
 
-const LONG_PRESS_MS = 500; // порог долгого нажатия (как в легаси attachThreadInteractions)
+const LONG_PRESS_MS = 500; // порог долгого нажатия
 const LONG_PRESS_SLOP = 10; // допустимый сдвиг пальца до отмены долгого нажатия
 const MENU_W = 230;
 const MENU_H = 260;
 
-/** Пункт контекстного меню — оформление то же, что в components/messenger/message.tsx. */
+/** Пункт контекстного меню - оформление то же, что в components/messenger/message.tsx. */
 function MenuItem({
   icon: Icon,
   label,
@@ -245,7 +246,7 @@ function MenuItem({
   );
 }
 
-// ── Пузырь сообщения ────────────────────────────────────────────────────────
+// Пузырь сообщения
 
 export function MessageBubble({
   msg,
@@ -261,12 +262,12 @@ export function MessageBubble({
   onClarify,
 }: {
   msg: ChatMsg;
-  busy: boolean; // идёт стрим — блокируем действия
+  busy: boolean; // идёт стрим - блокируем действия
   selection: ChatSelection;
-  onFeedback: (id: number, rating: number) => void;
-  onVariant: (id: number, dir: number) => void;
-  onEdit: (id: number, text: string) => void;
-  onRetry: (id: number) => void;
+  onFeedback: (id: string, rating: number) => void;
+  onVariant: (id: string, dir: number) => void;
+  onEdit: (id: string, text: string) => void;
+  onRetry: (id: string) => void;
   onForward: (m: ChatMsg) => void;
   onStartSelect: (m: ChatMsg) => void;
   onToggleSelect: (id: ChatMsg['id']) => void;
@@ -279,11 +280,12 @@ export function MessageBubble({
   const bubbleRef = useRef<HTMLDivElement>(null);
 
   const isUser = msg.role === 'user';
-  const numId = typeof msg.id === 'number' ? msg.id : null;
+  // Действия доступны только сохранённым сообщениям (временные id - не UUID).
+  const savedId = isUuid(msg.id) ? msg.id : null;
   const rating = Number(msg.user_rating || 0);
   const selMode = selection.mode;
 
-  // ── вход в режим выделения: правый клик / долгое нажатие ──────────────────
+  // вход в режим выделения: правый клик / долгое нажатие
   const cancelPress = () => {
     if (pressRef.current) clearTimeout(pressRef.current.timer);
     pressRef.current = null;
@@ -291,13 +293,13 @@ export function MessageBubble({
 
   const selectHandlers = {
     onContextMenu: (e: React.MouseEvent) => {
-      if (numId == null) return;
+      if (savedId == null) return;
       e.preventDefault();
       if (selMode) onToggleSelect(msg.id);
       else onStartSelect(msg);
     },
     onPointerDown: (e: React.PointerEvent) => {
-      if (selMode || numId == null || e.pointerType === 'mouse') return;
+      if (selMode || savedId == null || e.pointerType === 'mouse') return;
       const { clientX: x, clientY: y } = e;
       pressRef.current = {
         x,
@@ -322,10 +324,10 @@ export function MessageBubble({
     onPointerCancel: cancelPress,
   };
 
-  /** Чекбокс слева от пузыря — виден только в режиме выделения. */
+  /** Чекбокс слева от пузыря - виден только в режиме выделения. */
   const checkbox = selMode ? (
     <div className="w-5 shrink-0 self-center">
-      {numId != null && (
+      {savedId != null && (
         <span
           className={`w-[18px] h-[18px] rounded-md border flex items-center justify-center transition ${
             selection.checked ? 'bg-[#2563eb] border-[#2563eb] text-white' : 'bg-white border-gray-300'
@@ -338,11 +340,11 @@ export function MessageBubble({
   ) : null;
 
   const rowProps = {
-    onClick: selMode && numId != null ? () => onToggleSelect(msg.id) : undefined,
+    onClick: selMode && savedId != null ? () => onToggleSelect(msg.id) : undefined,
     className: selMode ? 'cursor-pointer select-none rounded-xl transition-colors' : '',
   };
 
-  // HTML контента ассистента: markdown + источники (блок — только после стрима)
+  // HTML контента ассистента: markdown + источники (блок - только после стрима)
   const html = useMemo(() => {
     if (isUser) return '';
     let h = formatMessageContent(msg.content, msg.sources || null, !msg.streaming);
@@ -391,14 +393,14 @@ export function MessageBubble({
     }
   };
 
-  // Навигация по вариантам ‹ i/n › (правки вопроса / ретраи ответа)
+  // Навигация по вариантам < i/n > (правки вопроса / ретраи ответа)
   const variantNav =
-    (msg.variant_count || 1) > 1 && numId != null ? (
+    (msg.variant_count || 1) > 1 && savedId != null ? (
       <span className="flex items-center gap-0.5">
         <button
           type="button"
           disabled={busy || (msg.variant_index || 1) <= 1}
-          onClick={() => onVariant(numId, -1)}
+          onClick={() => onVariant(savedId, -1)}
           className="p-1 rounded-md hover:bg-gray-100 hover:text-slate-600 disabled:opacity-40 transition"
           title="Предыдущий вариант"
         >
@@ -410,7 +412,7 @@ export function MessageBubble({
         <button
           type="button"
           disabled={busy || (msg.variant_index || 1) >= (msg.variant_count || 1)}
-          onClick={() => onVariant(numId, 1)}
+          onClick={() => onVariant(savedId, 1)}
           className="p-1 rounded-md hover:bg-gray-100 hover:text-slate-600 disabled:opacity-40 transition"
           title="Следующий вариант"
         >
@@ -419,7 +421,7 @@ export function MessageBubble({
       </span>
     ) : null;
 
-  // ── Сообщение пользователя ────────────────────────────────────────────────
+  // Сообщение пользователя
   if (isUser) {
     const startEdit = () => {
       setEditText(msg.content);
@@ -427,9 +429,9 @@ export function MessageBubble({
     };
     const submitEdit = () => {
       const t = editText.trim();
-      if (!t || numId == null) return;
+      if (!t || savedId == null) return;
       setEditing(false);
-      onEdit(numId, t);
+      onEdit(savedId, t);
     };
     return (
       <div
@@ -442,7 +444,7 @@ export function MessageBubble({
         }`}
       >
         {checkbox}
-        {/* w-fit — чтобы короткое сообщение не оказалось уже строки действий
+        {/* w-fit - чтобы короткое сообщение не оказалось уже строки действий
             под ним (пузырь ниже получает min-w-full). */}
         <div className="max-w-[88%] md:max-w-xl w-fit flex flex-col items-end gap-1 min-w-0">
           {editing ? (
@@ -499,9 +501,9 @@ export function MessageBubble({
               )}
             </div>
           )}
-          {/* Порядок как в легаси (chat.js:1047): копировать → изменить →
-              переслать → навигация по вариантам → время. Отдельной кнопки
-              выделения тут нет — режим включается правым кликом или долгим
+          {/* Порядок: копировать -> изменить ->
+              переслать -> навигация по вариантам -> время. Отдельной кнопки
+              выделения тут нет - режим включается правым кликом или долгим
               нажатием, как в мессенджере. */}
           {!editing && !selMode && (
             <div className="flex items-center gap-1 px-1 text-gray-400">
@@ -513,7 +515,7 @@ export function MessageBubble({
               >
                 {copied ? <Check size={12} className="text-emerald-500" /> : <Copy size={12} />}
               </button>
-              {numId != null && (
+              {savedId != null && (
                 <button
                   type="button"
                   disabled={busy}
@@ -541,7 +543,7 @@ export function MessageBubble({
     );
   }
 
-  // ── Сообщение ассистента ──────────────────────────────────────────────────
+  // Сообщение ассистента
   const fc = msg.fact_check;
   const showNote = !!msg.is_finished && !msg.streaming && !!((msg.sources && msg.sources.length) || msg.meta?.contact);
 
@@ -562,7 +564,7 @@ export function MessageBubble({
     >
       {checkbox}
       {/* w-fit + min-w-full у пузыря: колонка получает ширину самого широкого
-          своего элемента, поэтому под коротким ответом («да», «готово») пузырь
+          своего элемента, поэтому под коротким ответом ("да", "готово") пузырь
           дотягивается до ряда кнопок, а не оказывается уже него. */}
       <div className="max-w-[92%] md:max-w-2xl w-fit flex flex-col gap-1 min-w-0">
         <div
@@ -607,7 +609,7 @@ export function MessageBubble({
             </div>
           )}
 
-          {/* Уточняющий вопрос FAQ: варианты-чипы (порт renderClarifyChips) */}
+          {/* Уточняющий вопрос FAQ: варианты-чипы */}
           {clarifyOptions.length > 0 && !msg.streaming && (
             <div className="mt-3 flex flex-wrap gap-1.5">
               {clarifyOptions.map((opt) => (
@@ -627,8 +629,8 @@ export function MessageBubble({
 
         {msg.is_finished && !msg.streaming && !selMode && (
           <div className="flex items-center gap-1 px-1 text-gray-400 flex-wrap">
-            {/* Порядок как в легаси (chat.js:1124-1135): варианты → копировать →
-                нравится → не нравится → другой ответ → переслать → факт-чек →
+            {/* Порядок: варианты -> копировать ->
+                нравится -> не нравится -> другой ответ -> переслать -> факт-чек ->
                 время. Кнопки выделения здесь нет: режим включается правым
                 кликом или долгим нажатием, как в мессенджере. */}
             {variantNav}
@@ -640,11 +642,11 @@ export function MessageBubble({
             >
               {copied ? <Check size={13} className="text-emerald-500" /> : <Copy size={13} />}
             </button>
-            {numId != null && (
+            {savedId != null && (
               <>
                 <button
                   type="button"
-                  onClick={() => onFeedback(numId, rating === 1 ? 0 : 1)}
+                  onClick={() => onFeedback(savedId, rating === 1 ? 0 : 1)}
                   className={`p-1 rounded-md hover:bg-gray-100 transition ${
                     rating === 1 ? 'text-[#2563eb]' : 'hover:text-slate-600'
                   }`}
@@ -654,7 +656,7 @@ export function MessageBubble({
                 </button>
                 <button
                   type="button"
-                  onClick={() => onFeedback(numId, rating === -1 ? 0 : -1)}
+                  onClick={() => onFeedback(savedId, rating === -1 ? 0 : -1)}
                   className={`p-1 rounded-md hover:bg-gray-100 transition ${
                     rating === -1 ? 'text-red-500' : 'hover:text-slate-600'
                   }`}
@@ -665,7 +667,7 @@ export function MessageBubble({
                 <button
                   type="button"
                   disabled={busy}
-                  onClick={() => onRetry(numId)}
+                  onClick={() => onRetry(savedId)}
                   className="p-1 rounded-md hover:bg-gray-100 hover:text-slate-600 disabled:opacity-40 transition"
                   title="Сгенерировать другой вариант ответа"
                 >

@@ -2,27 +2,26 @@ import 'server-only';
 import PizZip from 'pizzip';
 
 /**
- * Чтение .docx на уровне OOXML — ровно те возможности python-docx, на которые
- * опирается перенесённый код: текст абзацев/ячеек, объединения ячеек таблиц,
- * подчёркнутые прогоны и рамки абзацев.
+ * Чтение .docx на уровне OOXML: текст абзацев и ячеек, объединения ячеек
+ * таблиц, подчёркнутые прогоны и рамки абзацев.
  *
- * ПОЧЕМУ ЗДЕСЬ, А НЕ В lib/parsers: там разбор docx идёт через mammoth (HTML →
+ * Почему здесь, а не в lib/parsers: там разбор docx идёт через mammoth (HTML ->
  * абзацы и таблицы) и годится для полнотекстового индекса, но теряет и
  * объединения ячеек (на них держится группировка FAQ), и форматирование
  * прогонов (на нём держится авто-разметка полей бланка). Модуль делят между
- * собой два эндпоинта базы знаний — app/api/kb/faq/import и app/api/kb/templates.
+ * собой два эндпоинта базы знаний - app/api/kb/faq/import и app/api/kb/templates.
  *
- * ОТЛИЧИЯ ОТ python-docx:
- *  - paragraph.text включает текст внутри <w:hyperlink> (так делает python-docx
- *    1.2; в 1.1 гиперссылки терялись), а paragraph.runs — только прямые <w:r>;
+ * Ограничения:
+ *  - текст абзаца включает текст внутри <w:hyperlink>, а прогоны абзаца - только
+ *    прямые <w:r>;
  *  - поля (<w:fldSimple>, инструкции полей) и вставки редактора (<w:ins>) не
- *    разворачиваются: у python-docx их тоже нет в run-ах абзаца;
- *  - имена элементов сравниваются с префиксом «w:» буквально (python-docx
- *    разрешает namespace через nsmap). Word и LibreOffice пишут именно этот
- *    префикс, но экзотический генератор .docx может его переименовать.
+ *    разворачиваются;
+ *  - имена элементов сравниваются с префиксом "w:" буквально. Word и
+ *    LibreOffice пишут именно этот префикс, но экзотический генератор .docx
+ *    может его переименовать.
  */
 
-// ── Мини-DOM ───────────────────────────────────────────────────────────────
+// Мини-DOM
 
 export interface XmlElement {
   name: string;
@@ -54,7 +53,7 @@ function unescapeXml(s: string): string {
 
 const ATTR_RE = /([\w:.-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
 
-/** Конец тега с учётом кавычек: «>» внутри значения атрибута тег не закрывает. */
+/** Конец тега с учётом кавычек: ">" внутри значения атрибута тег не закрывает. */
 function tagEnd(xml: string, from: number): number {
   let quote = '';
   for (let i = from; i < xml.length; i += 1) {
@@ -128,7 +127,7 @@ export function parseXml(xml: string): XmlElement {
   return root;
 }
 
-/** Прямые дочерние элементы (при указанном имени — только они). */
+/** Прямые дочерние элементы (при указанном имени - только они). */
 export function childElements(parent: XmlElement, name?: string): XmlElement[] {
   const out: XmlElement[] = [];
   for (const c of parent.children) {
@@ -154,7 +153,7 @@ export function findElement(parent: XmlElement, name: string): XmlElement | null
   return null;
 }
 
-// ── Документ ───────────────────────────────────────────────────────────────
+// Документ
 
 /** Тело документа (<w:body>) из .docx. Бросает исключение на не-docx. */
 export function loadDocxBody(data: Buffer): XmlElement {
@@ -166,9 +165,9 @@ export function loadDocxBody(data: Buffer): XmlElement {
   return body;
 }
 
-// ── Абзацы и прогоны ───────────────────────────────────────────────────────
+// Абзацы и прогоны
 
-/** Текст прогона: <w:t> как есть, <w:tab> → \t, <w:br>/<w:cr> → перевод строки. */
+/** Текст прогона: <w:t> как есть, <w:tab> -> \t, <w:br>/<w:cr> -> перевод строки. */
 export function runText(run: XmlElement): string {
   let text = '';
   for (const c of run.children) {
@@ -180,7 +179,7 @@ export function runText(run: XmlElement): string {
   return text;
 }
 
-/** Прогоны абзаца — только прямые <w:r> (как paragraph.runs у python-docx). */
+/** Прогоны абзаца - только прямые <w:r>. */
 export function runs(paragraph: XmlElement): XmlElement[] {
   return childElements(paragraph, 'w:r');
 }
@@ -196,7 +195,7 @@ export function paragraphText(paragraph: XmlElement): string {
   return text;
 }
 
-/** Подчёркнут ли прогон (run.underline): <w:u> с любым val, кроме «none». */
+/** Подчёркнут ли прогон (run.underline): <w:u> с любым val, кроме "none". */
 export function runUnderlined(run: XmlElement): boolean {
   const rPr = childElement(run, 'w:rPr');
   const u = rPr ? childElement(rPr, 'w:u') : null;
@@ -205,7 +204,7 @@ export function runUnderlined(run: XmlElement): boolean {
   return val !== 'none' && val !== '0' && val !== 'false';
 }
 
-/** Рамка абзаца сверху или снизу (_para_has_border из autofill.py). */
+/** Рамка абзаца сверху или снизу. */
 export function paragraphHasBorder(paragraph: XmlElement): boolean {
   const pPr = childElement(paragraph, 'w:pPr');
   if (!pPr) return false;
@@ -214,7 +213,7 @@ export function paragraphHasBorder(paragraph: XmlElement): boolean {
   return Boolean(childElement(bdr, 'w:top') || childElement(bdr, 'w:bottom'));
 }
 
-// ── Таблицы ────────────────────────────────────────────────────────────────
+// Таблицы
 
 /** Число столбцов сетки (table.columns / CT_Tbl.col_count). */
 export function columnCount(table: XmlElement): number {
@@ -239,26 +238,25 @@ function gridSpan(tc: XmlElement): number {
   return Number.isFinite(n) && n > 0 ? n : 1;
 }
 
-/** null — вертикального объединения нет; «continue» — продолжение ячейки сверху. */
+/** null - вертикального объединения нет; "continue" - продолжение ячейки сверху. */
 function vMergeVal(tc: XmlElement): string | null {
   const tcPr = childElement(tc, 'w:tcPr');
   const merge = tcPr ? childElement(tcPr, 'w:vMerge') : null;
-  // Атрибут необязателен, значение по умолчанию — «continue».
+  // Атрибут необязателен, значение по умолчанию - "continue".
   return merge ? (merge.attrs['w:val'] ?? 'continue') : null;
 }
 
 /**
- * Текст ячеек таблицы построчно — с семантикой python-docx `row.cells`:
- * у объединённых ячеек текст ПОВТОРЯЕТСЯ в каждой клетке сетки (по горизонтали
- * из-за gridSpan, по вертикали — из-за vMerge), потому что это один и тот же
- * объект ячейки. На этом держится группировка строк FAQ (_group_rows).
+ * Текст ячеек таблицы построчно. У объединённых ячеек текст повторяется в
+ * каждой клетке сетки (по горизонтали из-за gridSpan, по вертикали - из-за
+ * vMerge). На этом держится группировка строк FAQ.
  */
 export function tableRows(table: XmlElement): string[][] {
   const cols = columnCount(table);
   const trs = childElements(table, 'w:tr');
   if (cols <= 0) return trs.map((tr) => childElements(tr, 'w:tc').map(cellText));
 
-  // Плоский список клеток сетки — ровно как Table._cells в python-docx.
+  // Плоский список клеток сетки.
   const flat: string[] = [];
   for (const tr of trs) {
     for (const tc of childElements(tr, 'w:tc')) {
@@ -271,11 +269,11 @@ export function tableRows(table: XmlElement): string[][] {
       }
     }
   }
-  // Строки нарезаются по числу столбцов сетки — как row_cells(row_idx).
+  // Строки нарезаются по числу столбцов сетки - как row_cells(row_idx).
   return trs.map((_, i) => flat.slice(i * cols, (i + 1) * cols));
 }
 
-/** Таблицы верхнего уровня (doc.tables: вложенные в ячейки сюда не попадают). */
+/** Таблицы верхнего уровня (вложенные в ячейки сюда не попадают). */
 export function bodyTables(body: XmlElement): XmlElement[] {
   return childElements(body, 'w:tbl');
 }
@@ -285,7 +283,7 @@ export function bodyParagraphs(body: XmlElement): XmlElement[] {
   return childElements(body, 'w:p');
 }
 
-/** Абзацы любой вложенности — нужны для поиска {{переменных}} в таблицах. */
+/** Абзацы любой вложенности - нужны для поиска {{переменных}} в таблицах. */
 export function allParagraphs(el: XmlElement): XmlElement[] {
   const out: XmlElement[] = [];
   for (const child of childElements(el)) {

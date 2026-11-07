@@ -5,11 +5,10 @@ import { readForm, requireFile, uploadSuffix, withTempFile } from '@/lib/docs/co
 import { extractProcessGraph, renderProcessSvg } from '@/lib/docs/processes';
 import { baseName, stemOf } from '@/lib/news';
 
-// А10: приведение схем процессов к единому виду (docx/pptx/xlsx → SVG).
-// Порт POST /api/documents/process/render из backend/routes/documents.py.
+// А10: приведение схем процессов к единому виду (docx/pptx/xlsx -> SVG).
 //
 // Детерминированно, без LLM; файл не сохраняется. Старые .doc/.ppt/.xls
-// конвертируются LibreOffice прямо здесь — в FastAPI ничего не проксируется.
+// конвертируются LibreOffice.
 
 const PROCESS_EXT = new Set(['.docx', '.doc', '.pptx', '.ppt', '.xlsx', '.xlsm', '.xls']);
 
@@ -41,7 +40,7 @@ export async function POST(request: NextRequest) {
     );
   }
   if (!graph.title) {
-    // «!процесс вакансии ИИ.docx» → «Процесс вакансии»
+    // "!процесс вакансии ИИ.docx" -> "Процесс вакансии"
     const raw = stemOf(baseName(file.name || 'схема'));
     const stem = raw.replace(/^[!_ ]+/, '').replace(/\s*ИИ\s*$/, '').trim();
     const chars = Array.from(stem);

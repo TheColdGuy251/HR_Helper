@@ -14,8 +14,8 @@ import {
   StatusPill,
 } from '@/components/ui';
 
-// Лента новостей HR — порт static/js/news.js (роуты: routes/news.py).
-// Порядок постов задаёт бэкенд (закреплённые сверху) — на клиенте не пересортировываем.
+// Лента новостей HR.
+// Порядок постов задаёт бэкенд (закреплённые сверху) - на клиенте не пересортировываем.
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : 'Неизвестная ошибка');
 
@@ -29,7 +29,7 @@ function NewsFeed() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
-  // null — редактор закрыт; { post: null } — создание новой новости
+  // null - редактор закрыт; { post: null } - создание новой новости
   const [editor, setEditor] = useState<{ post: NewsItem | null } | null>(null);
   const autoOpened = useRef(false);
 
@@ -139,7 +139,7 @@ function NewsFeed() {
             >
               {p.preview_image && (
                 <div className="h-48 sm:h-60 bg-gray-50 overflow-hidden">
-                  {/* обложка — первая картинка из тела поста */}
+                  {/* обложка - первая картинка из тела поста */}
                   <img
                     src={p.preview_image}
                     alt=""

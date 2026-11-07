@@ -4,12 +4,12 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 
 /**
- * Запуск внешних программ (Tesseract, LibreOffice) — аналог subprocess.run в
- * Python. Вынесено отдельно, потому что и OCR, и конвертер Office делают одно и
- * то же: найти бинарь, выполнить с тайм-аутом, разобрать результат.
+ * Запуск внешних программ (Tesseract, LibreOffice). Вынесено отдельно, потому
+ * что и OCR, и конвертер Office делают одно и то же: найти бинарь, выполнить с
+ * тайм-аутом, разобрать результат.
  */
 
-/** subprocess.run(..., capture_output=True) — код возврата и оба потока. */
+/** subprocess.run(..., capture_output=True) - код возврата и оба потока. */
 export interface RunResult {
   code: number | null;
   stdout: Buffer;
@@ -24,7 +24,7 @@ export class BinaryTimeoutError extends Error {
   }
 }
 
-/** Бинаря нет или он не запускается — сообщение должно быть понятным в UI. */
+/** Бинаря нет или он не запускается - сообщение должно быть понятным в UI. */
 export class BinaryNotFoundError extends Error {
   constructor(message: string) {
     super(message);
@@ -33,8 +33,8 @@ export class BinaryNotFoundError extends Error {
 }
 
 /**
- * Запускает программу, ждёт завершения и возвращает оба потока. Без shell —
- * пробелы в путях («C:\Program Files\…») передаются как есть.
+ * Запускает программу, ждёт завершения и возвращает оба потока. Без shell -
+ * пробелы в путях ("C:\Program Files\...") передаются как есть.
  * `input` уходит в stdin (так Tesseract читает картинку без временного файла).
  */
 export function runBinary(
@@ -84,7 +84,7 @@ export function runBinary(
     });
 
     if (opts.input) {
-      // Программа могла закрыть stdin раньше, чем мы дописали — EPIPE тут не
+      // Программа могла закрыть stdin раньше, чем мы дописали - EPIPE тут не
       // ошибка выполнения, результат всё равно придёт в close.
       child.stdin.on('error', () => undefined);
       child.stdin.end(opts.input);
@@ -94,7 +94,7 @@ export function runBinary(
   });
 }
 
-/** shutil.which: ищет исполняемый файл в PATH (на Windows — с учётом PATHEXT). */
+/** shutil.which: ищет исполняемый файл в PATH (на Windows - с учётом PATHEXT). */
 export function which(name: string): string | null {
   const dirs = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
   const exts =
@@ -107,21 +107,21 @@ export function which(name: string): string | null {
       try {
         if (existsSync(candidate)) return candidate;
       } catch {
-        /* недоступный каталог из PATH — просто пропускаем */
+        /* недоступный каталог из PATH - просто пропускаем */
       }
     }
   }
   return null;
 }
 
-/** Первый существующий путь из списка кандидатов (порт цикла в _find_soffice). */
+/** Первый существующий путь из списка кандидатов. */
 export function firstExisting(candidates: (string | null | undefined)[]): string | null {
   for (const c of candidates) {
     if (!c) continue;
     try {
       if (existsSync(c)) return c;
     } catch {
-      /* OSError в Python — тоже пропуск */
+      /* ошибка доступа - тоже пропуск */
     }
   }
   return null;

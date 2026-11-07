@@ -1,27 +1,21 @@
 import 'server-only';
 
 /**
- * Порт difflib.SequenceMatcher из стандартной библиотеки Python для случая,
- * в котором его используют ot_dedup.py и pages.py::_build_diff_html:
- * isjunk=None и autojunk=False (сравнение идёт по СПИСКАМ СЛОВ/СТРОК,
- * а не по символам).
- *
- * Алгоритм воспроизведён дословно, потому что «процент совпадения» попадает
- * в отчёт отдела ОТ: другая метрика дала бы другие пары дубликатов. По той же
- * причине опкоды считаются здесь, а не «похожим» diff-алгоритмом из npm:
- * разбивка на блоки должна совпадать с Python до строки.
+ * Алгоритм зафиксирован, потому что "процент совпадения" попадает в отчёт
+ * отдела ОТ: другая метрика дала бы другие пары дубликатов. По той же причине
+ * опкоды считаются здесь, а не "похожим" diff-алгоритмом из npm.
  */
 
 /** Совпадающий блок get_matching_blocks(): [i в a, j в b, длина]. */
 type Block = [number, number, number];
 
 /**
- * get_matching_blocks(): максимальные совпадающие блоки, отсортированные и
- * склеенные, с замыкающим пустым блоком (la, lb, 0) — как в difflib.
+ * Максимальные совпадающие блоки, отсортированные и
+ * склеенные, с замыкающим пустым блоком (la, lb, 0).
  */
 function matchingBlocks(a: string[], b: string[]): Block[] {
-  // __chain_b: индексы каждого элемента b. Мусорных элементов нет (isjunk=None),
-  // «популярные» не отбрасываются (autojunk=False) — поэтому b2j полный.
+  // Индексы каждого элемента b. Мусорных элементов нет,
+  // "популярные" не отбрасываются - поэтому b2j полный.
   const b2j = new Map<string, number[]>();
   for (let i = 0; i < b.length; i += 1) {
     const list = b2j.get(b[i]);
@@ -52,7 +46,7 @@ function matchingBlocks(a: string[], b: string[]): Block[] {
       }
       j2len = newj2len;
     }
-    // Расширение блока по краям. Второй проход исходника (по «мусорным»
+    // Расширение блока по краям. Второй проход исходника (по "мусорным"
     // элементам) здесь не нужен: множество junk пустое.
     while (besti > alo && bestj > blo && a[besti - 1] === b[bestj - 1]) {
       besti -= 1;
@@ -81,11 +75,11 @@ function matchingBlocks(a: string[], b: string[]): Block[] {
     if (alo < i && blo < j) queue.push([alo, i, blo, j]);
     if (i + k < ahi && j + k < bhi) queue.push([i + k, ahi, j + k, bhi]);
   }
-  // matching_blocks.sort() — лексикографически по кортежу (i, j, k).
+  // matching_blocks.sort() - лексикографически по кортежу (i, j, k).
   found.sort((x, y) => x[0] - y[0] || x[1] - y[1] || x[2] - y[2]);
 
-  // Склейка соседних блоков: на ratio не влияет, но для опкодов обязательна —
-  // иначе между двумя «equal» появился бы пустой replace.
+  // Склейка соседних блоков: на ratio не влияет, но для опкодов обязательна -
+  // иначе между двумя "equal" появился бы пустой replace.
   const merged: Block[] = [];
   let i1 = 0;
   let j1 = 0;
@@ -111,10 +105,10 @@ export function sequenceRatio(a: string[], b: string[]): number {
   return length ? (2.0 * matches) / length : 1.0;
 }
 
-/** Опкод get_opcodes(): [тег, i1, i2, j1, j2] — как делать из a[i1:i2] b[j1:j2]. */
+/** Опкод get_opcodes(): [тег, i1, i2, j1, j2] - как делать из a[i1:i2] b[j1:j2]. */
 export type Opcode = ['equal' | 'replace' | 'delete' | 'insert', number, number, number, number];
 
-/** get_opcodes(): описание преобразования a → b «дырками» между совпадениями. */
+/** get_opcodes(): описание преобразования a -> b "дырками" между совпадениями. */
 export function sequenceOpcodes(a: string[], b: string[]): Opcode[] {
   let i = 0;
   let j = 0;
@@ -132,7 +126,7 @@ export function sequenceOpcodes(a: string[], b: string[]): Opcode[] {
   return answer;
 }
 
-// ── CRC-32 (zlib.crc32) ────────────────────────────────────────────────────
+// CRC-32 (zlib.crc32)
 
 const CRC_TABLE = (() => {
   const table = new Int32Array(256);
@@ -144,7 +138,7 @@ const CRC_TABLE = (() => {
   return table;
 })();
 
-/** zlib.crc32(bytes) — беззнаковое 32-битное. */
+/** zlib.crc32(bytes) - беззнаковое 32-битное. */
 export function crc32(bytes: Uint8Array): number {
   let c = -1;
   for (let i = 0; i < bytes.length; i += 1) c = CRC_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);

@@ -3,11 +3,11 @@ import type { NextRequest } from 'next/server';
 import { isoUtc, prisma } from '@/lib/db';
 import { badRequest, fullName, initials, notFound, requireAdmin, shortName } from '@/lib/auth';
 import type { CurrentUser } from '@/lib/auth';
+import { parsePathId } from '@/lib/kb';
 
 // Изменение ролей и удаление пользователя.
-// Порт PATCH/DELETE /api/admin/users/{uid} (backend/routes/admin.py).
 
-// Копия _user_brief из ../route.ts: Next разрешает route.ts экспортировать
+// Копия userBrief из ../route.ts: Next разрешает route.ts экспортировать
 // только обработчики, поэтому общий хелпер отсюда не вынести.
 function userBrief(u: CurrentUser) {
   return {
@@ -29,34 +29,12 @@ function userBrief(u: CurrentUser) {
 const ROLE_FIELDS = ['is_admin', 'is_kb_editor', 'can_access_pii', 'is_active'] as const;
 type RoleField = (typeof ROLE_FIELDS)[number];
 
-/** Python int(): знак и пробелы по краям допустимы. */
-function parseIntParam(raw: string): number | null {
-  return /^\s*[+-]?\d+\s*$/.test(raw) ? Number(raw) : null;
-}
-
-/** FastAPI отвечает 422 на нечисловой path-параметр — повторяем форму тела. */
-function invalidIntPath(name: string, input: string) {
-  return NextResponse.json(
-    {
-      detail: [
-        {
-          type: 'int_parsing',
-          loc: ['path', name],
-          msg: 'Input should be a valid integer, unable to parse string as an integer',
-          input,
-        },
-      ],
-    },
-    { status: 422 }
-  );
-}
-
-/** 422 на некорректное тело — как Body(...) в FastAPI. */
+/** 422 на некорректное тело запроса. */
 function invalidBody(type: string, loc: unknown[], msg: string, input: unknown) {
   return NextResponse.json({ detail: [{ type, loc, msg, input }] }, { status: 422 });
 }
 
-/** Python bool(): пустые строка/список/словарь тоже дают False. */
+/** Истинность значения: пустые строка, массив и объект тоже дают false. */
 function pyBool(value: unknown): boolean {
   if (value === null || value === undefined || value === false) return false;
   if (typeof value === 'number') return value !== 0;
@@ -71,9 +49,9 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   if ('response' in gate) return gate.response;
   const admin = gate.user;
 
-  const { uid } = await params;
-  const id = parseIntParam(uid);
-  if (id === null) return invalidIntPath('uid', uid);
+  const parsedId = parsePathId((await params).uid, 'uid');
+  if ('response' in parsedId) return parsedId.response;
+  const id = parsedId.value;
 
   const raw = await request.text();
   if (!raw) return invalidBody('missing', ['body'], 'Field required', null);
@@ -91,9 +69,9 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   const target = await prisma.users.findUnique({ where: { id } });
   if (!target) return notFound('Пользователь не найден');
 
-  // Защита от «отстрела себе ноги»: нельзя снять с себя админку или
-  // деактивировать себя. В Python сравнение строгое (`is False`), поэтому
-  // проверяем именно литерал false, а не любое ложное значение.
+  // Защита от "отстрела себе ноги": нельзя снять с себя админку или
+  // деактивировать себя. Проверяем именно литерал false, а не любое ложное
+  // значение.
   if (target.id === admin.id && (payload.is_admin === false || payload.is_active === false)) {
     return badRequest('Нельзя снять права администратора или деактивировать себя');
   }
@@ -120,18 +98,18 @@ export async function DELETE(
   if ('response' in gate) return gate.response;
   const admin = gate.user;
 
-  const { uid } = await params;
-  const id = parseIntParam(uid);
-  if (id === null) return invalidIntPath('uid', uid);
+  const parsedId = parsePathId((await params).uid, 'uid');
+  if ('response' in parsedId) return parsedId.response;
+  const id = parsedId.value;
 
-  // Порядок проверок как в Python: сначала «сам себя», потом существование.
+  // Порядок проверок: сначала "сам себя", потом существование.
   if (id === admin.id) return badRequest('Нельзя удалить собственную учётную запись');
 
   const target = await prisma.users.findUnique({ where: { id }, select: { id: true } });
   if (!target) return notFound('Пользователь не найден');
 
-  // FK-каскады в PostgreSQL удалят диалоги, сессии, сообщения бота и
-  // мессенджера. Аудит и загруженные PII-файлы отвязываются (SET NULL).
+  // FK-каскады в PostgreSQL удалят диалоги, сообщения бота и мессенджера.
+  // Аудит и загруженные PII-файлы отвязываются (SET NULL).
   await prisma.users.delete({ where: { id } });
 
   return NextResponse.json({ success: true });

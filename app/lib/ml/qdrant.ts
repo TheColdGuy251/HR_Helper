@@ -2,12 +2,12 @@ import 'server-only';
 import { QdrantClient } from '@qdrant/js-client-rest';
 import { EMBEDDING_DIM } from './embeddings';
 
-// Векторное хранилище. Полный аналог services/vectorstore/qdrant_store.py:
-// та же коллекция, те же поля payload и те же индексы, поэтому Python и Next
-// работают с одними данными и переиндексация не требуется.
+// Векторное хранилище: коллекция Qdrant, поля payload и индексы, по которым
+// фильтрует поиск.
 
 export interface ChunkPayload {
-  document_id: number;
+  /** UUID документа в kb_documents. */
+  document_id: string;
   text: string;
   chunk_index?: number | null;
   title?: string;
@@ -29,8 +29,14 @@ export interface SearchHit {
   chunk_id: string;
   score: number;
   text: string;
-  document_id: number | null;
+  document_id: string | null;
   payload: Record<string, unknown>;
+}
+
+/** UUID документа из payload точки (null - точка без документа или старого формата). */
+export function payloadDocId(payload: Record<string, unknown> | null | undefined): string | null {
+  const v = payload?.document_id;
+  return typeof v === 'string' ? v : null;
 }
 
 // Экспортируется: планировщик правит payload точек напрямую (архивация
@@ -60,7 +66,7 @@ export async function ensureCollection(dim = EMBEDDING_DIM): Promise<void> {
   if (!collections.some((c) => c.name === COLLECTION)) {
     await client.createCollection(COLLECTION, {
       vectors: { size: dim, distance: 'Cosine' },
-      // Скалярная квантизация — вчетверо меньше памяти при близком качестве.
+      // Скалярная квантизация - вчетверо меньше памяти при близком качестве.
       quantization_config: { scalar: { type: 'int8', always_ram: true } },
       hnsw_config: { m: 16, ef_construct: 128 },
     });
@@ -68,8 +74,8 @@ export async function ensureCollection(dim = EMBEDDING_DIM): Promise<void> {
 
   // Индексы payload создаются и для существующей коллекции: повторный вызов
   // на уже проиндексированном поле ничего не делает.
-  const indexes: [string, 'integer' | 'keyword' | 'float' | 'bool'][] = [
-    ['document_id', 'integer'],
+  const indexes: [string, 'uuid' | 'keyword' | 'float' | 'bool'][] = [
+    ['document_id', 'uuid'],
     ['source_type', 'keyword'],
     ['article_no', 'float'],
     ['is_article_head', 'bool'],
@@ -93,7 +99,7 @@ export async function ensureCollection(dim = EMBEDDING_DIM): Promise<void> {
 const UPSERT_BATCH = 200;
 
 export async function upsertChunks(
-  documentId: number,
+  documentId: string,
   chunks: (Partial<ChunkPayload> & { text: string; index?: number })[],
   vectors: number[][]
 ): Promise<string[]> {
@@ -188,20 +194,15 @@ export async function search(
       chunk_id: String(p.id),
       score: p.score ?? 0,
       text: String(payload.text ?? ''),
-      document_id: (payload.document_id as number | null) ?? null,
+      document_id: typeof payload.document_id === 'string' ? payload.document_id : null,
       payload,
     };
   });
 }
 
-/**
- * Обновляет payload-поля у всех чанков документа без переиндексации.
- * Порт QdrantStore.set_priority и set_payload-вызова из backend/routes/kb.py:
- * приоритет и атрибуты фильтров поиска (архив/тип/теги) обязаны совпадать с БД,
- * иначе до полной переиндексации бот ищет по устаревшим значениям.
- */
+/** Обновляет payload-поля у всех чанков документа без переиндексации. */
 export async function setDocumentPayload(
-  documentId: number,
+  documentId: string,
   payload: Record<string, unknown>
 ): Promise<void> {
   await ensureCollection();
@@ -213,7 +214,7 @@ export async function setDocumentPayload(
 }
 
 /** Удаляет все чанки документа (используется при переиндексации и удалении). */
-export async function deleteDocument(documentId: number): Promise<void> {
+export async function deleteDocument(documentId: string): Promise<void> {
   await ensureCollection();
   await qdrant().delete(COLLECTION, {
     filter: { must: [{ key: 'document_id', match: { value: documentId } }] },
@@ -221,7 +222,14 @@ export async function deleteDocument(documentId: number): Promise<void> {
   });
 }
 
-/** Выгружает чанки по фильтру — нужно для построения BM25-индекса. */
+/** Число точек коллекции - дешёвая проверка актуальности BM25-кэша. */
+export async function pointsCount(): Promise<number> {
+  await ensureCollection();
+  const res = await qdrant().count(COLLECTION, { exact: true });
+  return res.count;
+}
+
+/** Выгружает чанки по фильтру - нужно для построения BM25-индекса. */
 export async function scrollAll(
   limit = 10_000
 ): Promise<{ id: string; payload: Record<string, unknown> }[]> {

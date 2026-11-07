@@ -1,13 +1,13 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { prisma } from '@/lib/db';
-import { notFound, requireUser } from '@/lib/auth';
+import { requireUser } from '@/lib/auth';
+import { asUuid } from '@/lib/ids';
 import { validationError } from '@/lib/news';
-import { getStream } from '@/lib/chat';
+import { getStream, requireOwnDialogue } from '@/lib/chat';
 
-// Отмена генерации («Стоп»). Порт POST /api/chat/stream/abort.
+// Отмена генерации ("Стоп").
 // Флаг cancelled читает цикл runGeneration: он прервёт выдачу чанков, а SSE
-// закроется штатным done-кадром — поэтому ответ всегда success:true, даже
+// закроется штатным done-кадром - поэтому ответ всегда success:true, даже
 // если стрим уже завершился и из реестра пропал.
 
 export const dynamic = 'force-dynamic';
@@ -15,34 +15,23 @@ export const dynamic = 'force-dynamic';
 export async function POST(request: NextRequest) {
   const gate = await requireUser();
   if ('response' in gate) return gate.response;
-  const user = gate.user;
 
-  let body: { session_id?: unknown; assistant_message_id?: unknown };
+  let body: { dialogue_id?: unknown; assistant_message_id?: unknown };
   try {
     const raw = await request.text();
     body = raw ? JSON.parse(raw) : {};
   } catch {
     return validationError(['body', 0], 'json_invalid', 'JSON decode error', {});
   }
-  if (typeof body.session_id !== 'string') {
-    return validationError(['body', 'session_id'], 'missing', 'Field required', null);
-  }
 
-  const session = await prisma.chat_sessions.findUnique({
-    where: { id: body.session_id },
-    select: { id: true, dialogues: { select: { user_id: true } } },
-  });
-  if (!session || session.dialogues.user_id !== user.id) return notFound('Сессия не найдена');
+  const own = await requireOwnDialogue(body.dialogue_id, gate.user.id, ['body', 'dialogue_id']);
+  if ('response' in own) return own.response;
 
-  const messageId =
-    typeof body.assistant_message_id === 'number' && Number.isFinite(body.assistant_message_id)
-      ? Math.trunc(body.assistant_message_id)
-      : null;
-
-  // Python: `if body.assistant_message_id` — нулевой id тоже пропускается мимо.
+  const messageId = asUuid(body.assistant_message_id);
   if (messageId) {
     const st = getStream(messageId);
-    if (st) {
+    // Стрим чужого диалога не останавливаем, даже зная id сообщения.
+    if (st && st.dialogue_id === own.id) {
       st.cancelled = true;
       st.event.set();
     }
@@ -50,11 +39,7 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({ success: true });
 }
 
-/**
- * GET этот путь у FastAPI не обслуживает (405 Method Not Allowed). Без
- * экспорта Next вернул бы свой 405 с другой формой тела — отдаём то же,
- * что Starlette.
- */
+/** GET на этом пути нет - отвечаем 405 с телом {detail}, а не стандартным 405 Next. */
 export async function GET() {
   return NextResponse.json({ detail: 'Method Not Allowed' }, { status: 405 });
 }

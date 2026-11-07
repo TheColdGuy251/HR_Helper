@@ -3,27 +3,27 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { ChevronLeft, ChevronRight, RotateCw, Shield, ShieldAlert } from 'lucide-react';
 import { apiGet } from '@/lib/api';
+import { asUuid, shortId } from '@/lib/ids';
 import { useAuth } from '@/components/auth-context';
 import { PageShell, PageHeader, SecondaryButton, ErrorCallout } from '@/components/ui';
 
-// Журнал аудита действий с ПДн. Порт static/js/audit.js
-// (роут — routes/audit.py: GET /api/audit/pii).
+// Журнал аудита действий с ПДн.
 
 interface AuditRow {
-  id: number;
+  id: string;
   at: string;
-  user_id: number | null;
+  user_id: string | null;
   user_name: string | null;
   user_email: string | null;
   action: string;
   entity: string | null;
-  entity_id: number | null;
+  entity_id: string | null;
   extra: unknown;
 }
 
 const PAGE = 50;
 
-// Варианты фильтра — как в audit.html
+// Варианты фильтра
 const ACTION_OPTIONS: { value: string; label: string }[] = [
   { value: '', label: 'Все действия' },
   { value: 'reauth_ok', label: 'Вход в раздел' },
@@ -37,7 +37,7 @@ const ACTION_OPTIONS: { value: string; label: string }[] = [
   { value: 'quick_analyze', label: 'Быстрая загрузка (анализ)' },
 ];
 
-// Короткие подписи в таблице — как в audit.js
+// Короткие подписи в таблице
 const ACTION_LABELS: Record<string, string> = {
   reauth_ok: 'Вход',
   reauth_fail: 'Ошибка входа',
@@ -70,7 +70,7 @@ function fmtTime(iso: string | null | undefined): string {
   return d.toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'medium' });
 }
 
-/** Плашка «недостаточно прав» для не-администраторов. */
+/** Плашка "недостаточно прав" для не-администраторов. */
 function AccessDenied() {
   return (
     <div className="max-w-5xl w-full mx-auto px-4 py-8 flex-1 flex items-center justify-center">
@@ -102,8 +102,8 @@ export default function AuditPage() {
     setError(null);
     const params = new URLSearchParams({ limit: String(PAGE), offset: String(off) });
     if (act) params.set('action', act);
-    const uidTrim = uid.trim();
-    if (uidTrim && /^\d+$/.test(uidTrim)) params.set('user_id', uidTrim);
+    const uidParsed = asUuid(uid);
+    if (uidParsed) params.set('user_id', uidParsed);
     try {
       const d = await apiGet<{ items: AuditRow[]; total: number }>(`/api/audit/pii?${params.toString()}`);
       setItems(d.items ?? []);
@@ -158,13 +158,12 @@ export default function AuditPage() {
         </select>
         <input
           type="text"
-          inputMode="numeric"
           value={userId}
           onChange={(e) => setUserId(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') load(0, action, userId);
           }}
-          placeholder="Фильтр по ID пользователя"
+          placeholder="Фильтр по ID пользователя (UUID)"
           className="flex-1 bg-white border border-gray-100 rounded-2xl shadow-sm px-4 py-3 text-sm text-slate-600 focus:outline-none focus:border-[#2563eb]"
         />
         <SecondaryButton onClick={() => load(0, action, userId)} disabled={busy}>
@@ -209,8 +208,8 @@ export default function AuditPage() {
                       {r.user_id ? (
                         <>
                           <div className="text-sm font-semibold text-[#0f1c3f]">{r.user_name || '—'}</div>
-                          <div className="text-xs text-gray-400">
-                            {r.user_email || ''} (#{r.user_id})
+                          <div className="text-xs text-gray-400" title={r.user_id}>
+                            {r.user_email || ''} (#{shortId(r.user_id)})
                           </div>
                         </>
                       ) : (
@@ -230,7 +229,7 @@ export default function AuditPage() {
                       {r.entity ? (
                         <>
                           <span className="font-semibold">{r.entity}</span>
-                          {r.entity_id ? ` #${r.entity_id}` : ''}
+                          {r.entity_id ? <span title={r.entity_id}> #{shortId(r.entity_id)}</span> : ''}
                         </>
                       ) : (
                         ''

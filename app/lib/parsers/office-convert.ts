@@ -8,14 +8,13 @@ import { BinaryTimeoutError, firstExisting, runBinary, which } from './external'
 
 /**
  * Конвертация старых форматов Office (.doc/.xls/.ppt/.rtf/.odt/.ods) в новые
- * через LibreOffice headless (`soffice --convert-to`). Порт
- * backend/services/parsers/office_convert.py.
+ * через LibreOffice headless (`soffice --convert-to`).
  *
- * Если LibreOffice не установлен — бросаем понятную ошибку (документ попадёт в
+ * Если LibreOffice не установлен - бросаем понятную ошибку (документ попадёт в
  * статус failed с подсказкой), сервис не падает.
  */
 
-// Старый формат → целевой современный.
+// Старый формат -> целевой современный.
 const TARGET_EXT: Record<string, string> = {
   '.doc': 'docx',
   '.rtf': 'docx',
@@ -26,14 +25,14 @@ const TARGET_EXT: Record<string, string> = {
   '.odp': 'pptx',
 };
 
-/** Тайм-аут конвертации — как в Python (subprocess.run(timeout=180)). */
+/** Тайм-аут конвертации (subprocess.run(timeout=180)). */
 const CONVERT_TIMEOUT_MS = 180_000;
 
 let soffceCache: string | null = null;
 
 /**
  * Путь к soffice: сначала переменная окружения SOFFICE_CMD, затем PATH, затем
- * стандартные места установки. Результат кэшируется на процесс, как в Python.
+ * стандартные места установки. Результат кэшируется на процесс.
  */
 export function findSoffice(): string | null {
   if (soffceCache) return soffceCache;
@@ -53,7 +52,7 @@ export function findSoffice(): string | null {
 
 /**
  * Общая часть обеих конвертаций: временный каталог, отдельный профиль,
- * запуск soffice и поиск получившегося файла. `outdir` остаётся за вызывающим —
+ * запуск soffice и поиск получившегося файла. `outdir` остаётся за вызывающим -
  * он обязан удалить его после разбора результата.
  */
 async function convert(
@@ -62,7 +61,7 @@ async function convert(
   opts: { prefix: string; soffice: string; timeoutMessage: string; missingMessage: string }
 ): Promise<string> {
   const outdir = await mkdtemp(path.join(os.tmpdir(), opts.prefix));
-  // Отдельный профиль на каждый вызов — снимает блокировку «soffice уже запущен»
+  // Отдельный профиль на каждый вызов - снимает блокировку "soffice уже запущен"
   // при параллельных конвертациях.
   const profile = pathToFileURL(path.join(outdir, 'profile')).href;
   const args = [
@@ -89,7 +88,7 @@ async function convert(
   let out: string | null = path.join(outdir, `${stem}.${target}`);
   const names = await readdir(outdir).catch(() => [] as string[]);
   if (!names.includes(`${stem}.${target}`)) {
-    // soffice иногда именует иначе — берём первый файл нужного типа
+    // soffice иногда именует иначе - берём первый файл нужного типа
     const alt = names.find((n) => suffixOf(n).toLowerCase() === `.${target}`);
     out = alt ? path.join(outdir, alt) : null;
   }
@@ -103,7 +102,7 @@ async function convert(
 
 /**
  * Конвертирует старый формат в современный. Возвращает путь к новому файлу
- * (во временной директории — вызывающий должен удалить её после парсинга).
+ * (во временной директории - вызывающий должен удалить её после парсинга).
  * Бросает Error при отсутствии LibreOffice или ошибке конвертации.
  */
 export async function convertToModern(file: string): Promise<string> {
@@ -127,8 +126,8 @@ export async function convertToModern(file: string): Promise<string> {
 }
 
 /**
- * Конвертирует документ (pptx/ppt/odp/docx/…) в PDF через LibreOffice для
- * предпросмотра в браузере. Возвращает путь к PDF во временной директории —
+ * Конвертирует документ (pptx/ppt/odp/docx/...) в PDF через LibreOffice для
+ * предпросмотра в браузере. Возвращает путь к PDF во временной директории -
  * вызывающий обязан удалить её (dirname) после использования.
  */
 export async function convertToPdf(file: string): Promise<string> {

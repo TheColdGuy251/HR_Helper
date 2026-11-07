@@ -14,10 +14,9 @@ import {
 } from '@/lib/docs/common';
 import { createDpoReport } from '@/lib/docs/dpo-report';
 
-// Б2: отчёт по ДПО из xlsx-выгрузки 1С:ЗиК «ПК за период».
-// Порт POST /api/documents/dpo/report из backend/routes/documents.py.
+// Б2: отчёт по ДПО из xlsx-выгрузки 1С:ЗиК "ПК за период".
 //
-// LLM не используется — все числа считаются из таблицы.
+// LLM не используется - все числа считаются из таблицы.
 
 export async function POST(request: NextRequest) {
   const gate = await requireUser();
@@ -36,7 +35,7 @@ export async function POST(request: NextRequest) {
   if (data.length > 30 * 1024 * 1024) return badRequest('Файл больше 30 МБ');
 
   try {
-    // openpyxl берёт первый лист книги (wb.worksheets[0]), а не активный.
+    // Берём первый лист книги, а не активный.
     const rows = sheetTextRows(firstSheet(readWorkbook(data)));
     const { rec, text, stats } = await createDpoReport(gate.user.id, rows);
     return NextResponse.json({

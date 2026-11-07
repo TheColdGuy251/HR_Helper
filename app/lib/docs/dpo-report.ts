@@ -3,18 +3,16 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { buildDocx, type DocxPara } from './docx';
 import { DocValueError, mostCommon, ru, saveGenerated, timestamp } from './common';
-import { toDocsPath } from '@/lib/news';
 
 /**
- * Б2: отчёт по ДПО из выгрузки 1С:ЗиК «ПК за период».
- * Порт services/documents/dpo_report.py.
+ * Б2: отчёт по ДПО из выгрузки 1С:ЗиК "ПК за период".
  *
- * ВАЖНО: 1С группирует строки по человеку — ФИО заполнено только в ПЕРВОЙ
- * строке блока, дальше forward-fill. Все числа считаются ДЕТЕРМИНИРОВАННО из
- * таблицы: в отчёте недопустимы «примерные» цифры LLM.
+ * 1С группирует строки по человеку - ФИО заполнено только в первой
+ * строке блока, дальше forward-fill. Все числа считаются детерминированно из
+ * таблицы: в отчёте недопустимы "примерные" цифры LLM.
  */
 
-/** Триггер чат-команды «отчёт по ДПО» / «отчёт о повышении квалификации». */
+/** Триггер чат-команды "отчёт по ДПО" / "отчёт о повышении квалификации". */
 export const DPO_REQUEST_RE = ru(
   '(отч[её]т\\w*[^.\\n]{0,50}(\\bдпо\\b|повышени\\w*\\s+квалификац))' +
     '|((\\bдпо\\b|повышени\\w*\\s+квалификац)[^.\\n]{0,50}отч[её]т)',
@@ -22,9 +20,9 @@ export const DPO_REQUEST_RE = ru(
 );
 
 const HEADER_MARKERS = ['физическое лицо', 'категория должности'];
-const SHORT_HOURS = 16; // порог «краткосрочной» программы
+const SHORT_HOURS = 16; // порог "краткосрочной" программы
 
-// Категории должностей → группы образца отчёта (считаются по УНИКАЛЬНЫМ людям).
+// Категории должностей -> группы образца отчёта (считаются по уникальным людям).
 const CATEGORY_GROUPS: [string, string[], string][] = [
   ['ППС', ['ППС'], 'профессорско-преподавательский состав (ППС)'],
   ['ПС и ПР', ['ПС', 'ПР'], 'педагогические работники СПО и СОО (ПС и ПР)'],
@@ -42,7 +40,7 @@ const KIND_LABELS: [string, string][] = [
   ['Повышение квалификации', 'по программам повышения квалификации'],
 ];
 
-// Обязательные программы (перечень образца) → ключи поиска в «Теме».
+// Обязательные программы (перечень образца) -> ключи поиска в "Теме".
 const MANDATORY: [string, RegExp][] = [
   ['Оказание первой помощи', ru('перв\\w*\\s+помощ', 'i')],
   ['Противодействие коррупции', /коррупц/i],
@@ -55,7 +53,7 @@ const MANDATORY: [string, RegExp][] = [
 
 const YEAR_RE = ru('\\b(20\\d{2})\\b');
 
-/** float() из Python: «16,5» уже приведена к точке, мусор даёт null. */
+/** Число из строки ("16,5" уже приведена к точке), мусор даёт null. */
 function pyFloat(s: string): number | null {
   const t = s.trim();
   if (!/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(t)) return null;
@@ -90,7 +88,7 @@ export interface DpoStats {
   top_themes: [string, number][];
 }
 
-/** Агрегация выгрузки. rows — строки листа, включая шапку. */
+/** Агрегация выгрузки. rows - строки листа, включая шапку. */
 export function analyzeDpoRows(rows: string[][]): DpoStats {
   let headerIdx: Map<string, number> | null = null;
   const records: DpoRecord[] = [];
@@ -103,7 +101,7 @@ export function analyzeDpoRows(rows: string[][]): DpoStats {
     const low = cells.map((c) => c.toLowerCase());
 
     if (!headerIdx) {
-      // Параметры до шапки: «Период завершения: 31.12.2023» → год отчёта
+      // Параметры до шапки: "Период завершения: 31.12.2023" -> год отчёта
       const joined = cells.join(' ');
       if (joined.toLowerCase().includes('период')) {
         const m = YEAR_RE.exec(joined);
@@ -162,7 +160,7 @@ export function analyzeDpoRows(rows: string[][]): DpoStats {
   for (const r of longRecs) kindCounts.set(r.kind, (kindCounts.get(r.kind) ?? 0) + 1);
   const kinds: [string, number][] = KIND_LABELS.map(([kind, label]) => [label, kindCounts.get(kind) ?? 0]);
 
-  // Категории — по уникальным людям (категория человека = самая частая у его записей)
+  // Категории - по уникальным людям (категория человека = самая частая у его записей)
   const personCat = new Map<string, string>();
   for (const [fio, recs] of people) {
     personCat.set(fio, mostCommon(recs.map((r) => r.category).filter((c) => c)) ?? '');
@@ -174,7 +172,7 @@ export function analyzeDpoRows(rows: string[][]): DpoStats {
   const knownCodes = new Set(CATEGORY_GROUPS.flatMap(([, codes]) => codes));
   const categoriesOther = [...personCat.values()].filter((c) => c && !knownCodes.has(c)).length;
 
-  // Формы обучения — по людям (человек может попасть в несколько форм)
+  // Формы обучения - по людям (человек может попасть в несколько форм)
   const peopleIn = (rx: RegExp): number =>
     [...people.values()].filter((recs) => recs.some((r) => rx.test(r.group || ''))).length;
   const forms = {
@@ -228,7 +226,7 @@ export function analyzeDpoRows(rows: string[][]): DpoStats {
   };
 }
 
-/** Текст отчёта по структуре образца «ДПО за 2023». Все числа — из таблицы. */
+/** Текст отчёта по структуре образца "ДПО за 2023". Все числа - из таблицы. */
 export function buildReportText(stats: DpoStats): string {
   const y = stats.year;
   const p: string[] = [];
@@ -306,8 +304,8 @@ async function renderDpoDocx(stats: DpoStats, bodyText: string): Promise<string>
   return saveGenerated(`dpo_report_${stats.year}_${timestamp()}.docx`, buildDocx(paras));
 }
 
-/** Полный цикл: агрегаты → текст → docx → «Мои документы». */
-export async function createDpoReport(userId: number, rows: string[][]) {
+/** Полный цикл: агрегаты -> текст -> docx -> "Мои документы". */
+export async function createDpoReport(userId: string, rows: string[][]) {
   const stats = analyzeDpoRows(rows);
   const text = buildReportText(stats);
   const filePath = await renderDpoDocx(stats, text);
@@ -315,8 +313,8 @@ export async function createDpoReport(userId: number, rows: string[][]) {
     data: {
       user_id: userId,
       title: `Отчёт по ДПО за ${stats.year} год`,
-      template_key: 'dpo_report',
-      file_path: toDocsPath(filePath),
+      generator: 'dpo_report',
+      file_path: filePath,
       progress: 100,
       status: 'ready',
       fields: {
@@ -324,7 +322,7 @@ export async function createDpoReport(userId: number, rows: string[][]) {
         total_people: stats.total_people,
         long_events: stats.long_events,
       } as Prisma.InputJsonValue,
-      is_pii: true, // списки обученных работников — документ не хранится
+      is_pii: true, // списки обученных работников - документ не хранится
     },
   });
   return { rec, text, stats };

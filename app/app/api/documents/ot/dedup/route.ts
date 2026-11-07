@@ -8,10 +8,8 @@ import { readZipEntries, type ZipEntry } from '@/lib/docs/zip';
 import { readSevenZipEntries } from '@/lib/docs/sevenzip';
 import { runDedup } from '@/lib/docs/ot-dedup';
 
-// Б7: ZIP или 7z с инструкциями по ОТ → пары с процентом совпадения текста,
+// Б7: ZIP или 7z с инструкциями по ОТ -> пары с процентом совпадения текста,
 // группы однотипных и xlsx-отчёт. Детерминированно, без LLM.
-// Порт POST /api/documents/ot/dedup из backend/routes/documents.py;
-// 7z добавлен по отзыву УРП от 21.07 (их архив был «охрана труда.7z»).
 
 const ALLOWED = new Set(['.docx', '.doc', '.pdf', '.rtf', '.txt', '.odt']);
 const MAX_FILES = 500;
@@ -40,8 +38,7 @@ export async function POST(request: NextRequest) {
     return badRequest(`Не удалось обработать архив: ${errText(e)}`);
   }
 
-  // Отбираем те же записи, что и Python: каталоги и посторонние расширения
-  // пропускаются, счёт идёт до 500 файлов.
+  // Каталоги и посторонние расширения пропускаются, счёт идёт до 500 файлов.
   const picked: { name: string; suffix: string; read: () => Buffer }[] = [];
   for (const entry of entries) {
     if (entry.dir || picked.length >= MAX_FILES) continue;
@@ -51,9 +48,9 @@ export async function POST(request: NextRequest) {
     picked.push({ name: fname, suffix, read: entry.read });
   }
 
-  // Все расширения из ALLOWED разбираются здесь же (PDF — unpdf, сканы —
-  // Tesseract, старый Office — LibreOffice), поэтому в FastAPI ничего не
-  // уходит. Файл, который всё-таки не прочитался, попадёт в `unreadable`.
+  // Все расширения из ALLOWED разбираются здесь же (PDF - unpdf, сканы -
+  // Tesseract, старый Office - LibreOffice). Файл, который всё-таки не
+  // прочитался, попадёт в `unreadable`.
   const docs: [string, string][] = [];
   const errors: string[] = [];
   for (const item of picked) {
@@ -79,7 +76,7 @@ export async function POST(request: NextRequest) {
       groups: result.groups.slice(0, 50),
     });
   } catch (e) {
-    // В Python здесь оба except дают 400 — и ValueError, и любая другая ошибка.
+    // Любая ошибка разбора - 400.
     if (e instanceof DocValueError) return badRequest(e.message);
     return badRequest(`Не удалось обработать архив: ${errText(e)}`);
   }

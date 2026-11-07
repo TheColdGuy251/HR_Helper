@@ -2,16 +2,15 @@ import 'server-only';
 import { generateText } from './ml/llm';
 import { BAD_DATE, parseBirthDate } from './pii';
 
-// Распознавание ФИО и даты рождения из текста документа — порт
-// backend/services/pii/recognize.py. Сначала regex по типичным шаблонам,
-// затем LLM: её ответ приоритетнее, regex остаётся запасным вариантом.
+// Распознавание ФИО и даты рождения из текста документа. Сначала regex по
+// типичным шаблонам, затем LLM: её ответ приоритетнее, regex остаётся
+// запасным вариантом.
 //
-// Модуль лежит рядом с lib/pii.ts, а не внутри него: pii.ts — это файл, каталог
-// lib/pii/ создать нельзя без переименования, а тянуть LLM в общий модуль ПДн
-// (его импортируют все роуты) не нужно.
+// Модуль лежит рядом с lib/pii.ts, а не внутри него: тянуть LLM в общий модуль
+// ПДн (его импортируют все роуты) не нужно.
 //
-// В Python `\b` знает кириллицу, в JS — только ASCII, поэтому границу слова
-// подставляем явно (тот же приём, что в lib/pii.ts и lib/parsers).
+// В JS `\b` знает только ASCII, поэтому границу слова подставляем явно (тот же
+// приём, что в lib/pii.ts и lib/parsers).
 
 const W = '0-9A-Za-zА-Яа-яЁё_';
 const B = `(?:(?<![${W}])(?=[${W}])|(?<=[${W}])(?![${W}]))`;
@@ -37,7 +36,7 @@ const BIRTH_MARKERS = [
   /г\.р\.\s*(\d{2})\.(\d{2})\.(\d{4})/i,
 ];
 
-/** date(y, m, d) в Python: несуществующая дата — ValueError, здесь null. */
+/** Дата из частей; несуществующая дата - null. */
 function makeDate(dd: string, mm: string, yyyy: string): Date | null {
   const parsed = parseBirthDate(`${dd}.${mm}.${yyyy}`);
   return parsed === BAD_DATE ? null : parsed;
@@ -50,14 +49,14 @@ interface PreParsed {
   birth_date?: Date;
 }
 
-/** Лёгкая попытка вытащить очевидное regex'ом (_quick_pre_parse). */
+/** Лёгкая попытка вытащить очевидное regex'ом. */
 function quickPreParse(text: string): PreParsed {
   const out: PreParsed = {};
   const fio = FIO_RE.exec(text);
   if (fio) {
     out.surname = fio[1];
     out.name = fio[2];
-    out.patronymic = fio[3] ?? null; // group(3) без совпадения — None
+    out.patronymic = fio[3] ?? null; // группа 3 без совпадения - undefined
   }
   // Первый сработавший маркер прекращает поиск, даже если дата в нём битая.
   for (const rx of BIRTH_MARKERS) {
@@ -71,12 +70,12 @@ function quickPreParse(text: string): PreParsed {
   return out;
 }
 
-/** Python `a or b`: пустая строка и None уходят к запасному значению. */
+/** Первое непустое значение: пустая строка и null уходят к запасному. */
 function orElse(a: unknown, b: unknown): unknown {
   return a ? a : b;
 }
 
-/** `_clean`: пустое значение — null, иначе строка без пробелов по краям. */
+/** `_clean`: пустое значение - null, иначе строка без пробелов по краям. */
 function clean(v: unknown): string | null {
   if (!v) return null;
   const s = String(v).trim();
@@ -91,7 +90,7 @@ export interface RecognizedPerson {
 }
 
 /**
- * Порт recognize_person. Любое поле может быть null — UI даёт исправить.
+ * Любое поле может быть null - UI даёт исправить.
  * Сбой LLM (недоступна, переполнена очередь, мусор вместо JSON) не ошибка:
  * остаётся результат regex-эвристики.
  */
@@ -110,11 +109,11 @@ export async function recognizePerson(text: string): Promise<RecognizedPerson> {
       maxTokens: 160,
       temperature: 0.0,
     });
-    // Модель любит обрамлять JSON пояснениями — берём первый объект в ответе.
+    // Модель любит обрамлять JSON пояснениями - берём первый объект в ответе.
     const m = /\{.*?\}/s.exec(raw);
     data = m ? (JSON.parse(m[0]) as Record<string, unknown>) : {};
   } catch {
-    // В Python здесь logger.warning; своего логгера у фронтенда нет.
+    // Сбой LLM не критичен: остаётся результат regex.
     data = {};
   }
 

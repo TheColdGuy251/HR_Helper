@@ -7,18 +7,19 @@ import {
   maybeHyde,
   maybeRewriteQuery,
 } from './advanced';
-import { prepareSearchQuery } from './aliases';
-import { narrowByQuery, resolveDocRefs, type RelatedFile } from './blank-forms';
+import { expandAbbreviations, prepareSearchQuery } from './aliases';
+import { narrowByQuery, resolveBlankByQuery, resolveDocRefs, type RelatedFile } from './blank-forms';
 import { splitText } from './chunker';
 import { RAG } from './config';
 import { embed, embedOne } from './embeddings';
 import { matchFaq } from './faq';
 import { resolveIntent, type Intent } from './intent';
-import { chatStream, type ChatMessage } from './llm';
-import { needsPlanner, planQuery } from './planner';
+import { chatStream, generateText, type ChatMessage } from './llm';
+import { needsPlanner, overridePlanWithRegex, planQuery } from './planner';
 import { rerank } from './reranker';
 import {
   fetchChunksByArticleNo,
+  hitToChunk,
   hybridSearch,
   isStoreAlive,
   parseArticleNo,
@@ -26,7 +27,9 @@ import {
   type RetrievedChunk,
   type SourceItem,
 } from './retriever';
+import { search as denseSearchQdrant } from './qdrant';
 import { correctTypos } from './spellfix';
+import { short, trace, traceStart } from './trace';
 import {
   countArticles,
   countUnits,
@@ -42,6 +45,7 @@ import {
   pickRelevantDocument,
   rangeArticlesByMeta,
   rangeUnitsByMeta,
+  resolveDocFromQuery,
   resolveDocHint,
 } from './structured';
 import {
@@ -49,27 +53,21 @@ import {
   SYSTEM_PROMPT_ATTACHMENT,
   SYSTEM_PROMPT_CHAT,
   SYSTEM_PROMPT_COMPARE,
+  SYSTEM_PROMPT_FOLLOWUP_REWRITE,
   SYSTEM_PROMPT_RAG,
   SYSTEM_PROMPT_SMALLTALK,
   type PromptChunk,
 } from './prompts';
 
-// Оркестрация ответа ассистента. Порт RAGPipeline.answer_stream() и
-// RAGPipeline._retrieve() из services/rag/pipeline.py: spellfix → intent →
-// гейты болтовни → FAQ → планировщик/поиск → сбор контекста → системный
-// промпт → генерация → источники.
+// Оркестрация ответа ассистента.
 //
-// В FastAPI остались только импорт FAQ-таблиц (docx) и генерация документов по
-// шаблонам; продвинутые ветки RAG (планировщик, HyDE, декомпозиция, темы,
-// self-check, сводка диалога) перенесены сюда и включаются теми же флагами
-// окружения — см. lib/ml/config.ts.
+// Продвинутые ветки RAG (планировщик, HyDE, декомпозиция, темы, self-check,
+// сводка диалога) включаются флагами окружения - см. lib/ml/config.ts.
 
-// ---------------------------------------------------------------------------
 // Юникод-регэкспы
-// ---------------------------------------------------------------------------
-// В Python `\w` и `\b` знают кириллицу, в JS — только ASCII: `/\bстатья/` не
-// матчится вовсе. Поэтому компилируем «питоновские» шаблоны, подставляя
-// расширенный класс слова и корректную границу слова.
+// В JS `\w` и `\b` знают только ASCII: `/\bстатья/` не матчится вовсе. Поэтому
+// шаблоны компилируем, подставляя расширенный класс слова и корректную границу
+// слова.
 
 const W = '0-9A-Za-zА-Яа-яЁё_';
 const B = `(?:(?<![${W}])(?=[${W}])|(?<=[${W}])(?![${W}]))`;
@@ -78,16 +76,16 @@ function ru(pattern: string, flags = 'i'): RegExp {
   return new RegExp(pattern.replace(/\\b/g, B).replace(/\\w/g, `[${W}]`), flags);
 }
 
-// Составные номера сохраняем целиком: «статья 84.1».
+// Составные номера сохраняем целиком: "статья 84.1".
 const EXACT_ARTICLE_ANCHOR_RE = ru('\\b(?:стат\\w*|ст\\.?)\\s+(?:номер\\s+|№\\s*)?(\\d+(?:\\.\\d+)?)', 'gi');
-// Обратный порядок: «3 статью», «47 ст.».
+// Обратный порядок: "3 статью", "47 ст.".
 const EXACT_ARTICLE_ANCHOR_REVERSE_RE = ru('\\b(\\d+(?:\\.\\d+)?)\\s+(?:стат\\w*|ст\\.)', 'gi');
-// После найденного номера в небольшом окне — дополнительные через «, и или».
+// После найденного номера в небольшом окне - дополнительные через ", и или".
 const EXTRA_NUMBER_RE = /(?:[,;]|\sи\s|\sили\s)\s*(\d+(?:\.\d+)?)/gi;
-// Другая структурная единица в хвосте — значит перечисление уже не про статьи.
+// Другая структурная единица в хвосте - значит перечисление уже не про статьи.
 const OTHER_UNIT_RE = ru('\\b(?:год|глав|пункт|раздел|часть|кварт)\\w*', 'i');
 
-/** Все номера статей из запроса («статьи 80, 81 и 82», «ст. 192 и 193»). */
+/** Все номера статей из запроса ("статьи 80, 81 и 82", "ст. 192 и 193"). */
 export function extractArticleNumbers(query: string): string[] {
   const q = query || '';
   const out: string[] = [];
@@ -109,49 +107,61 @@ export function extractArticleNumbers(query: string): string[] {
   return out;
 }
 
-// Болтовня/благодарности/приветствия: их нельзя гнать через RAG — иначе на
-// «спасибо» идёт поиск и выдаётся шаблонный отказ «нет в базе».
+// Болтовня/благодарности/приветствия: их нельзя гнать через RAG - иначе на
+// "спасибо" идёт поиск и выдаётся шаблонный отказ "нет в базе".
 const GREET_RE = ru(
   '\\b(спасибо|благодар|спс|пожалуйста|привет|здравствуй|здаров|добрый день|' +
     'добрый вечер|доброе утро|пока|до свидания|всего доброго|увидимся|' +
     'понял|поняла|понятно|ясно|ок|окей|хорошо|ладно|круто|отлично|супер|класс)\\b'
 );
-// ВАЖНО: «?» здесь НЕ признак информационного запроса — иначе «Привет, это кто?»
+// "?" здесь не признак информационного запроса - иначе "Привет, это кто?"
 // уходил бы в RAG и получал отказ вместо живого ответа.
 const INFO_RE = ru(
   '\\b(расскажи|объясни|подскажи|сравни|покажи|найди|перечисли|опиши|дай|' +
-    'сформулируй|назов\\w*|привед\\w*|процитир\\w*|как |какой|какая|какие|сколько|когда|где|почему|зачем|' +
+    'сформулируй|назов\\w*|привед\\w*|процитир\\w*|как |какой|какая|какие|каков\\w*|сколько|когда|где|почему|зачем|' +
     'можно ли|нужно|вправе|обязан|стать|пункт\\w*|подпункт\\w*|положени\\w*|раздел|глав|' +
-    'номер\\w*|текст\\w*|выдержк\\w*|договор|отпуск|' +
-    'увольн|уволи|приём|прием|зарплат|оклад|преми|кодекс|закон|норм|срок|' +
-    'документ|оформ|порядок|право|гарант)\\b'
+    'номер\\w*|текст\\w*|выдержк\\w*|договор\\w*|отпуск\\w*|продолжительн\\w*|' +
+    'увольн\\w*|уволи\\w*|приём|прием\\w*|зарплат\\w*|оклад\\w*|преми\\w*|кодекс\\w*|закон\\w*|норм\\w*|срок\\w*|' +
+    'документ\\w*|оформ\\w*|порядок|право|гарант\\w*)\\b' +
+    // "что такое ВОО", "а что по наградам", "что за конкурс" - информационные
+    // запросы; без этих форм они уходили в болтовню и модель выдумывала ответ.
+    '|что\\s+такое|что\\s+за\\b|что\\s+по\\b|что\\s+насч[её]т|что\\s+с\\b'
 );
-// Вопрос про новости HR-отдела → отвечаем из ленты /news.
+// Просьба пошутить - болтовня, а не поиск по нормативке ("расскажи анекдот"
+// раньше попадал в RAG из-за "расскажи" в INFO_RE и получал сухой отказ).
+const JOKE_RE = ru('\\b(анекдот\\w*|шутк\\w*|пошути|развесели|прикол\\w*|посмейся|смешн\\w*)\\b');
+// Арифметика внутри фразы ("сколько будет 2+2?"): не HR-вопрос, отвечаем без
+// поиска. "-" и "/" не включены - они встречаются в номерах статей и приказов.
+const MATH_EXPR_RE = /\d\s*[+*×^]\s*\d/;
+const DOC_WORD_RE = ru('\\b(стат|пункт|раздел|глав|приказ|№|параграф)');
+// Вопрос про новости HR-отдела -> отвечаем из ленты /news.
 const NEWS_RE = ru('\\b(новост\\w*|анонс\\w*|дайджест\\w*|объявлени\\w*)\\b|что\\s+нового|что\\s+новенького');
-// «Выдай/дай бланк/образец/шаблон/форму заявления …» → отдаём файл(ы) карточками,
-// без длинного RAG-ответа по нормативке (протокол: бот ВЫДАЁТ бланк).
+// "Выдай/дай бланк/образец/шаблон/форму заявления ..." -> отдаём файл(ы) карточками,
+// без длинного RAG-ответа по нормативке (протокол: бот выдаёт бланк).
 const BLANK_RE = ru(
   '\\b(бланк\\w*|образ(?:ец|цы|ца|цов)|шаблон\\w*)\\b' +
     '|\\b(выдай|дай|дать|нужн\\w+|скачать|пришл\\w+|предостав\\w+|получить|хочу)\\b' +
     '[^.]{0,40}\\b(заявлени\\w*|записк\\w*|форм\\w*|документ\\w*)\\b'
 );
-// Социальные вопросы о самом ассистенте — разговорный ответ без поиска.
+// Социальные вопросы о самом ассистенте - разговорный ответ без поиска.
 const SOCIAL_RE = ru(
   '\\b(кто\\s+ты|ты\\s+кто|это\\s+кто|кто\\s+это|как\\s+тебя\\s+зовут|ты\\s+бот|' +
     'ты\\s+человек|ты\\s+робот|что\\s+ты\\s+умеешь|что\\s+умеешь|чем\\s+можешь\\s+помочь|' +
     'чем\\s+поможешь|как\\s+дела|как\\s+ты|что\\s+делаешь)\\b'
 );
-// Короткие уточняющие продолжения по той же теме («а подробнее?», «процитируй её»).
+// Короткие уточняющие продолжения по той же теме ("а подробнее?", "процитируй её").
 const FOLLOWUP_MARKER_RE = ru(
-  '\\b(её|ее|неё|нее|его|них|это|этот|эту|этой|этом|там|туда|оттуда|отсюда|выше|тут|здесь)\\b' +
+  '\\b(её|ее|неё|нее|его|них|это|этот|эту|этой|этом|этого|этому|этим|там|туда|оттуда|отсюда|выше|тут|здесь)\\b' +
     '|из\\s+н(?:его|её|ее|их)\\b' +
     '|подробн|целиком|полност|дальше|продолж|процитир|разверн|раскрой' +
-    '|\\bа\\s+(что|как|где|когда|почему|зачем|если)\\b|ещё|\\bеще\\b'
+    // "а какие документы...", "а в какой срок..." - продолжения той же темы
+    '|\\bа\\s+(?:в|на|за|по|у)?\\s*(что|как|какие|какой|какая|каков\\w*|где|когда|сколько|почему|зачем|если)\\b' +
+    '|ещё|\\bеще\\b|\\bпотом\\b|\\bзатем\\b'
 );
-// Арифметика/числа («1+1», «2*3=»), пустой набор символов.
+// Арифметика/числа ("1+1", "2*3="), пустой набор символов.
 const ARITHMETIC_RE = /^[\d\s+\-*\/=^%.,()]+$/;
-// Структурные сигналы («положение номер 3.2») проверяет needsPlanner из
-// planner.ts — тот же список, что гейтит вызов планировщика в Python.
+// Структурные сигналы ("положение номер 3.2") проверяет needsPlanner из
+// planner.ts - тот же список гейтит вызов планировщика.
 
 function isSmalltalk(query: string): boolean {
   const q = (query || '').trim();
@@ -166,19 +176,19 @@ function isFollowup(query: string, history: HistoryEntry[] | undefined): boolean
   return FOLLOWUP_MARKER_RE.test(q);
 }
 
-/** Тривиальные/мусорные запросы («1+1», «вавыы»), не требующие документов. */
+/** Тривиальные/мусорные запросы ("1+1", "вавыы"), не требующие документов. */
 function looksNonknowledge(query: string): boolean {
   const q = (query || '').trim();
   if (!q) return false;
   if (ARITHMETIC_RE.test(q)) return true;
   if (INFO_RE.test(q)) return false;
   if (extractArticleNumbers(q).length) return false;
-  // Число в HR-запросе почти всегда адресное («положение 3.2», «пункт 5»).
+  // Число в HR-запросе почти всегда адресное ("положение 3.2", "пункт 5").
   if (/\d/.test(q)) return false;
   return q.length <= 40;
 }
 
-// Обзорные запросы по документу и «про сам документ» (для вложений).
+// Обзорные запросы по документу и "про сам документ" (для вложений).
 const OVERVIEW_RE = ru(
   '(переска\\w+|кратк\\w+|вкратц\\w+|о\\s+ч[её]м|содержани\\w+|суть|резюм\\w+|' +
     'summary|обзор|главн\\w+\\s+мысл|основн\\w+\\s+(?:мысл|положени|идеи))'
@@ -187,13 +197,11 @@ const ABOUT_ATTACHMENT_RE = ru(
   '\\b(документ\\w*|файл\\w*|вложени\\w*|тексте?|прикреплённ\\w*|прикреплен\\w*|здесь|тут)\\b'
 );
 
-// ---------------------------------------------------------------------------
-// Пост-обработка ответа (порт services/rag/post_process.py)
-// ---------------------------------------------------------------------------
+// Пост-обработка ответа
 
 const THINK_RE = /<think>[\s\S]*?<\/think>\s*/gi;
 const THINK_OPEN_RE = /^\s*<think>[^\n]*/i;
-// Иероглифы CJK — артефакт мультиязычной токенизации Qwen3; у нас всё на русском.
+// Иероглифы CJK - артефакт мультиязычной токенизации Qwen3; у нас всё на русском.
 const CJK_RE = /[぀-ヿ㐀-䶿一-鿿가-힯]+/g;
 
 function dedupeParagraphs(answer: string, maxRepeats = 1): string {
@@ -222,7 +230,7 @@ export function postProcessAnswer(answer: string): string {
   let out = answer.replace(THINK_RE, '');
   out = out.replace(THINK_OPEN_RE, '');
   out = out.replace(/^\s+/, '');
-  // Заменяем на маркер «[?]»: пользователь сразу увидит, что модель сломалась.
+  // Заменяем на маркер "[?]": пользователь сразу увидит, что модель сломалась.
   out = out.replace(CJK_RE, '[?]');
   return dedupeParagraphs(out);
 }
@@ -246,9 +254,9 @@ function cos(a: number[], b: number[]): number {
 }
 
 /**
- * Модель часто пишет блок «Источники», но забывает инлайн-ссылки [k] в тексте.
- * Если в ТЕЛЕ ответа нет ни одной ссылки — расставляем их по близости абзаца к
- * чанку-источнику ([k] ↔ sourceTexts[k-1]). Абзацы без уверенного соответствия
+ * Модель часто пишет блок "Источники", но забывает инлайн-ссылки [k] в тексте.
+ * Если в теле ответа нет ни одной ссылки - расставляем их по близости абзаца к
+ * чанку-источнику ([k] <-> sourceTexts[k-1]). Абзацы без уверенного соответствия
  * не трогаем: ложная атрибуция хуже отсутствующей.
  */
 export async function ensureInlineCitations(
@@ -262,7 +270,7 @@ export async function ensureInlineCitations(
   const tail = m ? answer.slice(m.index) : '';
   if (REF_RE.test(body)) return answer; // инлайн-ссылки уже есть
 
-  // split с захватывающей группой сохраняет разделители — как re.split в Python.
+  // split с захватывающей группой сохраняет разделители.
   const paragraphs = body.split(/(\n\s*\n+)/);
   try {
     const srcVecs = await embed(
@@ -284,7 +292,7 @@ export async function ensureInlineCitations(
     }
     if (changed) return paragraphs.join('') + tail;
   } catch {
-    /* авторасстановка не удалась — отдаём ответ как есть */
+    /* авторасстановка не удалась - отдаём ответ как есть */
   }
   return answer;
 }
@@ -305,7 +313,7 @@ function spreadSample(chunks: string[], k: number): string[] {
   return [...idxs].sort((a, b) => a - b).map((i) => chunks[i]).slice(0, k);
 }
 
-/** Косинусная близость чанков вложения к запросу — top-k в исходном порядке. */
+/** Косинусная близость чанков вложения к запросу - top-k в исходном порядке. */
 async function rankAttachmentChunks(query: string, chunks: string[], k: number): Promise<string[]> {
   if (chunks.length <= k) return chunks;
   try {
@@ -325,7 +333,7 @@ async function rankAttachmentChunks(query: string, chunks: string[], k: number):
 }
 
 export interface AttachedDoc {
-  id?: number | null;
+  id?: string | null;
   filename?: string | null;
   content?: string | null;
   stored_path?: string | null;
@@ -337,8 +345,8 @@ function isOverviewQuery(query: string): boolean {
 }
 
 /**
- * Запрос явно про сам приложенный документ. НЕ срабатывает при явном номере
- * статьи — это адресный KB-запрос, нормативку в таком случае оставляем.
+ * Запрос явно про сам приложенный документ. Не срабатывает при явном номере
+ * статьи - это адресный KB-запрос, нормативку в таком случае оставляем.
  */
 function isAboutAttachment(query: string): boolean {
   const q = query || '';
@@ -364,8 +372,8 @@ async function selectAttachmentContext(
     if (text.length <= ATTACHMENT_MAX_CHARS) {
       picked = [text];
     } else {
-      // Тот же чанкер, что у индексатора БЗ (Python здесь тоже зовёт split_text):
-      // структурные стратегии режут вложение по разделам, а не «по 600 символов».
+      // Тот же чанкер, что у индексатора БЗ: структурные стратегии режут
+      // вложение по разделам, а не "по 600 символов".
       const chunks = splitText(text).map((c) => c.text);
       if (!chunks.length) {
         picked = [text.slice(0, ATTACHMENT_MAX_CHARS)];
@@ -408,7 +416,7 @@ async function selectAttachmentContext(
 // Новости HR
 // ---------------------------------------------------------------------------
 
-/** Последние опубликованные новости → чанки контекста + источники. */
+/** Последние опубликованные новости -> чанки контекста + источники. */
 async function recentNewsContext(limit = 6): Promise<[PromptChunk[], Record<string, unknown>[]]> {
   const posts = await prisma.news_posts.findMany({
     where: { is_published: true },
@@ -421,7 +429,7 @@ async function recentNewsContext(limit = 6): Promise<[PromptChunk[], Record<stri
   const srcs: Record<string, unknown>[] = [];
   for (const p of posts) {
     const text = (p.body_html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-    // В БД лежит наивный UTC — берём UTC-компоненты, иначе дата «поедет» на зону.
+    // В БД лежит наивный UTC - берём UTC-компоненты, иначе дата "поедет" на зону.
     const d = p.created_at;
     const date = d
       ? `${String(d.getUTCDate()).padStart(2, '0')}.${String(d.getUTCMonth() + 1).padStart(2, '0')}.${d.getUTCFullYear()}`
@@ -442,7 +450,7 @@ async function recentNewsContext(limit = 6): Promise<[PromptChunk[], Record<stri
 // ---------------------------------------------------------------------------
 
 /**
- * Для топ-`maxFull` статей подтягивает ВСЕ их чанки — полная статья в контексте.
+ * Для топ-`maxFull` статей подтягивает все их чанки - полная статья в контексте.
  * Перечни и основания бывают глубоко в длинной статье, а реранкер поднимает
  * лишь один её фрагмент. Полные статьи идут первыми.
  */
@@ -476,8 +484,48 @@ async function augmentWithArticles(
 
 /**
  * Текст последних реплик для разрешения референсных follow-up-запросов
- * («процитируй её»). Берём последние maxTurns пар, обрезаем по длине.
+ * ("процитируй её"). Берём последние maxTurns пар, обрезаем по длине.
  */
+/**
+ * "а ещё что-нибудь?" + история -> "какие ещё меры поддержки положены молодым
+ * НПР?". Возвращает null, если переписать не удалось - тогда используется
+ * исходная формулировка (как раньше).
+ */
+async function rewriteFollowupQuery(
+  query: string,
+  history: HistoryEntry[] | undefined
+): Promise<string | null> {
+  const ctx = historyContext(history, 2);
+  if (!ctx) return null;
+  try {
+    const out = (
+      await generateText({
+        system: SYSTEM_PROMPT_FOLLOWUP_REWRITE,
+        user: `Диалог:\n${ctx}\n\nРеплика пользователя:\n${query}`,
+        maxTokens: 80,
+        temperature: 0,
+      })
+    ).trim().replace(/^["«]|["»]$/g, '');
+    // Санитарные границы: пустой/односложный или разросшийся результат - брак.
+    if (out.length < 8 || out.length > 240 || !/[а-яёa-z]/i.test(out)) return null;
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Фолбэк, когда LLM-рерайт продолжения не удался: склеиваем реплику с
+ * последним вопросом пользователя - поиску нужен предмет разговора
+ * ("а в какой срок отчитаться? (речь о: как оформить командировку)").
+ */
+function followupFallback(query: string, history: HistoryEntry[] | undefined): string | null {
+  const lastUser = [...(history || [])].reverse().find((m) => m.role === 'user');
+  const topic = (lastUser?.content || '').trim().replace(/\s+/g, ' ');
+  if (!topic) return null;
+  return `${query} (речь о: ${topic.slice(0, 120)})`;
+}
+
 function historyContext(history: HistoryEntry[] | undefined, maxTurns = 2): string {
   if (!history?.length) return '';
   return history
@@ -493,34 +541,50 @@ function historyContext(history: HistoryEntry[] | undefined, maxTurns = 2): stri
 
 /**
  * Поиск по плану запроса. Возвращает [чанки, использованные подзапросы].
- * Порт RAGPipeline._retrieve: сперва структурные режимы планировщика (они
- * отвечают детерминированно по индексу), затем обычный семантический путь.
+ *
+ * Экспортируется ради диагностики (scripts/rag-probe.mjs): даёт посмотреть
+ * выдачу поиска, не запуская генерацию ответа.
  */
-async function retrieve(
+export async function retrieve(
   query: string,
   onStatus?: (stage: string) => void,
   history?: HistoryEntry[]
 ): Promise<[RetrievedChunk[], string[]]> {
   onStatus?.('search');
 
-  // Планировщик: NL → структурный план. История нужна, чтобы разрешать ссылки
-  // «её/эту статью» из прошлых реплик.
-  const plan = await planQuery(query, historyContext(history));
+  // Планировщик: NL -> структурный план. История нужна, чтобы разрешать ссылки
+  // "её/эту статью" из прошлых реплик. Явные сигналы запроса ("пункт 6.1",
+  // "сколько разделов") поправляют недетерминированный LLM-план регэкспами.
+  const llmPlan = await planQuery(query, historyContext(history));
+  const plan = overridePlanWithRegex(llmPlan, query);
+  trace('plan', {
+    mode: plan.mode,
+    unit: plan.unit,
+    nos: plan.article_nos,
+    extreme: plan.extreme,
+    doc_hint: plan.doc_hint,
+    overridden: plan.mode !== llmPlan.mode || plan.unit !== llmPlan.unit,
+    search_text: short(plan.search_text, 90),
+  });
   const isArticle = plan.unit === 'article';
   const planText = plan.search_text || query;
 
-  // --- exact: «статья 81», «раздел 3», «пункт 5» ---
+  // --- exact: "статья 81", "раздел 3", "пункт 5" ---
   if (plan.mode === 'exact_article' && plan.article_nos.length) {
-    // Привязка к документу: сперва явная подсказка («ТК», «коллективный
-    // договор»), иначе семантическое голосование. Без неё «пункт 3» выбирался
-    // бы по ВСЕЙ базе и контекст заполняли пункты 3 чужих документов. Пустой
-    // результат в выбранном документе → откат к глобальному поиску.
-    const docId = (await resolveDocHint(plan.doc_hint)) ?? (await pickRelevantDocument(planText));
+    // Привязка к документу: сперва явная подсказка ("ТК", "коллективный
+    // договор"), иначе семантическое голосование. Без неё "пункт 3" выбирался
+    // бы по всей базе и контекст заполняли пункты 3 чужих документов. Пустой
+    // результат в выбранном документе -> откат к глобальному поиску.
+    const docId =
+      (await resolveDocHint(plan.doc_hint)) ??
+      (await resolveDocFromQuery(query)) ??
+      (await pickRelevantDocument(planText));
+    trace('exact_doc', { doc_id: docId });
     let chunks: RetrievedChunk[];
     if (isArticle) {
       chunks = await exactArticleByMeta(plan.article_nos, docId);
       if (!chunks.length && docId !== null) chunks = await exactArticleByMeta(plan.article_nos, null);
-      // Старые данные без article_no — текстовый фолбэк.
+      // Старые данные без article_no - текстовый фолбэк.
       if (!chunks.length) chunks = await exactArticleRetrieve(plan.article_nos.map(fmtArticleNo));
     } else {
       chunks = await exactUnitsByMeta(plan.unit, plan.article_nos, docId);
@@ -532,42 +596,44 @@ async function retrieve(
     }
   }
 
-  // --- extreme: «первая/последняя статья/раздел/глава/пункт» ---
+  // --- extreme: "первая/последняя статья/раздел/глава/пункт" ---
+  // Внутрь передаём оригинальный запрос: он нужен только для привязки к
+  // документу, а название документа в search_text плана часто теряется.
   if (plan.mode === 'extreme' && plan.extreme) {
     let chunks: RetrievedChunk[];
     if (isArticle) {
-      chunks = await extremeArticleByMeta(plan.extreme, planText, plan.doc_hint);
+      chunks = await extremeArticleByMeta(plan.extreme, query, plan.doc_hint);
       if (!chunks.length) {
         const no = await findExtremeArticleNumber(plan.extreme); // фолбэк на скан заголовков
         if (no) chunks = await exactArticleRetrieve([no]);
       }
     } else {
-      chunks = await extremeUnitByMeta(plan.unit, plan.extreme, planText, plan.doc_hint);
+      chunks = await extremeUnitByMeta(plan.unit, plan.extreme, query, plan.doc_hint);
     }
     if (chunks.length) return [chunks, [planText]];
   }
 
-  // --- range: «первые/последние N статей/разделов/пунктов» ---
+  // --- range: "первые/последние N статей/разделов/пунктов" ---
   if (plan.mode === 'range' && plan.range_n) {
     let chunks: RetrievedChunk[];
     if (isArticle) {
-      chunks = await rangeArticlesByMeta(plan.range_n, plan.range_order, planText, plan.doc_hint);
+      chunks = await rangeArticlesByMeta(plan.range_n, plan.range_order, query, plan.doc_hint);
       if (!chunks.length) chunks = await listQueryRetrieve(planText, plan.range_n, plan.range_order);
     } else {
-      chunks = await rangeUnitsByMeta(plan.unit, plan.range_n, plan.range_order, planText, plan.doc_hint);
+      chunks = await rangeUnitsByMeta(plan.unit, plan.range_n, plan.range_order, query, plan.doc_hint);
     }
     if (chunks.length) return [chunks, [planText]];
   }
 
-  // --- count: «сколько статей/разделов/глав» ---
+  // --- count: "сколько статей/разделов/глав" ---
   if (plan.mode === 'count') {
     const chunks = isArticle
-      ? await countArticles(planText, plan.doc_hint)
-      : await countUnits(plan.unit, planText, plan.doc_hint);
+      ? await countArticles(query, plan.doc_hint)
+      : await countUnits(plan.unit, query, plan.doc_hint);
     if (chunks.length) return [chunks, [planText]];
   }
 
-  // --- Safety net: план мог быть semantic, но в запросе явно «статья N» ---
+  // --- Safety net: план мог быть semantic, но в запросе явно "статья N" ---
   if (plan.mode === 'semantic') {
     const explicit = extractArticleNumbers(query);
     if (explicit.length) {
@@ -579,10 +645,10 @@ async function retrieve(
   // === Семантический путь (semantic | compare) ===
   // Шаг 0: переписываем запрос, если есть отрицания.
   const rewritten = await maybeRewriteQuery(query);
-  // Темы для приоритизации тегов — необязательно, дёшево, если LLM свободна.
+  // Темы для приоритизации тегов - необязательно, дёшево, если LLM свободна.
   const topics = RAG.useTopicClassify ? await classifyTopics(rewritten) : [];
   const subqueries = await maybeDecompose(rewritten);
-  // Декомпозиция ДОПОЛНЯЕТ, а не заменяет оригинал: иначе для развёрнутых
+  // Декомпозиция дополняет, а не заменяет оригинал: иначе для развёрнутых
   // формулировок поиск идёт только по узким подвопросам и главная статья не
   // попадает в пул.
   const searchSet = [...new Set([rewritten, ...subqueries])];
@@ -590,7 +656,7 @@ async function retrieve(
   const allCandidates: RetrievedChunk[] = [];
   for (const sub of searchSet) {
     // Поисковый запрос расширяем аббревиатурами и юр-синонимами (+ HyDE, если
-    // включён); реранк идёт по ИСХОДНОЙ формулировке — так же, как в Python.
+    // включён); реранк идёт по исходной формулировке.
     const searchQuery = await maybeHyde(prepareSearchQuery(sub));
     allCandidates.push(...(await hybridSearch(searchQuery, { topics: topics.length ? topics : null })));
   }
@@ -607,9 +673,19 @@ async function retrieve(
   if (!uniq.length) return [[], subqueries];
 
   onStatus?.('rerank');
-  const top = await rerank(query, uniq);
+  // Реранк по запросу с раскрытыми аббревиатурами (без синонимов - они размывают
+  // вопрос): кросс-энкодер не знает, что "ПК" = "повышение квалификации", и
+  // топил такие вопросы в документах, где "ПК" встречается дословно в другом
+  // смысле (инструкции по охране труда).
+  const rerankQuery = expandAbbreviations(query);
+  const top = await rerank(rerankQuery, uniq);
+  trace('rerank', {
+    query: short(rerankQuery, 120),
+    candidates: uniq.length,
+    top: top.slice(0, 4).map((c) => `${short(c.title, 40)}#${c.document_id}`),
+  });
   // Safety-net: реранкер бывает уверенно неправ и выбрасывает сильный результат
-  // гибридного поиска. Гарантируем, что топ-N RRF дойдут до контекста —
+  // гибридного поиска. Гарантируем, что топ-N RRF дойдут до контекста -
   // реранкер переупорядочивает, но не теряет.
   const keys = new Set(top.map((c) => `${c.document_id}:${c.chunk_index}`));
   for (const c of uniq.slice(0, RAG.rerankRrfKeep)) {
@@ -619,6 +695,30 @@ async function retrieve(
       keys.add(key);
     }
   }
+
+  // Вопрос явно называет документ ("...по коллективному договору?"), а в топ не
+  // попало ни одного его чанка - реранк/RRF увели контекст в соседние документы,
+  // и ответ выходил "в выдержках не указано". Добираем лучшие чанки названного
+  // документа: сначала из пула кандидатов, а если его нет и там - прямым
+  // dense-поиском с фильтром по document_id (пул мог целиком состоять из
+  // "соседей", как с "ежегодным основным отпуском" и Отраслевым соглашением).
+  try {
+    const namedDoc = await resolveDocFromQuery(query);
+    if (namedDoc !== null && !top.some((c) => c.document_id === namedDoc)) {
+      let boosted = uniq.filter((c) => c.document_id === namedDoc).slice(0, 2);
+      if (!boosted.length) {
+        const qvec = await embedOne(prepareSearchQuery(query), true);
+        boosted = (await denseSearchQdrant(qvec, { topK: 2, filters: { document_id: namedDoc } })).map(
+          (h) => hitToChunk(h, h.score)
+        );
+      }
+      trace('named_doc_boost', { doc_id: namedDoc, added: boosted.length });
+      top.push(...boosted);
+    }
+  } catch {
+    /* буст не удался - контекст остаётся как есть */
+  }
+
   return [await augmentWithArticles(top), subqueries];
 }
 
@@ -635,12 +735,12 @@ export interface AnswerOptions {
   dialogueSummary?: string | null;
   onStatus?: (stage: string) => void;
   extraContext?: string | null;
-  /** Для пересланного из мессенджера пустая выдача — не повод для отказа. */
+  /** Для пересланного из мессенджера пустая выдача - не повод для отказа. */
   allowNoContextAnswer?: boolean;
-  userId?: number | null;
+  userId?: string | null;
   onPosition?: (position: number, total: number) => void;
   signal?: AbortSignal;
-  /** Готовое намерение от вызывающего кода; null — определяем сами. */
+  /** Готовое намерение от вызывающего кода; null - определяем сами. */
   intentHint?: Intent | null;
 }
 
@@ -648,7 +748,7 @@ export interface AnswerResult {
   stream: AsyncGenerator<string>;
   sources: (SourceItem | Record<string, unknown>)[];
   usedSubqueries: string[];
-  /** Тексты чанков, ушедших в контекст LLM — для восстановления ссылок [k]. */
+  /** Тексты чанков, ушедших в контекст LLM - для восстановления ссылок [k]. */
   contextTexts: string[];
   contact: string | null;
   relatedFiles: RelatedFile[];
@@ -661,6 +761,142 @@ async function* single(text: string): AsyncGenerator<string> {
 const TEMP_ANSWER = Number(process.env.LLM_ANSWER_TEMPERATURE || 0.1);
 const TEMP_SMALLTALK = Number(process.env.LLM_SMALLTALK_TEMPERATURE || 0.7);
 const TEMP_CHAT = Number(process.env.LLM_TEMPERATURE || 0.3);
+
+// ---------------------------------------------------------------------------
+// Защита от "битого начала" генерации
+// ---------------------------------------------------------------------------
+// На длинных RAG-контекстах модель изредка (наблюдалось ~10% ответов) начинает
+// ответ с середины слова ("восные виды наград...") либо с пересказа собственных
+// инструкций из системного промпта. Первые символы придерживаются в буфере;
+// при признаках брака текущая генерация прерывается и запускается одна
+// повторная попытка с чуть большей температурой (чтобы сойти с той же
+// траектории). Пользователь видит лишь небольшую задержку первого чанка.
+
+/** Характерные фразы SYSTEM_PROMPT_RAG - их появление в начале ответа = протечка. */
+const PROMPT_LEAK_RE =
+  /Не выдумывайте номера статей|Отказ уместен ТОЛЬКО|ссылайтесь на источники прямо в тексте|ошибка оформления|Вы\s*—\s*HR-ассистент университета\. Отвечайте/i;
+
+/** Сколько символов придерживаем для проверки начала. */
+const GUARD_HEAD_CHARS = 200;
+
+/** Брак: ответ начинается со строчной буквы, знака препинания или куска промпта. */
+export function looksBrokenStart(head: string): boolean {
+  const t = (head || '').trimStart();
+  if (!t) return false;
+  if (/^[а-яёa-z]/.test(t)) return true; // "восные виды...", "о оформить..."
+  // Знак препинания, закрывающая ёлочка или прямая кавычка/апостроф: "."Для...",
+  // ""Пункт 1.5...", "" Поддержка..." - мусор генерации. Открывающая " легитимна
+  // (цитата с начала ответа) и сюда не входит.
+  if (/^[.,;:!?)\]»"']/.test(t)) return true;
+  return PROMPT_LEAK_RE.test(t.slice(0, 400));
+}
+
+/** Шаблонный отказ - если битая генерация не отказ, её содержимое ценно. */
+const REFUSAL_RE = /выдержках\s+нет\s+информации/i;
+
+/** Механическая починка начала: срезать мусорную пунктуацию, капитализировать. */
+export function mendStart(text: string): string {
+  let t = (text || '').replace(/^[\s.,;:!?)\]»"'-]+/, '');
+  if (/^[а-яёa-z]/.test(t)) t = t.charAt(0).toUpperCase() + t.slice(1);
+  return t;
+}
+
+/**
+ * Оборачивает потоковую генерацию проверкой начала.
+ *  - Протечка промпта -> прерываем и генерируем заново (один ретрай).
+ *  - Механический брак (строчная буква/пунктуация в начале) -> дочитываем ответ
+ *    целиком: содержательный отдаём с починенным началом (ретрай терял верные
+ *    ответы - наблюдалось на "ПК раз в три года"), шаблонный отказ - ретраим,
+ *    терять нечего.
+ * `make(signal, attempt)` создаёт новый поток; attempt=1 - повторная попытка.
+ */
+async function* guardBrokenStart(
+  make: (signal: AbortSignal, attempt: number) => AsyncGenerator<string>,
+  outer?: AbortSignal
+): AsyncGenerator<string> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const ac = new AbortController();
+    const onAbort = () => ac.abort();
+    outer?.addEventListener('abort', onAbort, { once: true });
+    const gen = make(ac.signal, attempt);
+    try {
+      // Ручная итерация: for-await с break закрыл бы генератор, а нам нужно
+      // продолжить читать его после проверки буфера.
+      let buf = '';
+      let done = false;
+      while (buf.length < GUARD_HEAD_CHARS && !done) {
+        const r = await gen.next();
+        if (r.done) done = true;
+        else buf += r.value;
+      }
+
+      const broken = looksBrokenStart(buf);
+      const leak = broken && PROMPT_LEAK_RE.test(buf.trimStart().slice(0, 400));
+      if (attempt === 0 && !outer?.aborted && broken) {
+        if (leak) {
+          // Кусок системного промпта в ответе - чинить нечего, только заново.
+          trace('guard', { kind: 'leak', action: 'retry', head: short(buf, 80) });
+          console.warn(`[RAG] протечка промпта, повторная генерация: ${JSON.stringify(buf.slice(0, 80))}`);
+          ac.abort();
+          await gen.return?.(undefined).catch(() => undefined);
+          continue;
+        }
+        // Механический брак: дочитываем ответ целиком (наружу пока не отдаём).
+        while (!done) {
+          const r = await gen.next();
+          if (r.done) done = true;
+          else buf += r.value;
+        }
+        // Затем генерируем заново и выбираем лучший из двух вариантов:
+        // чистый ретрай предпочтительнее (механическая починка оставляет
+        // обрезки слов - "Ечто такое..."), но отказный/битый ретрай не должен
+        // терять содержательный первый ответ (терялся "ПК раз в три года").
+        let retryBuf = '';
+        try {
+          const retryGen = make(ac.signal, 1);
+          for await (const ch of retryGen) {
+            retryBuf += ch;
+            if (outer?.aborted) break;
+          }
+        } catch {
+          retryBuf = '';
+        }
+        const firstUsable = !REFUSAL_RE.test(buf);
+        const retryClean = retryBuf.trim() && !looksBrokenStart(retryBuf);
+        const retryUsable = retryBuf.trim() && !REFUSAL_RE.test(retryBuf);
+        if (retryClean && (retryUsable || !firstUsable)) {
+          trace('guard', { kind: 'minor', action: 'retry-win', head: short(retryBuf, 80) });
+          console.warn(`[RAG] битое начало, взят чистый ретрай: ${JSON.stringify(buf.slice(0, 80))}`);
+          yield retryBuf;
+        } else if (firstUsable) {
+          trace('guard', { kind: 'minor', action: 'mend-first', head: short(buf, 80) });
+          console.warn(`[RAG] битое начало, ретрай не лучше — починен первый: ${JSON.stringify(buf.slice(0, 80))}`);
+          yield mendStart(buf);
+        } else {
+          // Оба варианта плохи - отдаём менее битый.
+          trace('guard', { kind: 'minor', action: 'both-bad', head: short(retryBuf || buf, 80) });
+          yield retryBuf.trim() ? mendStart(retryBuf) : mendStart(buf);
+        }
+        return;
+      }
+
+      // Вторая попытка с механическим браком - чиним голову и отдаём как есть.
+      if (attempt === 1 && broken && !leak) {
+        trace('guard', { kind: 'minor', action: 'mend-after-retry', head: short(buf, 80) });
+        buf = mendStart(buf);
+      }
+      if (buf) yield buf;
+      while (!done) {
+        const r = await gen.next();
+        if (r.done) break;
+        yield r.value;
+      }
+      return;
+    } finally {
+      outer?.removeEventListener('abort', onAbort);
+    }
+  }
+}
 
 export async function answerStream(query: string, opts: AnswerOptions = {}): Promise<AnswerResult> {
   const {
@@ -678,55 +914,84 @@ export async function answerStream(query: string, opts: AnswerOptions = {}): Pro
   let useRag = opts.useRag ?? true;
   const hasAttachment = Boolean(attachedDocuments?.length);
 
-  // Опечатки ломают регэксп-гейты и BM25 («пиривет» → RAG-отказ вместо
-  // приветствия). routed — исправленная версия для роутинга и ПОИСКА; оригинал
+  traceStart();
+  trace('query', { text: short(query, 140), history: history?.length ?? 0, attachment: hasAttachment });
+
+  // Опечатки ломают регэксп-гейты и BM25 ("пиривет" -> RAG-отказ вместо
+  // приветствия). routed - исправленная версия для роутинга и поиска; оригинал
   // query остаётся в промпте модели (она сама устойчива к опечаткам).
   let routed = await correctTypos(query);
+  if (routed !== query) trace('spellfix', { out: short(routed, 140) });
+
+  // Короткие продолжения ("а ещё что-нибудь?", "процитируй её полностью")
+  // бессмысленны как поисковый запрос - переписываем в самостоятельный вопрос
+  // по истории диалога. Дальше весь роутинг (FAQ, планировщик, поиск) И промпт
+  // модели работают по развёрнутой формулировке: на кургузый оригинал модель
+  // отвечает "в выдержках нет информации", даже когда выдержки правильные.
+  let promptQuery = query;
+  if (useRag && !hasAttachment && history?.length && isFollowup(routed, history)) {
+    const rewrittenFollowup =
+      (await rewriteFollowupQuery(routed, history)) ?? followupFallback(routed, history);
+    trace('followup_rewrite', { out: rewrittenFollowup ? short(rewrittenFollowup, 140) : null });
+    if (rewrittenFollowup) {
+      routed = rewrittenFollowup;
+      promptQuery = rewrittenFollowup;
+    }
+  }
 
   const newsQuery = useRag && !hasAttachment && NEWS_RE.test(routed);
-  // Запрос на выдачу бланка/образца → прямая отдача файла (см. замыкание ниже).
+  // Запрос на выдачу бланка/образца -> прямая отдача файла (см. замыкание ниже).
   const blankRequest = useRag && !hasAttachment && BLANK_RE.test(routed);
 
-  // Контекстное намерение: если вызывающий код его не определил — считаем сами
-  // (эмбеддинг-классификатор + LLM для пограничных случаев). null → решают
+  // Контекстное намерение: если вызывающий код его не определил - считаем сами
+  // (эмбеддинг-классификатор + LLM для пограничных случаев). null -> решают
   // прежние регэксп-гейты ниже.
   let intentHint = opts.intentHint ?? null;
   if (intentHint === null && useRag && !hasAttachment) {
     intentHint = await resolveIntent(routed, history);
   }
+  trace('intent', { intent: intentHint, news: newsQuery, blank: blankRequest });
 
-  // === Болтовня/мусор решаем ДО FAQ ===
-  // Раньше «нечёткое» совпадение с FAQ (порог 0.70) перебивало этот гейт и
-  // тянуло «как дела?» в поиск. Сначала определяем болтовню — и только если
+  // === Болтовня/мусор решаем до FAQ ===
+  // Раньше "нечёткое" совпадение с FAQ (порог 0.70) перебивало этот гейт и
+  // тянуло "как дела?" в поиск. Сначала определяем болтовню - и только если
   // реально ищем, спрашиваем FAQ-матчер.
   let casual = false;
   if (useRag && !hasAttachment && !newsQuery && !isFollowup(routed, history)) {
-    // Жёсткий предохранитель смешанного сообщения («Привет! … текст 28 статьи»):
-    // явный информационный сигнал → это НЕ болтовня, что бы ни решил классификатор.
+    // Жёсткий предохранитель смешанного сообщения ("Привет! ... текст 28 статьи"):
+    // явный информационный сигнал -> это не болтовня, что бы ни решил классификатор.
     const hasInfoSignal = INFO_RE.test(routed) || extractArticleNumbers(routed).length > 0;
-    // SOCIAL_RE («как дела», «кто ты») — ОДНОЗНАЧНАЯ болтовня о самом ассистенте;
-    // её нельзя перебивать широким инфо-триггером «как ».
+    // Арифметика во фразе ("сколько будет 2+2?") - не запрос к базе знаний,
+    // если рядом нет структурных слов ("статья 81+1" не встречается, но всё же).
+    if (MATH_EXPR_RE.test(routed) && !DOC_WORD_RE.test(routed)) {
+      useRag = false;
+    }
+    // SOCIAL_RE ("как дела", "кто ты") - однозначная болтовня о самом ассистенте;
+    // её нельзя перебивать широким инфо-триггером "как ". JOKE_RE ("расскажи
+    // анекдот") - тоже болтовня, несмотря на "расскажи" в INFO_RE.
     const isSmall =
       SOCIAL_RE.test(routed) ||
+      JOKE_RE.test(routed) ||
       ((intentHint === 'smalltalk' || isSmalltalk(routed)) && !hasInfoSignal);
-    // Гейт мусора НЕ перебивает классификатор и планировщик: содержательный
-    // интент или структурные сигналы («положение номер 3.2») обязывают искать,
+    // Гейт мусора не перебивает классификатор и планировщик: содержательный
+    // интент или структурные сигналы ("положение номер 3.2") обязывают искать,
     // иначе модель выдумает текст пункта.
     const looksTrash =
       intentHint !== 'kb_question' && !needsPlanner(routed) && looksNonknowledge(routed);
     if (isSmall || looksTrash) {
       useRag = false;
       casual = isSmall;
+      trace('gate_casual', { small: isSmall, trash: looksTrash });
     } else if (intentHint === 'meta_chat' && history?.length) {
-      // Вопрос о самой переписке → ответ по истории, без поиска по БЗ
+      // Вопрос о самой переписке -> ответ по истории, без поиска по БЗ
       // (retrieval по такой фразе тянет случайные документы).
       useRag = false;
     }
   }
 
-  // === FAQ отдела кадров — только если реально ищем ===
-  // Курируемые ответы из файлов «чат-бот …»: совпадение по вариантам
-  // формулировок ОБОГАЩАЕТ контекст LLM (первый чанк + контакт в футер).
+  // === FAQ отдела кадров - только если реально ищем ===
+  // Курируемые ответы из файлов "чат-бот ...": совпадение по вариантам
+  // формулировок обогащает контекст LLM (первый чанк + контакт в футер).
   let faqCtx: PromptChunk[] = [];
   let faqSources: Record<string, unknown>[] = [];
   let faqContact: string | null = null;
@@ -734,13 +999,14 @@ export async function answerStream(query: string, opts: AnswerOptions = {}): Pro
 
   if (useRag && !hasAttachment) {
     const faqHit = await matchFaq(routed, history).catch(() => null);
+    trace('faq', faqHit ? { block: faqHit.block, refs: (faqHit.doc_refs || []).length } : { block: null });
     if (faqHit) {
       faqContact = faqHit.contact;
       if (faqHit.rewritten_query) routed = faqHit.rewritten_query;
       let text = faqHit.answer;
       if (faqHit.doc_refs.length) {
         text += `\n\nСвязанные документы: ${faqHit.doc_refs.join('; ')}`;
-        // Названия документов → реальные файлы → карточки «Скачать».
+        // Названия документов -> реальные файлы -> карточки "Скачать".
         relatedFiles = await resolveDocRefs(faqHit.doc_refs);
       }
       if (text.trim()) {
@@ -751,10 +1017,35 @@ export async function answerStream(query: string, opts: AnswerOptions = {}): Pro
     }
   }
 
-  // === Короткое замыкание «выдай бланк» ===
-  // Пользователь просит бланк, а нужные файлы уже найдены — отдаём их напрямую
+  // === Короткое замыкание "выдай бланк" ===
+  // Пользователь просит бланк, а нужные файлы уже найдены - отдаём их напрямую
   // коротким ответом, без RAG-поиска и LLM (иначе бот уходит в рассуждения по
   // нормативке). Сужаем до запрошенного бланка.
+  //
+  // Карточки не обязаны приходить только из doc_refs совпавшего FAQ-блока:
+  // "форма служебной записки на исполнение обязанностей" есть в шаблонах, но
+  // ни один FAQ на неё не ссылается - добираем кандидатов по самому запросу.
+  if (blankRequest) {
+    const fromFaq = relatedFiles.length;
+    try {
+      const byQuery = await resolveBlankByQuery(routed);
+      const seenUrls = new Set(relatedFiles.map((f) => f.url || f.view_url));
+      for (const f of byQuery) {
+        const key = f.url || f.view_url;
+        if (!seenUrls.has(key)) {
+          seenUrls.add(key);
+          relatedFiles.push(f);
+        }
+      }
+    } catch {
+      /* фолбэк-резолв не удался - работаем с тем, что дал FAQ */
+    }
+    trace('blank_resolve', {
+      from_faq: fromFaq,
+      by_query: relatedFiles.length - fromFaq,
+      titles: relatedFiles.slice(0, 4).map((f) => short(f.title, 45)),
+    });
+  }
   if (blankRequest && relatedFiles.length) {
     const narrowed = narrowByQuery(query, relatedFiles);
     let canned: string;
@@ -782,12 +1073,35 @@ export async function answerStream(query: string, opts: AnswerOptions = {}): Pro
   // === Новости HR ===
   let newsCtx: PromptChunk[] = [];
   let newsSources: Record<string, unknown>[] = [];
+  let newsHint: string | null = null;
   if (newsQuery) {
     try {
       [newsCtx, newsSources] = await recentNewsContext();
     } catch {
-      /* лента недоступна — отвечаем без неё */
+      /* лента недоступна - отвечаем без неё */
     }
+    if (!newsCtx.length) {
+      // Лента пуста - честный короткий ответ вместо шаблонного RAG-отказа.
+      onStatus?.('generate');
+      return {
+        stream: single(
+          'Свежих новостей в ленте HR-отдела сейчас нет. ' +
+            'Загляните позже в раздел «Новости» — публикации появляются там.'
+        ),
+        sources: [],
+        usedSubqueries: [],
+        contextTexts: [],
+        contact: faqContact,
+        relatedFiles: [],
+      };
+    }
+    // Публикаций мало и они лаконичные - без подсказки модель склонна отвечать
+    // "в выдержках нет информации" вместо перечисления того, что есть.
+    newsHint =
+      'Вопрос пользователя — о новостях/объявлениях HR-отдела. В выдержках ниже — ' +
+      'последние публикации ленты новостей. Перечисли их (заголовок, дата, суть), ' +
+      'даже если их мало. Не отказывайся: если это все публикации — так и скажи, ' +
+      'что других новостей пока нет.';
   }
 
   // === KB-выдержки ===
@@ -799,9 +1113,9 @@ export async function answerStream(query: string, opts: AnswerOptions = {}): Pro
     try {
       [topChunks, subqueries] = await retrieve(routed, onStatus, history);
     } catch {
-      topChunks = []; // поиск упал — отвечаем обычным чатом
+      topChunks = []; // поиск упал - отвечаем обычным чатом
     }
-    // При вложении KB — лишь подкрепление: ограничиваем, чтобы не «утопить»
+    // При вложении KB - лишь подкрепление: ограничиваем, чтобы не "утопить"
     // содержание прикреплённого документа нормативкой.
     if (hasAttachment && topChunks.length) {
       const kbKeep = isAboutAttachment(routed) ? 0 : KB_SUPPORT_WITH_ATTACHMENT;
@@ -820,15 +1134,15 @@ export async function answerStream(query: string, opts: AnswerOptions = {}): Pro
     [attCtx, attSources] = await selectAttachmentContext(routed, attachedDocuments as AttachedDoc[]);
   }
 
-  // Вложение идёт ПЕРВЫМ (основной материал), затем новости, курируемый FAQ,
-  // KB — следом (подкрепление). sources строго в том же порядке, что и
-  // contextChunks → [k] ↔ sources[k-1].
+  // Вложение идёт первым (основной материал), затем новости, курируемый FAQ,
+  // KB - следом (подкрепление). sources строго в том же порядке, что и
+  // contextChunks -> [k] <-> sources[k-1].
   const contextChunks = [...attCtx, ...newsCtx, ...faqCtx, ...kbCtx];
   const sources = [...attSources, ...newsSources, ...faqSources, ...kbSources];
 
-  // === SHORT-CIRCUIT: «выдержек нет» ===
-  // Если пользователь явно запросил RAG, но не нашлось НИ ОДНОГО чанка и нет
-  // вложений — НЕ зовём LLM: иначе она сочинит ответ «по памяти».
+  // === SHORT-CIRCUIT: "выдержек нет" ===
+  // Если пользователь явно запросил RAG, но не нашлось ни одного чанка и нет
+  // вложений - не зовём LLM: иначе она сочинит ответ "по памяти".
   if (
     useRag &&
     !contextChunks.length &&
@@ -837,7 +1151,7 @@ export async function answerStream(query: string, opts: AnswerOptions = {}): Pro
     query.trim().length >= 12
   ) {
     onStatus?.('generate');
-    // Отличаем «база знаний недоступна» от «нет релевантных документов».
+    // Отличаем "база знаний недоступна" от "нет релевантных документов".
     const alive = await isStoreAlive();
     const canned = alive
       ? 'В предоставленных выдержках информации по вашему вопросу нет.\n\n' +
@@ -863,35 +1177,67 @@ export async function answerStream(query: string, opts: AnswerOptions = {}): Pro
 
   onStatus?.('generate');
 
-  // Системный промпт: при вложении — отвечать по его содержанию, KB как справка.
+  // Системный промпт: при вложении - отвечать по его содержанию, KB как справка.
   let system: string;
-  if (hasAttachment && attCtx.length) system = SYSTEM_PROMPT_ATTACHMENT;
-  else if (casual) system = SYSTEM_PROMPT_SMALLTALK;
-  else if (!contextChunks.length) system = SYSTEM_PROMPT_CHAT;
-  else if (isCompareQuery(routed)) system = SYSTEM_PROMPT_COMPARE;
-  else system = SYSTEM_PROMPT_RAG;
+  let branch: string;
+  if (hasAttachment && attCtx.length) {
+    system = SYSTEM_PROMPT_ATTACHMENT;
+    branch = 'attachment';
+  } else if (casual) {
+    system = SYSTEM_PROMPT_SMALLTALK;
+    branch = 'smalltalk';
+  } else if (!contextChunks.length) {
+    system = SYSTEM_PROMPT_CHAT;
+    branch = 'chat';
+  } else if (isCompareQuery(routed)) {
+    system = SYSTEM_PROMPT_COMPARE;
+    branch = 'compare';
+  } else {
+    system = SYSTEM_PROMPT_RAG;
+    branch = 'rag';
+  }
+  trace('answer_branch', {
+    branch,
+    chunks: contextChunks.length,
+    ctx: contextChunks.slice(0, 5).map((c) => short(c.title, 40)),
+  });
 
   if (dialogueSummary) {
     system = `${system}\n\nСводка предыдущей части диалога:\n${dialogueSummary.trim()}`;
   }
   if (extraContext) system = `${system}\n\n${extraContext.trim()}`;
+  if (newsHint) system = `${system}\n\n${newsHint}`;
 
-  const userMsg = contextChunks.length ? buildRagPrompt(query, contextChunks) : query;
+  // В промпт модели вопрос идёт с раскрытыми аббревиатурами: иначе на "ПК раз
+  // в три года" модель рассуждает про персональный компьютер, хотя выдержки
+  // найдены правильно.
+  const userMsg = contextChunks.length
+    ? buildRagPrompt(expandAbbreviations(promptQuery), contextChunks)
+    : promptQuery;
 
-  // Динамическая температура: факты по выдержкам — минимальная (детерминизм),
-  // неформальный разговор — высокая, обычный чат без контекста — средняя.
+  // Динамическая температура: факты по выдержкам - минимальная (детерминизм),
+  // неформальный разговор - высокая, обычный чат без контекста - средняя.
   const temperature = contextChunks.length ? TEMP_ANSWER : casual ? TEMP_SMALLTALK : TEMP_CHAT;
 
-  return {
-    stream: chatStream({
+  const makeStream = (sig: AbortSignal | undefined, attempt: number) =>
+    chatStream({
       system,
       user: userMsg,
       history: history ?? [],
-      temperature,
-      signal,
+      // На ретрае слегка поднимаем температуру - иначе жадная генерация
+      // повторит ту же битую траекторию.
+      temperature: Math.min(1, temperature + attempt * 0.2),
+      signal: sig,
       userId,
       onPosition,
-    }),
+    });
+
+  return {
+    // Защита от битого начала - только на ответах по выдержкам: в болтовне
+    // брака не наблюдалось, а свободный стиль даёт ложные срабатывания.
+    stream: contextChunks.length
+      ? guardBrokenStart((sig, attempt) => makeStream(sig, attempt), signal)
+      : makeStream(signal, 0),
     sources,
     usedSubqueries: subqueries,
     contextTexts: contextChunks.map((c) => c.text || ''),

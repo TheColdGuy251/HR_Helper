@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
+import { asUuid } from '@/lib/ids';
 import { badRequest, notFound, requireKbEditor } from '@/lib/auth';
 import { invalidateBlankCatalog } from '@/lib/ml/blank-forms';
 import {
@@ -15,18 +16,18 @@ import {
   pyInt,
   pyStr,
   TEMPLATES_DIR,
+  uuidError,
 } from '@/lib/kb';
 
 // Правка и удаление шаблона HR-документа.
-// Порт PATCH/DELETE /api/kb/templates/{template_id} из backend/routes/kb.py.
 
 type Ctx = { params: Promise<{ template_id: string }> };
 type Field = Record<string, unknown>;
 
 /**
- * Точечная правка схемы полей: мержим по ИМЕНИ поля, новых полей не заводим —
- * так управляется поведение «спрашивать недостающее» и «пустое вместо None».
- * Поля без имени выпадают из схемы (как и в Python: они не попадают в словарь).
+ * Точечная правка схемы полей: мержим по имени поля, новых полей не заводим -
+ * так управляется поведение "спрашивать недостающее" и "пустое вместо null".
+ * Поля без имени выпадают из схемы.
  */
 function mergeFields(current: unknown, incoming: unknown[]): Field[] {
   const existing = new Map<unknown, Field>();
@@ -39,11 +40,11 @@ function mergeFields(current: unknown, incoming: unknown[]): Field[] {
   for (const item of incoming) {
     if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
     const patch = item as Field;
-    // Ключ ищем строкой: поле с нестроковым именем не найдётся, как в Python.
+    // Ключ ищем строкой: поле с нестроковым именем не найдётся.
     const f = existing.get(pyBool(patch.name) ? pyStr(patch.name).trim() : '');
     if (!f) continue;
     if (Object.prototype.hasOwnProperty.call(patch, 'required')) f.required = pyBool(patch.required);
-    // «optional» — синоним-антоним для удобства фронта
+    // "optional" - синоним-антоним для удобства фронта
     if (Object.prototype.hasOwnProperty.call(patch, 'optional')) f.required = !pyBool(patch.optional);
     if (pyBool(patch.type)) f.type = pyStr(patch.type);
     if (pyBool(patch.label)) f.label = pyStr(patch.label);
@@ -65,31 +66,27 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
   const body = parsedBody.body;
   const has = (k: string) => Object.prototype.hasOwnProperty.call(body, k);
 
-  const tpl =
-    parsed.value === null
-      ? null
-      : await prisma.doc_templates.findUnique({ where: { id: parsed.value } });
+  const tpl = await prisma.doc_templates.findUnique({ where: { id: parsed.value } });
   if (!tpl) return notFound('Шаблон не найден');
 
   const data: Prisma.doc_templatesUncheckedUpdateInput = {};
 
   if (has('category_id')) {
     const raw = body.category_id;
-    if (raw === null || raw === undefined) {
-      data.category_id = null;
-    } else {
-      const cid = pyInt(raw);
-      if (cid === null) return internalError(); // SQLAlchemy упал бы на приведении типа
-      const cat =
-        cid >= -2147483648 && cid <= 2147483647
-          ? await prisma.template_categories.findUnique({ where: { id: cid }, select: { id: true } })
-          : null;
+    let cid: string | null = null;
+    if (raw !== null && raw !== undefined) {
+      cid = asUuid(raw);
+      if (cid === null) return uuidError(['body', 'category_id'], raw);
+      const cat = await prisma.template_categories.findUnique({ where: { id: cid }, select: { id: true } });
       if (!cat) return badRequest('Категория не найдена');
-      data.category_id = cid;
     }
+    data.category_id = cid;
+    // "По умолчанию" относится к категории: при переносе в другую флаг снимается
+    // (иначе в новой категории могло бы оказаться два шаблона по умолчанию).
+    if (cid !== tpl.category_id) data.is_default = false;
   }
 
-  // Название сохраняется без trim() — в Python здесь его тоже нет.
+  // Название сохраняется без trim().
   if (has('title') && pyBool(body.title)) data.title = pyStr(body.title);
 
   if (has('description')) {
@@ -107,7 +104,7 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
 
   if (Object.keys(data).length) {
     await prisma.doc_templates.update({ where: { id: tpl.id }, data });
-    // Название/доступность бланка изменились — каталог карточек в памяти устарел.
+    // Название/доступность бланка изменились - каталог карточек в памяти устарел.
     invalidateBlankCatalog();
   }
   return NextResponse.json({ success: true });
@@ -129,8 +126,8 @@ export async function DELETE(_request: NextRequest, { params }: Ctx) {
         });
   if (!tpl) return notFound('Шаблон не найден');
 
-  // Файл сносим «молча»: в Python ошибки удаления тоже проглатываются.
-  // Относительный путь достраиваем от docs/templates — у Next другой CWD,
+  // Файл сносим "молча": ошибки удаления проглатываются.
+  // Относительный путь достраиваем от docs/templates - у Next другой CWD,
   // и без этого удалился бы файл не оттуда.
   const file = path.isAbsolute(tpl.file_path)
     ? tpl.file_path

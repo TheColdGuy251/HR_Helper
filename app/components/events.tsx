@@ -2,13 +2,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 
-// Глобальный SSE-канал `GET /api/events` — сервер пушит события вместо поллинга.
-// Портировано из static/js/scripts.js (openEvents): каждое серверное событие
-// ре-диспатчится как DOM CustomEvent `hr:*`, чтобы страницы подписывались через
-// window.addEventListener, как и в исходном приложении.
+// Глобальный SSE-канал `GET /api/events` - сервер пушит события вместо поллинга.
+// Каждое серверное событие ре-диспатчится как DOM CustomEvent `hr:*`, чтобы
+// страницы подписывались через window.addEventListener.
 //
-// ВАЖНО: присутствие (онлайн-статус) в бэкенде выводится из открытых
-// SSE-подключений, поэтому канал живёт на уровне layout — одно соединение
+// Присутствие (онлайн-статус) выводится из открытых
+// SSE-подключений, поэтому канал живёт на уровне layout - одно соединение
 // на вкладку на всё время работы SPA.
 
 const EVENT_MAP: Record<string, string> = {
@@ -48,7 +47,7 @@ export function EventsBridge() {
 
       const domEvent = EVENT_MAP[data.type];
       if (!domEvent) return;
-      // user_message несёт полезную нагрузку в поле message (как в scripts.js)
+      // user_message несёт полезную нагрузку в поле message
       const detail = data.type === 'user_message' ? data.message : data;
       window.dispatchEvent(new CustomEvent(domEvent, { detail }));
     };
@@ -81,7 +80,7 @@ export function toast(t: ToastData) {
   window.dispatchEvent(new CustomEvent('hr:toast', { detail: t }));
 }
 
-// Порт window.HRToast (scripts.js:319-511): очередь показа, до 3 тостов на
+// Очередь показа, до 3 тостов на
 // десктопе и ровно 1 на мобильном, полоска обратного отсчёта, свайп-закрытие.
 
 const TOAST_TIMEOUT = 6000;
@@ -101,7 +100,7 @@ function pump(s: ToastQueue, max: number): ToastQueue {
   return { active: [...s.active, ...s.queue.slice(0, free)], queue: s.queue.slice(free) };
 }
 
-/** На телефоне тосты показываем сверху и по одному (как isMobile в легаси). */
+/** На телефоне тосты показываем сверху и по одному. */
 function useIsMobile(): boolean {
   const [mobile, setMobile] = useState(false);
   useEffect(() => {
@@ -131,7 +130,7 @@ function ToastCard({
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
 
-  // Полоску запускаем следующим кадром — иначе transition не проиграется.
+  // Полоску запускаем следующим кадром - иначе transition не проиграется.
   useEffect(() => {
     const frame = requestAnimationFrame(() => setRunning(true));
     const timer = setTimeout(() => closeRef.current(), TOAST_TIMEOUT);
@@ -141,7 +140,7 @@ function ToastCard({
     };
   }, []);
 
-  // Смахивание: влево/вправо — закрыть текущий, вверх — скрыть все.
+  // Смахивание: влево/вправо - закрыть текущий, вверх - скрыть все.
   const onTouchStart = (e: React.TouchEvent) => {
     if (e.touches.length !== 1) return;
     start.current = { x: e.touches[0].clientX, y: e.touches[0].clientY, mode: null };
@@ -178,7 +177,7 @@ function ToastCard({
       setTimeout(onClose, 180);
       return;
     }
-    setShift(null); // не хватило — возвращаем на место
+    setShift(null); // не хватило - возвращаем на место
   };
 
   const drift = shift ? Math.abs(shift.x) + Math.abs(shift.y) : 0;
@@ -219,7 +218,7 @@ function ToastCard({
         </button>
       </div>
 
-      {/* Полоска обратного отсчёта (порт .toast-progress-bar) */}
+      {/* Полоска обратного отсчёта */}
       <div className="absolute inset-x-0 bottom-0 h-0.5 bg-gray-100">
         <div
           className="h-full bg-[#2563eb]"
@@ -254,7 +253,7 @@ export function Toaster() {
 
   const hideAll = useCallback(() => setState({ active: [], queue: [] }), []);
 
-  // Сменилась ширина экрана — переливаем очередь под новый лимит.
+  // Сменилась ширина экрана - переливаем очередь под новый лимит.
   useEffect(() => setState((s) => pump(s, max)), [max]);
 
   useEffect(() => {
@@ -282,7 +281,7 @@ export function Toaster() {
 
   if (!state.active.length) return null;
 
-  // На телефоне — сверху; на десктопе bottom-24, над плавающей кнопкой мессенджера.
+  // На телефоне - сверху; на десктопе bottom-24, над плавающей кнопкой мессенджера.
   return (
     <div
       className={`fixed z-[90] flex flex-col gap-2 ${
@@ -299,7 +298,7 @@ export function Toaster() {
         />
       ))}
 
-      {/* «Скрыть все» — только на десктопе при стеке (на телефоне свайп вверх) */}
+      {/* "Скрыть все" - только на десктопе при стеке (на телефоне свайп вверх) */}
       {!mobile && state.active.length + state.queue.length >= 2 && (
         <button
           type="button"

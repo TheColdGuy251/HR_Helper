@@ -6,9 +6,9 @@ import { Thread } from '@/components/messenger/thread';
 import type { ActiveConv } from '@/components/messenger/types';
 
 // Мессенджер: слева список бесед, справа тред.
-// На узких экранах панели показываются по очереди (список ↔ диалог).
-// Список можно свернуть (порт mpSidebarToggle, messenger_page.js:49-51);
-// состояние запоминаем, как в чате с ассистентом (chat.js:2394-2401).
+// На узких экранах панели показываются по очереди (список <-> диалог).
+// Список можно свернуть;
+// состояние запоминаем, как в чате с ассистентом.
 
 const SIDEBAR_KEY = 'mpSidebarCollapsed';
 
@@ -32,7 +32,7 @@ export default function MessengerPage() {
   const [collapsed, setCollapsed] = useState(false);
   const [popup, setPopup] = useState(false);
 
-  // ?popup=1 — страница открыта как отдельное окно (вынос миничата): чат на всё
+  // ?popup=1 - страница открыта как отдельное окно (вынос миничата): чат на всё
   // окно, список свёрнут. Иначе поднимаем запомненное состояние сайдбара.
   useEffect(() => {
     let isPopup = false;
@@ -82,7 +82,7 @@ export default function MessengerPage() {
         <Conversations active={active} onSelect={setActive} />
       </div>
 
-      {/* тумблер списка бесед — только на десктопе, едет вместе с краем панели */}
+      {/* тумблер списка бесед - только на десктопе, едет вместе с краем панели */}
       <button
         onClick={toggleSidebar}
         title={collapsed ? 'Показать список бесед' : 'Свернуть список бесед'}

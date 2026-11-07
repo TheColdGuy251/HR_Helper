@@ -6,7 +6,6 @@ import { prisma } from './db';
 import {
   asDict,
   baseName,
-  fromDocsPath,
   internalError,
   isFile,
   pyBool,
@@ -15,23 +14,20 @@ import {
   templateDisplayPath,
   TEMPLATES_DIR,
 } from './kb';
-import { fromUploadPath } from './messenger';
 import { mdToHtml } from './markdown';
 import { sequenceOpcodes } from './docs/seqmatch';
 import { parseFile } from './parsers';
 
 /**
- * Контекст просмотрщика документов — порт _build_view_ctx, _build_diff_html и
- * тел пяти view-роутов из backend/routes/pages.py.
+ * Контекст просмотрщика документов: данные и diff-разметка для пяти
+ * view-роутов.
  *
  * Здесь только сборка контекста; авторизацию, разбор параметров и выдачу JSON
- * делают route-handler'ы в app/api/view/*. Так же устроен Python: страницы
- * зовут общие _build_view_ctx/_view_response.
+ * делают route-handler'ы в app/api/view/*.
  *
- * ВАЖНО про формат ответа: набор ключей у каждого режима — часть контракта с
- * components/document-viewer.tsx, поэтому объекты собираются ровно теми полями,
- * что кладёт Python (например у mode=missing из роута нет ни content, ни
- * content_html — их там действительно нет).
+ * Набор ключей у каждого режима - часть контракта с
+ * components/document-viewer.tsx (например у mode=missing нет ни content, ни
+ * content_html).
  */
 
 export type ViewMode =
@@ -57,7 +53,7 @@ export interface ViewCtx {
   original_url?: string;
   text_url?: string;
   source_url?: string;
-  kb_doc_id?: number;
+  kb_doc_id?: string;
   can_edit?: boolean;
   original_pdf?: boolean;
   original_image?: boolean;
@@ -65,11 +61,11 @@ export interface ViewCtx {
 
 /**
  * Результат сборки: контекст, редирект (веб-источник без сохранённого текста)
- * или «упало 500» (в Python — необработанное исключение при поиске шаблона).
+ * или "упало 500".
  */
 export type ViewResult = { ctx: ViewCtx } | { redirect: string } | { serverError: true };
 
-// ── _build_view_ctx ────────────────────────────────────────────────────────
+// Сборка контекста
 
 const TEXT_EXTS = new Set(['.txt', '.rst', '.csv', '.log']);
 const SHEET_EXTS = new Set(['.xlsx', '.xlsm', '.xls']);
@@ -77,9 +73,8 @@ const SLIDE_EXTS = new Set(['.pptx', '.ppt', '.odp']);
 const LEGACY_OFFICE_EXTS = new Set(['.doc', '.rtf', '.odt', '.ods']);
 
 /**
- * read_text(encoding="utf-8", errors="ignore"): Node на битых байтах ставит
- * U+FFFD, а Python их выбрасывает — убираем, чтобы текст совпадал (тот же
- * приём, что в lib/parsers/index.ts::parseTextFile).
+ * Чтение текста в UTF-8: битые байты выбрасываем (Node ставит на их место
+ * U+FFFD) - тот же приём, что в lib/parsers/index.ts::parseTextFile.
  */
 async function readTextIgnore(file: string): Promise<string> {
   return (await readFile(file, 'utf8')).replace(/\uFFFD/g, '');
@@ -102,9 +97,9 @@ export async function buildViewCtx(
     content_html: '',
   };
 
-  // Проверка пути (как при скачивании) — только внутри docs_dir.
+  // Проверка пути (как при скачивании) - только внутри docs_dir.
   // resolveInsideDocs повторяет Path(...).resolve().relative_to(docs_dir):
-  // пустой/чужой путь и None дают forbidden.
+  // пустой/чужой путь и null дают forbidden.
   const file = resolveInsideDocs(sourceUri || '');
   if (!file) {
     ctx.mode = 'forbidden';
@@ -120,7 +115,7 @@ export async function buildViewCtx(
   const ext = suffixOf(baseName(file)).toLowerCase();
   try {
     if (ext === '.pdf') {
-      // Полностью нативный просмотр — без обёртки приложения (клиент уйдёт на inline_url)
+      // Полностью нативный просмотр - без обёртки приложения (клиент уйдёт на inline_url)
       ctx.mode = 'pdf';
       ctx.inline_url = inlineUrl;
     } else if (ext === '.md') {
@@ -138,7 +133,7 @@ export async function buildViewCtx(
       ctx.mode = 'xlsx';
       ctx.inline_url = inlineUrl;
     } else if (SLIDE_EXTS.has(ext)) {
-      // Презентации: у браузера нет нативного просмотрщика — конвертируем в
+      // Презентации: у браузера нет нативного просмотрщика - конвертируем в
       // PDF (LibreOffice, с кэшем) и показываем его нативно.
       ctx.mode = 'pdf';
       ctx.inline_url = `${inlineUrl}&as=pdf`;
@@ -158,9 +153,9 @@ export async function buildViewCtx(
   return ctx;
 }
 
-// ── _build_diff_html ───────────────────────────────────────────────────────
+// Diff-разметка
 
-/** str.splitlines(): режет по всем юникодным переводам строк, хвостовой пустой отбрасывает. */
+/** Режет по всем юникодным переводам строк, хвостовой пустой отбрасывает. */
 function splitLines(s: string): string[] {
   if (!s) return [];
   const parts = s.split(/\r\n|[\n\r\v\f\x1c\x1d\x1e\u0085\u2028\u2029]/);
@@ -169,7 +164,7 @@ function splitLines(s: string): string[] {
 }
 
 function escapeLine(s: string): string {
-  // Пустая строка схлопнулась бы в ноль высоты — ставим неразрывный пробел.
+  // Пустая строка схлопнулась бы в ноль высоты - ставим неразрывный пробел.
   if (!s.trim()) return '&nbsp;';
   return s
     .replace(/&/g, '&amp;')
@@ -180,8 +175,8 @@ function escapeLine(s: string): string {
 }
 
 /**
- * Построчный diff старого и нового текста страницы: новый/изменённый текст —
- * красным (dvd-add), удалённый — зачёркнутым (dvd-del), без изменений — как есть.
+ * Построчный diff старого и нового текста страницы: новый/изменённый текст -
+ * красным (dvd-add), удалённый - зачёркнутым (dvd-del), без изменений - как есть.
  */
 export function buildDiffHtml(oldText: string, newText: string): string {
   const oldLines = splitLines(oldText || '');
@@ -206,13 +201,13 @@ export function buildDiffHtml(oldText: string, newText: string): string {
   return out.join('');
 }
 
-// ── документ базы знаний ───────────────────────────────────────────────────
+// документ базы знаний
 
 const OCR_IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tif', '.tiff']);
 const BIG_DOCX_BYTES = 6 * 1024 * 1024;
 
 interface KbDocRow {
-  id: number;
+  id: string;
   title: string | null;
   source_type: string;
   source_uri: string;
@@ -226,10 +221,10 @@ export interface ViewerUser {
   is_kb_editor: boolean;
 }
 
-/** Query-параметры /kb/documents/{id}/view (в Python — int | None). */
+/** Query-параметры /kb/documents/{id}/view: text/original - флаги, diff - id уведомления. */
 export interface KbViewQuery {
   text: number | null;
-  diff: number | null;
+  diff: string | null;
   original: number | null;
 }
 
@@ -246,7 +241,7 @@ async function kbDocumentViewCtx(
     (user.is_admin || user.is_kb_editor) && content.trim() && doc.status === 'indexed'
   );
 
-  // ?text=1 — текстовая версия любого документа (извлечённый текст всегда
+  // ?text=1 - текстовая версия любого документа (извлечённый текст всегда
   // отображается, в отличие от тяжёлых/сложных оригиналов).
   if (q.text && content.trim()) {
     return {
@@ -272,24 +267,23 @@ async function kbDocumentViewCtx(
           title: `Обновление: ${doc.title || 'Документ'}`,
           download_url: downloadUrl,
           mode: 'diff',
-          // `old_content or ""` в Python: не-строку сюда никто не кладёт.
           content_html: buildDiffHtml(pyBool(oldContent) ? String(oldContent) : '', content),
           content: '',
           source_url: doc.source_uri,
         },
       };
     }
-    // Уведомление чужое/без старой версии — показываем документ как обычно.
+    // Уведомление чужое/без старой версии - показываем документ как обычно.
   }
 
-  // Веб-источник: показываем, ЧТО РАСПАРСИЛОСЬ (сохранённый текст), с оформлением.
-  // Файла на диске нет; если текст ещё не сохранён (старые записи) — открываем оригинал.
+  // Веб-источник: показываем, что распарсилось (сохранённый текст), с оформлением.
+  // Файла на диске нет; если текст ещё не сохранён (старые записи) - открываем оригинал.
   if (doc.source_type === 'web') {
     if (doc.content) {
       return {
         ctx: {
           title: doc.title || 'Документ',
-          download_url: downloadUrl, // для web → редирект на оригинал
+          download_url: downloadUrl, // для web -> редирект на оригинал
           mode: 'markdown',
           content_html: mdToHtml(doc.content),
           content: '',
@@ -302,7 +296,7 @@ async function kbDocumentViewCtx(
     if (doc.source_uri) return { redirect: doc.source_uri };
   }
 
-  // Если к документу применялся OCR — показываем ДВА предпросмотра рядом:
+  // Если к документу применялся OCR - показываем два предпросмотра рядом:
   // слева оригинал (PDF/скан), справа извлечённый (распознанный) текст.
   if (pyBool(asDict(doc.extra).ocr_applied) && content.trim()) {
     const ext = doc.source_uri ? suffixOf(baseName(doc.source_uri)).toLowerCase() : '';
@@ -328,9 +322,9 @@ async function kbDocumentViewCtx(
   if (ctx.mode === 'docx' && content.trim()) {
     ctx.text_url = `/kb/documents/${doc.id}/view?text=1`;
     // Тяжёлые docx (гигантские EMF-схемы и т.п.) вешают клиентский рендер,
-    // а EMF браузер не отображает вовсе (пустые страницы) — по умолчанию
-    // показываем извлечённый текст; оригинал — по явному запросу (?original=1).
-    const info = doc.source_uri ? await stat(fromDocsPath(doc.source_uri)).catch(() => null) : null;
+    // а EMF браузер не отображает вовсе (пустые страницы) - по умолчанию
+    // показываем извлечённый текст; оригинал - по явному запросу (?original=1).
+    const info = doc.source_uri ? await stat(doc.source_uri).catch(() => null) : null;
     const big = Boolean(info && info.size > BIG_DOCX_BYTES);
     if (big && !q.original) {
       ctx.mode = 'text';
@@ -344,22 +338,18 @@ async function kbDocumentViewCtx(
   return { ctx };
 }
 
-// ── пять точек входа (по одной на view-роут Python) ────────────────────────
-// Записи достаются здесь, а не в route-handler'ах: весь перенесённый код
-// собран в одном месте и вызывается из всех пяти роутов единообразно.
+// Пять точек входа - по одной на view-роут.
+// Записи достаются здесь, а не в route-handler'ах: так код вызывается одинаково
+// и из приложения, и из scripts/view-ctx-probe.mjs.
 
-/** Контекст «отсутствующей» записи: у Python в этой ветке всего три ключа. */
+/** Контекст "отсутствующей" записи: всего три ключа. */
 function missingCtx(title: string, downloadUrl: string): ViewCtx {
   return { title, download_url: downloadUrl, mode: 'missing' };
 }
 
-/**
- * Просмотр документа базы знаний. Порт document_view: режимы ?text=1,
- * ?diff=<notification_id>, ?original=1, веб-источники, OCR-раскладка и
- * авто-деградация тяжёлых docx в текст.
- */
+/** Просмотр документа базы знаний. */
 export async function kbDocumentView(
-  id: number | null,
+  id: string | null,
   user: ViewerUser,
   q: KbViewQuery
 ): Promise<ViewResult> {
@@ -369,14 +359,14 @@ export async function kbDocumentView(
   return kbDocumentViewCtx(doc, user, q);
 }
 
-/** Просмотр шаблона документа (.docx — docx-preview, .pdf — нативно). */
-export async function kbTemplateView(id: number | null): Promise<ViewResult> {
+/** Просмотр шаблона документа (.docx - docx-preview, .pdf - нативно). */
+export async function kbTemplateView(id: string | null): Promise<ViewResult> {
   const downloadUrl = `/api/kb/templates/${id}/download`;
   const tpl = id === null ? null : await prisma.doc_templates.findUnique({ where: { id } });
   if (!tpl) return { ctx: missingCtx('Шаблон', downloadUrl) };
 
-  // Относительный путь Python достраивает от docs/templates, а отсутствие файла
-  // роняет страницу FileNotFoundError'ом (_resolve_template_path его не ловит).
+  // Относительный путь достраиваем от docs/templates; если файла нет - ошибка
+  // сервера.
   const src = path.isAbsolute(tpl.file_path)
     ? tpl.file_path
     : path.join(TEMPLATES_DIR, tpl.file_path);
@@ -387,10 +377,10 @@ export async function kbTemplateView(id: number | null): Promise<ViewResult> {
   return { ctx: await buildViewCtx(display, tpl.title || 'Шаблон', downloadUrl) };
 }
 
-/** Просмотр документа пользователя («Мои документы») — те же режимы. */
-export async function myDocumentView(id: number | null): Promise<ViewResult> {
+/** Просмотр документа пользователя ("Мои документы") - те же режимы. */
+export async function myDocumentView(id: string | null): Promise<ViewResult> {
   const downloadUrl = `/api/documents/${id}/download`;
-  // Документы общие для всех сотрудников — без проверки владельца (по #2).
+  // Документы общие для всех сотрудников - без проверки владельца.
   const doc = id === null ? null : await prisma.my_documents.findUnique({ where: { id } });
   if (!doc) return { ctx: missingCtx('Документ', downloadUrl) };
   return { ctx: await buildViewCtx(doc.file_path, doc.title || 'Документ', downloadUrl) };
@@ -406,34 +396,31 @@ async function attachmentViewCtx(
   base: string
 ): Promise<ViewCtx> {
   const ctx = await buildViewCtx(storedPath, originalName, base);
-  ctx.download_url = `${base}?download=1`; // кнопка «Скачать» — принудительно
+  ctx.download_url = `${base}?download=1`; // кнопка "Скачать" - принудительно
   return ctx;
 }
 
-/** Просмотр файла из мессенджера (pdf/docx/xlsx/текст — как в /kb). */
-export async function messengerFileView(id: number | null): Promise<ViewResult> {
+/** Просмотр файла из мессенджера (pdf/docx/xlsx/текст - как в /kb). */
+export async function messengerFileView(id: string | null): Promise<ViewResult> {
   const base = `/api/messenger/files/${id}`;
   const rec = id === null ? null : await prisma.user_message_files.findUnique({ where: { id } });
   if (!rec) return { ctx: missingCtx('Файл', base) };
-  // Вложения мессенджера хранятся относительно СВОЕГО каталога (UPLOAD_DIR),
-  // поэтому до общего buildViewCtx путь доводим до абсолютного здесь.
-  return { ctx: await attachmentViewCtx(fromUploadPath(rec.stored_path), rec.original_name, base) };
+  return { ctx: await attachmentViewCtx(rec.stored_path, rec.original_name, base) };
 }
 
 /** Просмотр файла, прикреплённого к новости. */
-export async function newsMediaView(id: number | null): Promise<ViewResult> {
+export async function newsMediaView(id: string | null): Promise<ViewResult> {
   const base = `/api/news/media/${id}`;
   const m = id === null ? null : await prisma.news_media.findUnique({ where: { id } });
   if (!m) return { ctx: missingCtx('Файл', base) };
   return { ctx: await attachmentViewCtx(m.stored_path, m.original_name, base) };
 }
 
-// ── ответ ──────────────────────────────────────────────────────────────────
+// ответ
 
 /**
- * Порт _view_response для SPA-ветки (?format=json): контекст отдаётся как JSON.
- * Редирект на веб-источник Python делает и при format=json — повторяем;
- * NextResponse.redirect не годится, он валидирует URL, а RedirectResponse нет.
+ * Контекст отдаётся как JSON. Для веб-источника - редирект даже при
+ * format=json; NextResponse.redirect не годится, он валидирует URL.
  */
 export function viewResponse(result: ViewResult): NextResponse {
   if ('serverError' in result) return internalError();

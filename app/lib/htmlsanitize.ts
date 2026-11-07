@@ -1,11 +1,10 @@
 /**
  * Whitelist-санитайзер HTML из rich-редактора новостей.
- * Порт backend/utils/htmlsanitize.py.
  *
- * Оригинал разбирает фрагмент через lxml; тянуть новую npm-зависимость нельзя,
+ * Тянуть новую npm-зависимость ради санитайзера не хочется,
  * поэтому здесь собственный потоковый разбор тегов. Списки разрешённых тегов,
- * атрибутов, классов и правила проверки URL скопированы один в один — меняется
- * только «починка» разметки: lxml перестраивает дерево целиком, мы же лишь
+ * атрибутов, классов и правила проверки URL заданы явно. Разметка не
+ * "чинится" целиком: мы лишь
  * закрываем незакрытые теги и игнорируем лишние закрывающие.
  */
 
@@ -25,7 +24,7 @@ const ALLOWED_ATTRS: Record<string, Set<string>> = {
 
 const NO_ATTRS: Set<string> = new Set();
 
-// Числовые атрибуты — оставляем только если это целое число.
+// Числовые атрибуты - оставляем только если это целое число.
 const NUMERIC_ATTRS = new Set(['width', 'height']);
 
 // Теги, которые вырезаем вместе с содержимым (не просто разворачиваем).
@@ -40,12 +39,12 @@ const VOID_TAGS = new Set([
   'link', 'meta', 'param', 'source', 'track', 'wbr',
 ]);
 
-// Элементы с сырым текстом: внутри них «<» не начинает тег, поэтому содержимое
+// Элементы с сырым текстом: внутри них "<" не начинает тег, поэтому содержимое
 // вычитываем до закрывающего тега, не разбирая (иначе `var a = "<b>"` в скрипте
 // развалит разбор).
 const RAW_TEXT_TAGS = new Set(['script', 'style', 'textarea', 'title']);
 
-// ── экранирование ──────────────────────────────────────────────────────────
+// экранирование
 // Амперсанд экранируем только если он не начинает существующую сущность:
 // редактор вставляет &nbsp;, и превращать их в &amp;nbsp; нельзя.
 
@@ -79,8 +78,8 @@ const NAMED_ENTITIES: Record<string, string> = {
 };
 
 /**
- * Раскодировать сущности. Нужно только для ПРОВЕРОК: lxml отдавал правилам уже
- * раскодированное значение, поэтому без этого href="&#106;avascript:…"
+ * Раскодировать сущности. Нужно только для проверок: правилам нужны уже
+ * раскодированное значение, поэтому без этого href="&#106;avascript:..."
  * проскочил бы мимо чёрного списка схем, а браузер бы его выполнил.
  */
 function decodeEntities(s: string): string {
@@ -113,7 +112,7 @@ function stripControls(s: string): string {
 function safeUrl(value: string, tag: string): boolean {
   const v = value.trim();
   if (!v) return false;
-  // Схему проверяем на строке без управляющих символов — иначе «java&#9;script:»
+  // Схему проверяем на строке без управляющих символов - иначе "java&#9;script:"
   // пройдёт проверку, а браузер всё равно выполнит.
   const probe = stripControls(v);
   const low = probe.toLowerCase();
@@ -124,7 +123,7 @@ function safeUrl(value: string, tag: string): boolean {
     return false;
   }
   if (tag === 'img') {
-    // Картинки — только наши загруженные (через /api/news/media/…).
+    // Картинки - только наши загруженные (через /api/news/media/...).
     return probe.startsWith('/api/news/media/');
   }
   // Ссылки: относительные, якоря, http(s), mailto, tel.
@@ -135,7 +134,7 @@ function safeUrl(value: string, tag: string): boolean {
   );
 }
 
-// ── разбор ─────────────────────────────────────────────────────────────────
+// разбор
 
 interface Attr {
   name: string;
@@ -151,7 +150,7 @@ type Token =
 const isSpace = (c: string) => c === ' ' || c === '\t' || c === '\n' || c === '\r' || c === '\f';
 const isAlpha = (c: string) => (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
 
-/** Ищет начало закрывающего тега сырого элемента (script/style/…). */
+/** Ищет начало закрывающего тега сырого элемента (script/style/...). */
 function findRawClose(html: string, from: number, name: string): number {
   const needle = `</${name}`;
   const lower = html.toLowerCase();
@@ -198,7 +197,7 @@ function tokenize(html: string): Token[] {
     }
     if (next === '/') {
       if (!isAlpha(html[lt + 2] ?? '')) {
-        // «</ …>» — мусорный комментарий по правилам HTML, выбрасываем.
+        // "</ ...>" - мусорный комментарий по правилам HTML, выбрасываем.
         const end = html.indexOf('>', lt);
         i = end === -1 ? n : end + 1;
         tokens.push({ kind: 'comment' });
@@ -213,7 +212,7 @@ function tokenize(html: string): Token[] {
       continue;
     }
     if (!isAlpha(next)) {
-      // «<» сам по себе — обычный текст.
+      // "<" сам по себе - обычный текст.
       tokens.push({ kind: 'text', value: '<' });
       i = lt + 1;
       continue;
@@ -224,8 +223,8 @@ function tokenize(html: string): Token[] {
     while (j < n && !isSpace(html[j]) && html[j] !== '>' && html[j] !== '/') j++;
     const name = html.slice(lt + 1, j).toLowerCase();
 
-    // Атрибуты. «/» между атрибутами по правилам HTML игнорируется, поэтому
-    // трюк <img/src=…/onerror=…> разбирается как обычные атрибуты.
+    // Атрибуты. "/" между атрибутами по правилам HTML игнорируется, поэтому
+    // трюк <img/src=.../onerror=...> разбирается как обычные атрибуты.
     const attrs: Attr[] = [];
     while (j < n) {
       while (j < n && (isSpace(html[j]) || html[j] === '/')) j++;
@@ -328,7 +327,7 @@ function renderOpen(tag: string, attrs: Attr[]): string {
 
 /**
  * Возвращает безопасный HTML-фрагмент. Неизвестные теги разворачиваются
- * (текст сохраняется), опасные — удаляются целиком, атрибуты фильтруются.
+ * (текст сохраняется), опасные - удаляются целиком, атрибуты фильтруются.
  */
 export function sanitizeHtml(raw: string): string {
   if (!raw || !raw.trim()) return '';
@@ -336,7 +335,7 @@ export function sanitizeHtml(raw: string): string {
   const tokens = tokenize(raw);
   const out: string[] = [];
   const stack: string[] = [];
-  // lxml-овский parent.remove(el) уносит и «хвост» — текст сразу за удалённым
+  // Удаление элемента уносит и "хвост" - текст сразу за удалённым
   // элементом. Повторяем, чтобы результат совпадал с питоновским.
   let dropTail = false;
   let i = 0;
@@ -371,11 +370,11 @@ export function sanitizeHtml(raw: string): string {
       dropTail = true;
       continue;
     }
-    if (!ALLOWED_TAGS.has(t)) continue; // неизвестный тег — снимаем, текст оставляем
+    if (!ALLOWED_TAGS.has(t)) continue; // неизвестный тег - снимаем, текст оставляем
 
     const attrs = filterAttrs(t, tk.attrs);
     if (t === 'a') {
-      if (!attrs.some((a) => a.name === 'href')) continue; // ссылка без адреса — просто текст
+      if (!attrs.some((a) => a.name === 'href')) continue; // ссылка без адреса - просто текст
       setAttr(attrs, 'rel', 'noopener noreferrer');
       setAttr(attrs, 'target', '_blank');
     }

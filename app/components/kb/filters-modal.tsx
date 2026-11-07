@@ -3,12 +3,11 @@ import { useEffect, useState } from 'react';
 import { Filter, RotateCcw, X } from 'lucide-react';
 import { PrimaryButton } from '@/components/ui';
 
-/* Модалка фильтров базы знаний — порт kb.js:126 wireKbFilters, :136-163
-   (openFiltersModal / closeFiltersModal / updateFilterBadges) и разметки
-   kb.html:243-330.
-
-   Одна кнопка «Фильтры» на вкладку: бейдж показывает число выставленных
-   параметров, «Сбросить» чистит фильтры вместе с поиском. */
+/*
+ * Модалка фильтров базы знаний. Одна кнопка "Фильтры" на вкладку: бейдж
+ * показывает число выставленных параметров, "Сбросить" чистит фильтры вместе
+ * с поиском.
+ */
 
 export interface FilterDef {
   /** Ключ поля в объекте значений. */
@@ -29,7 +28,7 @@ export default function KbFilters({
   defs: FilterDef[];
   values: Record<string, string>;
   onChange: (key: string, value: string) => void;
-  /** Сбрасывает фильтры И поиск (как kb.js:129). */
+  /** Сбрасывает фильтры И поиск. */
   onReset: () => void;
 }) {
   const [open, setOpen] = useState(false);

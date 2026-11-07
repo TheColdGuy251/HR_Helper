@@ -4,10 +4,9 @@ import { prisma } from '@/lib/db';
 import { forbidden, notFound, requireUser } from '@/lib/auth';
 import { jsonBody, parsePathId, pyBool } from '@/lib/kb';
 
-// Доступы (А6): назначение роли «редактор БЗ».
-// Порт PATCH /api/kb/users/{user_id}/roles из backend/routes/kb.py.
+// Доступы (А6): назначение роли "редактор БЗ".
 //
-// Гейт — require_user + ручная проверка is_admin, как в Python (у require_admin
+// Гейт - require_user + ручная проверка is_admin (у require_admin
 // другой текст 403).
 
 type Ctx = { params: Promise<{ user_id: string }> };

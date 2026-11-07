@@ -1,9 +1,8 @@
-// Общий рендер контента ассистента (порт static/js/message_format.js):
-// mini-markdown, перенумерация ссылок-цитат, блок «Источники» с карточками
+// Общий рендер контента ассистента:
+// mini-markdown, перенумерация ссылок-цитат, блок "Источники" с карточками
 // документов, карточка вложения. Используется чатом (/chat) и мессенджером,
-// чтобы ответы ИИ выглядели одинаково. Возвращает HTML-строки — вставлять
+// чтобы ответы ИИ выглядели одинаково. Возвращает HTML-строки - вставлять
 // через dangerouslySetInnerHTML внутри контейнера с классом `msg-md`
-// (стили — в app/globals.css).
 
 export function escapeHtml(s: unknown): string {
   return String(s == null ? '' : s)
@@ -33,7 +32,7 @@ export interface MessageAttachment {
   filename?: string;
 }
 
-// ── Мини-иконки (inline SVG вместо Font Awesome) ────────────────────────────
+// Мини-иконки (inline SVG вместо Font Awesome)
 
 const ICONS: Record<string, string> = {
   file: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>',
@@ -50,7 +49,7 @@ function sourceFileIcon(): string {
   return ICONS.file;
 }
 
-// ── Перенумерация цитат из ТЕКСТА модели (когда structured sources нет) ─────
+// Перенумерация цитат из текста модели (когда structured sources нет)
 
 function renumberCitations(raw: string): string {
   const text = String(raw || '');
@@ -107,8 +106,8 @@ function renumberCitations(raw: string): string {
   }
 
   const body = lines.slice(0, hdr).join('\n');
-  // Во время стрима блок «Источники» ещё неполон: если не все ссылки текста
-  // разрешаются — не трогаем (иначе бейджи мигают до конца стрима).
+  // Во время стрима блок "Источники" ещё неполон: если не все ссылки текста
+  // разрешаются - не трогаем (иначе бейджи мигают до конца стрима).
   const bodyRefs = new Set<number>();
   let br: RegExpExecArray | null;
   const brRe = /\[(\d{1,3})\]/g;
@@ -151,7 +150,7 @@ function renumberCitations(raw: string): string {
   return newBody.replace(/\s+$/, '') + '\n\n' + srcMd;
 }
 
-// ── Источники из СТРУКТУРНЫХ данных (result.sources) ────────────────────────
+// Источники из структурных данных (result.sources)
 
 interface OrderedSource {
   num: number;
@@ -202,7 +201,7 @@ function buildSourcesFromStructured(
   return { body: newBody, entries: ordered };
 }
 
-// ── Карточки документов-источников ──────────────────────────────────────────
+// Карточки документов-источников
 
 function renderSourceDocCard(src: MessageSource): string {
   const title = escapeHtml(src.title || 'Документ');
@@ -287,7 +286,7 @@ export function renderStructuredSources(entries: OrderedSource[]): string {
   );
 }
 
-// ── Основной рендер контента сообщения ──────────────────────────────────────
+// Основной рендер контента сообщения
 
 export function formatMessageContent(
   raw: unknown,
@@ -300,7 +299,7 @@ export function formatMessageContent(
   s = s.replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\r\n/g, '\n');
 
   // Источники из структурных данных, если есть (надёжнее текста модели);
-  // иначе — текстовая перенумерация по блоку «Источники» из ответа.
+  // иначе - текстовая перенумерация по блоку "Источники" из ответа.
   let structuredSourcesHtml = '';
   if (Array.isArray(sources) && sources.length) {
     const built = buildSourcesFromStructured(s, sources);
@@ -505,7 +504,7 @@ export function formatMessageContent(
   return result;
 }
 
-// Карточка сгенерированного документа-вложения («Мои документы»).
+// Карточка сгенерированного документа-вложения ("Мои документы").
 export function renderAttachmentCard(att: MessageAttachment | null | undefined): string {
   if (!att || !att.id) return '';
   const id = encodeURIComponent(String(att.id));

@@ -3,27 +3,28 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Bot, MessagesSquare, Search } from 'lucide-react';
 import { apiGet, apiPost, timeAgo } from '@/lib/api';
+import { isUuid } from '@/lib/ids';
 import { useAuth } from '@/components/auth-context';
 import type { ActiveConv, ConvItem, ConversationsData, PresenceEvent, PresenceInfo } from './types';
 import { initialsOf, matchesAssistant } from './types';
 
-// Список бесед: «HR-ассистент», «Общий чат», «Заметки» и сотрудники.
-// Данные — GET /api/messenger/conversations?q= (HR Helper/routes/messenger.py).
+// Список бесед: "HR-ассистент", "Общий чат", "Заметки" и сотрудники.
+// Данные - GET /api/messenger/conversations?q=.
 // Ряд ассистента бэкенд не отдаёт (бот hr_assistant_bot заведён с is_active=0 и
-// в выдачу не попадает) — он синтетический, как в легаси messenger_page.js:108
-// и messenger.js:415: клик открывает НОВЫЙ диалог в /chat (POST /api/dialogues).
+// в выдачу не попадает) - он добавляется на клиенте: клик открывает новый
+// диалог в /chat (POST /api/dialogues).
 
-const SEARCH_DEBOUNCE = 220;   // как в легаси messenger_page.js
+const SEARCH_DEBOUNCE = 220; // мс
 const RELOAD_DEBOUNCE = 400;   // перезагрузка после SSE-событий
 const PRESENCE_PREFETCH = 40;  // сколько онлайн-статусов тянем при первом заходе
 
-/** last_at из /conversations приходит без таймзоны — трактуем как UTC. */
+/** last_at из /conversations приходит без таймзоны - трактуем как UTC. */
 function utcIso(v: string | null | undefined): string | null {
   if (!v) return null;
   return /(?:Z|[+-]\d\d:?\d\d)$/.test(v) ? v : `${v}Z`;
 }
 
-/** Снимок беседы в хранилище: новый формат (peer_key/is_general) и легаси. */
+/** Снимок беседы в хранилище: новый формат (peer_key/is_general) и старый. */
 interface StoredConv {
   key?: string;
   peer_key?: string;
@@ -64,13 +65,14 @@ function convOf(c: ConvItem): ActiveConv {
   };
 }
 
-/** Беседа из снимка — на случай, если её нет в текущей выдаче (например, поиск). */
-function fromStored(s: StoredConv, meId: number | undefined): ActiveConv | null {
+/** Беседа из снимка - на случай, если её нет в текущей выдаче (например, поиск). */
+function fromStored(s: StoredConv, meId: string | undefined): ActiveConv | null {
   const key = s.peer_key || s.key;
   if (!key) return null;
   const general = key === 'general' || !!(s.is_general ?? s.general);
-  const peerId = general ? null : Number(key);
-  if (!general && !Number.isFinite(peerId)) return null;
+  // Ключ личной беседы - UUID собеседника; старые числовые снимки не восстанавливаем.
+  const peerId = general ? null : key;
+  if (!general && !isUuid(peerId)) return null;
   return {
     key,
     peerId,
@@ -96,7 +98,7 @@ export function Conversations({
 }: {
   active: ActiveConv | null;
   onSelect: (c: ActiveConv) => void;
-  /** Восстанавливать последнюю открытую беседу (в мини-мессенджере — нет). */
+  /** Восстанавливать последнюю открытую беседу (в мини-мессенджере - нет). */
   autoRestore?: boolean;
   headerExtra?: React.ReactNode;
 }) {
@@ -105,7 +107,7 @@ export function Conversations({
   const [q, setQ] = useState('');
   const [data, setData] = useState<ConversationsData | null>(null);
   const [error, setError] = useState('');
-  const [online, setOnline] = useState<Record<number, boolean>>({});
+  const [online, setOnline] = useState<Record<string, boolean>>({});
   const [aiBusy, setAiBusy] = useState(false);
   const [aiError, setAiError] = useState('');
 
@@ -130,26 +132,26 @@ export function Conversations({
     }
   }, []);
 
-  /** Онлайн-статусы собеседников — один раз при первом заходе, дальше по SSE. */
+  /** Онлайн-статусы собеседников - один раз при первом заходе, дальше по SSE. */
   const prefetchPresence = useCallback(async (d: ConversationsData) => {
     if (presenceRef.current) return;
     presenceRef.current = true;
     const ids = d.users
       .map((u) => u.peer_id)
-      .filter((v): v is number => typeof v === 'number')
+      .filter((v): v is string => typeof v === 'string')
       .slice(0, PRESENCE_PREFETCH);
     if (!ids.length) return;
     const res = await Promise.allSettled(
       ids.map((id) => apiGet<PresenceInfo>(`/api/messenger/presence?peer_id=${id}`))
     );
-    const map: Record<number, boolean> = {};
+    const map: Record<string, boolean> = {};
     res.forEach((r, i) => {
       if (r.status === 'fulfilled') map[ids[i]] = !!r.value.online;
     });
     setOnline((prev) => ({ ...map, ...prev }));
   }, []);
 
-  /** Восстановление открытой беседы: миничат (sessionStorage) → последняя. */
+  /** Восстановление открытой беседы: миничат (sessionStorage) -> последняя. */
   const restore = useCallback(
     (d: ConversationsData) => {
       const stored = readStored();
@@ -163,7 +165,7 @@ export function Conversations({
     [user?.id]
   );
 
-  // Первая загрузка — сразу, последующие поиски — с debounce.
+  // Первая загрузка - сразу, последующие поиски - с debounce.
   useEffect(() => {
     let alive = true;
     const first = !restoredRef.current;
@@ -201,7 +203,7 @@ export function Conversations({
   useEffect(() => {
     const onPresence = (e: Event) => {
       const d = (e as CustomEvent<PresenceEvent>).detail;
-      if (!d || typeof d.user_id !== 'number') return;
+      if (!d || typeof d.user_id !== 'string') return;
       setOnline((prev) => ({ ...prev, [d.user_id]: !!d.online }));
     };
     window.addEventListener('hr:presence', onPresence);
@@ -213,17 +215,17 @@ export function Conversations({
     return [data.general, data.notes, ...data.users].filter((c): c is ConvItem => !!c);
   }, [data]);
 
-  // Ряд ассистента прячется, если поиск явно про людей (легаси-условие).
+  // Ряд ассистента прячется, если поиск явно про людей.
   const showAssistant = matchesAssistant(q);
 
-  /** Клик по «HR-ассистент» — новый диалог в /chat (легаси openAssistant). */
+  /** Клик по "HR-ассистент" - новый диалог в /chat. */
   const openAssistant = async () => {
     if (aiBusy) return;
     setAiBusy(true);
     setAiError('');
     try {
-      const r = await apiPost<{ session_id: string | number }>('/api/dialogues', {});
-      router.push(`/chat/${r.session_id}`);
+      const r = await apiPost<{ dialogue_id: string }>('/api/dialogues', {});
+      router.push(`/chat/${r.dialogue_id}`);
     } catch {
       setAiError('Не удалось открыть диалог с ассистентом');
     } finally {
@@ -254,9 +256,9 @@ export function Conversations({
 
   return (
     <aside className="flex-1 min-h-0 bg-white border border-gray-100 rounded-2xl shadow-sm flex flex-col overflow-hidden">
-      {/* data-msgr-head — за шапку тащится плавающая панель мессенджера.
+      {/* data-msgr-head - за шапку тащится плавающая панель мессенджера.
           Метка стоит на всём блоке, а не на одной строке заголовка: иначе
-          зона захвата — полоска в пару сантиметров, и попасть в неё трудно.
+          зона захвата - полоска в пару сантиметров, и попасть в неё трудно.
           Поле поиска и кнопки внутри исключены самим обработчиком
           (widget.tsx: closest('button, a, input, textarea, select')). */}
       <div data-msgr-head className="p-4 border-b border-gray-50 flex flex-col gap-3 shrink-0">
@@ -290,7 +292,7 @@ export function Conversations({
           <p className="text-center text-gray-400 text-xs py-10">Никого не найдено</p>
         )}
 
-        {/* «HR-ассистент» — всегда первым (легаси messenger_page.js:141) */}
+        {/* "HR-ассистент" - всегда первым */}
         {showAssistant && (
           <button
             onClick={openAssistant}

@@ -5,8 +5,7 @@ import { badRequest, requireUser } from '@/lib/auth';
 import { cut, validationError } from '@/lib/news';
 
 // Сохранение Web Push-подписки браузера.
-// Порт POST /api/push/subscribe из backend/routes/push.py.
-// Тело объявлено как Body(..., embed=True) → ждём {"subscription": {...}}.
+// Тело объявлено как Body(..., embed=True) -> ждём {"subscription": {...}}.
 
 export async function POST(request: NextRequest) {
   const gate = await requireUser();
@@ -34,8 +33,8 @@ export async function POST(request: NextRequest) {
 
   const ua = typeof subscription.ua === 'string' ? subscription.ua : '';
 
-  // endpoint уникален: один браузер — одна подписка. При повторной подписке
-  // user_agent не трогаем, как и Python.
+  // endpoint уникален: один браузер - одна подписка. При повторной подписке
+  // user_agent не трогаем.
   await prisma.push_subscriptions.upsert({
     where: { endpoint },
     update: { user_id: gate.user.id, p256dh, auth },

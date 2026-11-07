@@ -5,39 +5,45 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { baseName, DOCS_DIR, fromDocsPath, resolveInsideDocs, suffixOf, validationError } from './news';
+import { asUuid } from './ids';
+import {
+  baseName,
+  DOCS_DIR,
+  parseIdParam,
+  resolveInsideDocs,
+  suffixOf,
+  uuidError,
+  validationError,
+} from './news';
 
-// Общие помощники домена «База знаний» — порт вспомогательной логики
-// backend/routes/kb.py (_review_status, отдача файлов через FileResponse,
-// разбор Body(...) и Query-параметров FastAPI).
-// Вынесено сюда, потому что этим пользуются 15 route-handler'ов; путевые
-// утилиты (DOCS_DIR/resolveInsideDocs) переиспользуем из lib/news.ts — они
-// не про новости, просто исторически живут там.
+// Общие помощники домена "База знаний": статус актуальности, отдача файлов,
+// разбор тела запроса и query-параметров. Ими пользуются 15 route-handler'ов;
+// путевые утилиты (DOCS_DIR/resolveInsideDocs) берём из lib/news.ts - они не
+// про новости, просто исторически живут там.
 
-export { baseName, DOCS_DIR, fromDocsPath, resolveInsideDocs, suffixOf };
+export { baseName, DOCS_DIR, resolveInsideDocs, suffixOf, uuidError };
 
-/** settings.docs_templates — рядом с docs/local и docs/news. */
+/** Идентификатор записи в пути (UUID); некорректный - 422. */
+export const parsePathId = parseIdParam;
+
+/** Каталог шаблонов - рядом с docs/local и docs/news. */
 export const TEMPLATES_DIR = path.join(DOCS_DIR, 'templates');
 
-// ── ошибки ─────────────────────────────────────────────────────────────────
+// ошибки
 
-/**
- * Место, где Python падает необработанным ValueError/TypeError (например
- * `int("abc")`). Статус тот же (500), но тело у FastAPI — plain text
- * "Internal Server Error", а у нас JSON: точнее воспроизвести нечем.
- */
+/** 500 на данные, которые не удалось разобрать (например нечисловая строка вместо числа). */
 export function internalError(): NextResponse {
   return NextResponse.json({ detail: 'Internal Server Error' }, { status: 500 });
 }
 
-/** 422 на некорректное тело — как Body(...) в FastAPI. */
+/** 422 на некорректное тело запроса. */
 function invalidBody(type: string, loc: unknown[], msg: string, input: unknown): NextResponse {
   return NextResponse.json({ detail: [{ type, loc, msg, input }] }, { status: 422 });
 }
 
 /**
- * Разбор `body: dict = Body(...)`: тело обязательно и должно быть объектом.
- * Формы ошибок повторяют pydantic (см. app/api/admin/users/[uid]/route.ts).
+ * Тело запроса обязательно и должно быть JSON-объектом. Формы ошибок - как в
+ * app/api/admin/users/[uid]/route.ts.
  */
 export async function jsonBody(
   request: NextRequest
@@ -58,34 +64,21 @@ export async function jsonBody(
   return { body: parsed as Record<string, unknown> };
 }
 
-// ── path-параметры ─────────────────────────────────────────────────────────
+// path-параметры
 
-/**
- * Числовой path-параметр FastAPI. `value: null` — число корректное, но не
- * влезает в int4 PostgreSQL: такой записи заведомо нет, вызывающий отдаёт 404
- * (Python на этом месте уронил бы запрос в 500 из-за DataError).
- */
-export function parsePathId(
-  raw: string,
+/** Необязательный идентификатор в query-строке: null, если параметра нет. */
+export function uuidQuery(
+  raw: string | null,
   name: string
-): { value: number | null } | { response: NextResponse } {
-  if (!/^[+-]?\d+$/.test(raw)) {
-    return {
-      response: validationError(
-        ['path', name],
-        'int_parsing',
-        'Input should be a valid integer, unable to parse string as an integer',
-        raw
-      ),
-    };
-  }
-  const n = Number.parseInt(raw, 10);
-  return { value: n >= -2147483648 && n <= 2147483647 ? n : null };
+): { value: string | null } | { response: NextResponse } {
+  if (raw === null) return { value: null };
+  const id = asUuid(raw);
+  return id ? { value: id } : { response: uuidError(['query', name], raw) };
 }
 
-// ── приведение типов «как в Python» ────────────────────────────────────────
+// приведение типов ""
 
-/** Python bool(): пустые строка/список/словарь тоже дают False. */
+/** Истинность значения: пустые строка, массив и объект тоже дают false. */
 export function pyBool(value: unknown): boolean {
   if (value === null || value === undefined || value === false) return false;
   if (typeof value === 'number') return value !== 0;
@@ -95,7 +88,7 @@ export function pyBool(value: unknown): boolean {
   return Boolean(value);
 }
 
-/** Python str(): None/True/False печатаются словами, остальное — как есть. */
+/** Строка из значения: null/true/false дают "None"/"True"/"False", остальное - как есть. */
 export function pyStr(value: unknown): string {
   if (value === null || value === undefined) return 'None';
   if (value === true) return 'True';
@@ -105,7 +98,7 @@ export function pyStr(value: unknown): string {
   return String(value);
 }
 
-/** Python int(): null — там, где Python бросил бы ValueError/TypeError. */
+/** Целое из значения; null, если преобразовать нельзя. */
 export function pyInt(value: unknown): number | null {
   if (typeof value === 'boolean') return value ? 1 : 0;
   if (typeof value === 'number') return Number.isFinite(value) ? Math.trunc(value) : null;
@@ -115,7 +108,7 @@ export function pyInt(value: unknown): number | null {
   return null;
 }
 
-// ── даты ───────────────────────────────────────────────────────────────────
+// даты
 
 /** `date.isoformat()` для колонок @db.Date (в них лежит полночь UTC). */
 export function isoDate(d: Date | null | undefined): string | null {
@@ -123,8 +116,8 @@ export function isoDate(d: Date | null | undefined): string | null {
 }
 
 /**
- * `datetime.strptime(s, "%Y-%m-%d").date()`. Как и Python, допускает
- * год/месяц/день без ведущих нулей, но отвергает несуществующие даты.
+ * Дата ГГГГ-ММ-ДД: год/месяц/день допускаются без ведущих нулей,
+ * несуществующие даты отвергаются.
  */
 export function parsePyDate(s: string): Date | null {
   const m = /^(\d{1,4})-(\d{1,2})-(\d{1,2})$/.exec(s);
@@ -136,7 +129,7 @@ export function parsePyDate(s: string): Date | null {
   return dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d ? dt : null;
 }
 
-/** Календарный день в мс — общий знаменатель для сравнения date и datetime. */
+/** Календарный день в мс - общий знаменатель для сравнения date и datetime. */
 function dayMs(d: Date): number {
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
 }
@@ -152,13 +145,13 @@ export interface ReviewInput {
 }
 
 /**
- * Порт _review_status: 'expired' — вышел срок действия, 'review_due' — не
- * пересматривался больше года, null — свежий или архивный.
+ * 'expired' - вышел срок действия, 'review_due' - не
+ * пересматривался больше года, null - свежий или архивный.
  */
 export function reviewStatus(d: ReviewInput): string | null {
   if (d.is_archived) return null;
   const now = new Date();
-  // date.today() — локальная дата сервера, не UTC.
+  // date.today() - локальная дата сервера, не UTC.
   const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
   if (d.effective_to && dayMs(d.effective_to) < today) return 'expired';
 
@@ -168,27 +161,27 @@ export function reviewStatus(d: ReviewInput): string | null {
   return ref !== null && today - ref > YEAR_MS ? 'review_due' : null;
 }
 
-// ── JSON-колонки ───────────────────────────────────────────────────────────
+// JSON-колонки
 
-/** JSON-поле как список (Python: `x or []`). */
+/** JSON-поле как список (null -> []). */
 export function asList(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
 }
 
-/** JSON-поле как словарь (Python: `x or {}`). */
+/** JSON-поле как объект (null -> {}). */
 export function asDict(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
 }
 
-// ── отдача файлов ──────────────────────────────────────────────────────────
+// отдача файлов
 
-// Значения bool так разбирает pydantic; всё остальное — ошибка валидации.
+// Допустимые строковые значения bool; всё остальное - ошибка валидации.
 const TRUE_VALUES = new Set(['1', 'on', 't', 'true', 'y', 'yes']);
 const FALSE_VALUES = new Set(['0', 'off', 'f', 'false', 'n', 'no']);
 
-/** `inline: bool = Query(default=False)` со «строгим» разбором FastAPI. */
+/** Флаг из query-параметра (по умолчанию false) со строгим разбором значения. */
 export function boolQuery(
   raw: string | null,
   name: string
@@ -208,9 +201,9 @@ export function boolQuery(
 }
 
 /**
- * `x: int | None = None` в сигнатуре роута — необязательный числовой параметр.
+ * Необязательный числовой query-параметр.
  * Копия intQuery из lib/messenger.ts: тянуть сюда весь домен мессенджера
- * (а с ним SSE и web-push) ради одной функции разбора — дороже дубля.
+ * (а с ним SSE и web-push) ради одной функции разбора - дороже дубля.
  */
 export function intQuery(
   raw: string | null,
@@ -234,7 +227,7 @@ export function intQuery(
 // Здесь её нет намеренно: file-preview импортирует отсюда fileResponse, обратная
 // зависимость дала бы цикл модулей.
 
-/** urllib.parse.quote(s) с safe='/' — нужен для Content-Disposition, как в Starlette. */
+/** urllib.parse.quote(s) с safe='/' - нужен для Content-Disposition. */
 function pyQuote(s: string): string {
   let out = '';
   for (const byte of Buffer.from(s, 'utf8')) {
@@ -258,24 +251,23 @@ export async function isFile(file: string): Promise<boolean> {
   return Boolean(info?.isFile());
 }
 
-// ── шаблоны документов ─────────────────────────────────────────────────────
+// шаблоны документов
 
 /**
- * Порт template_display_path из backend/services/documents/generator.py:
- * версия шаблона ДЛЯ ПРОСМОТРА/СКАЧИВАНИЯ. Для бланка .docx без {{переменных}}
- * отдаётся копия с подставленными НАЗВАНИЯМИ авто-полей (кэш
- * docs/templates/.previews), для jinja-шаблонов и pdf — оригинал.
+ * Для бланка .docx без {{переменных}}
+ * отдаётся копия с подставленными названиями авто-полей (кэш
+ * docs/templates/.previews), для шаблонов с переменными и pdf - оригинал.
  *
  * Сам рендер живёт в lib/docs/generator.ts. Импорт динамический: lib/docs/*
  * берёт отсюда мелкие утилиты (pyStr), и статическая ссылка замкнула бы цикл
  * модулей; к моменту вызова оба модуля уже инициализированы.
  */
-export async function templateDisplayPath(tplId: number, src: string): Promise<string> {
+export async function templateDisplayPath(tplId: string, src: string): Promise<string> {
   const { templatePreviewPath } = await import('./docs/generator');
   return templatePreviewPath(tplId, src);
 }
 
-/** Аналог starlette FileResponse: потоковая отдача с теми же заголовками. */
+/** Потоковая отдача файла с заголовками Content-Type/Length/Disposition. */
 export async function fileResponse(
   file: string,
   opts: { filename: string; mediaType: string; inline: boolean }

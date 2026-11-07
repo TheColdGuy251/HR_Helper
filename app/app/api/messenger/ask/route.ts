@@ -1,7 +1,6 @@
 import { NextResponse, after } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { Prisma } from '@prisma/client';
-import type { poll_options, poll_votes } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { badRequest, fullName, notFound, requireUser } from '@/lib/auth';
 import { asDict, pyBool, pyStr } from '@/lib/kb';
@@ -25,26 +24,20 @@ import type { ChatMessage } from '@/lib/ml/llm';
 import { resolveIntent } from '@/lib/ml/intent';
 import { answerStream } from '@/lib/ml/pipeline';
 
-// Вопрос ИИ-ассистенту ВНУТРИ переписки сотрудников.
-// Порт POST /api/messenger/ask из backend/routes/messenger.py (ask_ai,
-// _history_for, _detect_vote_intent, _last_poll_in_thread, _strip_vote_marker,
-// _apply_bot_vote).
+// Вопрос ИИ-ассистенту внутри переписки сотрудников.
 //
 // Ответ не отдаётся в теле: HTTP возвращает только сам вопрос и id заготовки,
 // а текст ассистента приходит подписчикам SSE кадрами `ai_stream`
-// (queued → start → status → sources → chunk → done).
+// (queued -> start -> status -> sources -> chunk -> done).
 //
-// ОТЛИЧИЯ ОТ PYTHON
-// 1. Порядок кадров очереди. В Python запрос ждёт слот ДО начала работы
-//    (submit → queued → start → поиск), поэтому QueueRejected прилетает ещё
-//    в HTTP-обработчик. Здесь очередь живёт внутри chatStream, то есть уже
-//    ПОСЛЕ поиска: сначала start и status, и лишь перед генерацией — queued.
-//    Отказ очереди по этой же причине приходит не ответом на запрос, а тем же
-//    кадром done с текстом отказа (пользователь видит то же самое).
-// 2. Web Push (services/push.py) не шлётся — см. broadcastMessage в lib/messenger.
+// Особенности:
+// 1. Очередь LLM живёт внутри chatStream, то есть уже после поиска: сначала
+//    приходят start и status, и лишь перед генерацией - queued. Поэтому отказ
+//    очереди приходит не ответом на запрос, а кадром done с текстом отказа.
+// 2. Web Push не шлётся - см. broadcastMessage в lib/messenger.
 
-// Тексты отказа очереди — дословно из services/assistant_queue.py: в lib/ml/llm.ts
-// формулировки свои, поэтому сопоставляем по причине.
+// Тексты отказа очереди: в lib/ml/llm.ts формулировки свои, поэтому
+// сопоставляем по причине.
 const QUEUE_REJECT_TEXT: Record<string, string> = {
   queue_full:
     'Сервис ассистента сейчас перегружен — слишком много запросов в очереди. ' +
@@ -54,16 +47,14 @@ const QUEUE_REJECT_TEXT: Record<string, string> = {
     'на предыдущие, прежде чем отправлять новый.',
 };
 
-// ---------------------------------------------------------------------------
-// Регэкспы (порты питоновских: \w там знает кириллицу, в JS — нет)
-// ---------------------------------------------------------------------------
+// Регэкспы (порты питоновских: \w там знает кириллицу, в JS - нет)
 
 const W = '[0-9A-Za-zА-Яа-яЁё_]';
 
 /**
- * Мета-вопросы о САМОЙ переписке («о чём мы говорили», «перескажи чат»).
+ * Мета-вопросы о самой переписке ("о чём мы говорили", "перескажи чат").
  * Их нельзя гнать через RAG: поиск по такой фразе находит случайные документы
- * базы знаний, и модель пересказывает ИХ вместо истории чата.
+ * базы знаний, и модель пересказывает их вместо истории чата.
  */
 const CHAT_META_RE = new RegExp(
   '(о\\s*ч[её]м|про\\s*что)\\s+(эт(от|а|о)\\s+)?(чат|диалог|разговор|беседа|переписк|' +
@@ -75,7 +66,7 @@ const CHAT_META_RE = new RegExp(
   'i'
 );
 
-// Требуем ИМПЕРАТИВ, чтобы простое упоминание опроса («что было в голосовании?»)
+// Требуем императив, чтобы простое упоминание опроса ("что было в голосовании?")
 // не запускало голосование бота.
 const VOTE_INTENT_RE = new RegExp(
   `(проголос${W}*|отдай\\s+(свой\\s+)?голос|` +
@@ -89,9 +80,9 @@ const VOTE_RANDOM_RE = new RegExp(
   'i'
 );
 
-// Служебная строка выбора в голосовании (её пишет модель, пользователю НЕ видна):
-// «ГОЛОС: 2», «ГОЛС 1», «**ГОЛОС: 1** (за …)», «VOTE: 1». Ловим только как
-// ОТДЕЛЬНУЮ строку — чтобы не задеть обычные предложения про голосование.
+// Служебная строка выбора в голосовании (её пишет модель, пользователю не видна):
+// "ГОЛОС: 2", "ГОЛС 1", "**ГОЛОС: 1** (за ...)", "VOTE: 1". Ловим только как
+// отдельную строку - чтобы не задеть обычные предложения про голосование.
 const VOTE_MARKER =
   '^[^\\S\\r\\n]*[*_#>\\s]*(?:гол[оа]?с(?![а-яё])|vote)[*_\\s]*[:#\\-–—]?[*_\\s]*' +
   '(\\d+)[*_\\s]*(?:\\([^)]*\\))?[*_\\s]*$';
@@ -100,7 +91,7 @@ const VOTE_MARKER =
 const VOTE_MARKER_SUB_RE = new RegExp(VOTE_MARKER, 'gim');
 const VOTE_MARKER_FIND_RE = new RegExp(VOTE_MARKER, 'im');
 
-/** None | 'random' | 'reason' — просит ли пользователь бота проголосовать. */
+/** null | 'random' | 'reason' - просит ли пользователь бота проголосовать. */
 function detectVoteIntent(content: string): 'random' | 'reason' | null {
   if (!VOTE_INTENT_RE.test(content || '')) return null;
   return VOTE_RANDOM_RE.test(content || '') ? 'random' : 'reason';
@@ -121,15 +112,14 @@ function randRange(n: number): number {
 // ---------------------------------------------------------------------------
 
 /**
- * _history_for: текст + вложения/голосования/реакции последних сообщений.
- * Сообщения пользователей помечаются именем отправителя — иначе модель не знает,
- * кто что писал, и не может отвечать на вопросы о переписке.
- *
- * Связанные строки грузятся пакетно (Python делает по 3-4 запроса на сообщение).
+ * История для модели: текст + вложения/голосования/реакции последних
+ * сообщений. Сообщения пользователей помечаются именем отправителя - иначе
+ * модель не знает, кто что писал, и не может отвечать на вопросы о переписке.
+ * Связанные строки грузятся пакетно.
  */
 async function historyFor(
   where: Prisma.user_messagesWhereInput,
-  beforeId: number,
+  beforeId: string,
   limit: number
 ): Promise<ChatMessage[]> {
   const rows = await prisma.user_messages.findMany({
@@ -146,24 +136,19 @@ async function historyFor(
       where: { message_id: { in: ids } },
       orderBy: { id: 'asc' },
     }),
-    prisma.polls.findMany({ where: { message_id: { in: ids } }, orderBy: { id: 'asc' } }),
+    prisma.polls.findMany({
+      where: { message_id: { in: ids } },
+      include: {
+        options: {
+          orderBy: { position: 'asc' },
+          include: { votes: { select: { user_id: true } } },
+        },
+      },
+    }),
     prisma.user_message_reactions.findMany({
       where: { message_id: { in: ids } },
-      orderBy: { id: 'asc' },
+      orderBy: { created_at: 'asc' },
     }),
-  ]);
-
-  const pollIds = pollRows.map((p) => p.id);
-  const [options, votes] = await Promise.all([
-    pollIds.length
-      ? prisma.poll_options.findMany({
-          where: { poll_id: { in: pollIds } },
-          orderBy: { position: 'asc' },
-        })
-      : Promise.resolve<poll_options[]>([]),
-    pollIds.length
-      ? prisma.poll_votes.findMany({ where: { poll_id: { in: pollIds } }, orderBy: { id: 'asc' } })
-      : Promise.resolve<poll_votes[]>([]),
   ]);
 
   const senderIds = [...new Set(rows.map((m) => m.sender_id))];
@@ -171,19 +156,19 @@ async function historyFor(
     (await prisma.users.findMany({ where: { id: { in: senderIds } } })).map((u) => [u.id, u])
   );
 
-  const pollByMessage = new Map<number, (typeof pollRows)[number]>();
-  for (const p of pollRows) if (!pollByMessage.has(p.message_id)) pollByMessage.set(p.message_id, p);
+  const pollByMessage = new Map<string, (typeof pollRows)[number]>();
+  for (const p of pollRows) if (p.message_id) pollByMessage.set(p.message_id, p);
 
   const hist: ChatMessage[] = [];
   for (const m of rows) {
     const fm = asDict(m.forwarded_meta);
-    if (pyBool(fm.system)) continue; // «закрепил(а) сообщение» и т.п. — шум для модели
+    if (pyBool(fm.system)) continue; // "закрепил(а) сообщение" и т.п. - шум для модели
     const hasMeta = Object.keys(fm).length > 0;
     const isAi = pyBool(fm.ai);
 
     const metaText = hasMeta && typeof fm.content === 'string' ? fm.content : '';
     let text = metaText || m.content || '';
-    // Пересланный снимок ответа ассистента (из /chat) — помечаем происхождение,
+    // Пересланный снимок ответа ассистента (из /chat) - помечаем происхождение,
     // чтобы модель не приписывала свой текст пересылающему сотруднику.
     if (hasMeta && !isAi && pyBool(fm.content)) {
       text = `(переслан ответ ИИ-ассистента) ${text}`;
@@ -198,15 +183,11 @@ async function historyFor(
 
     const poll = pollByMessage.get(m.id);
     if (poll) {
-      // Варианты + ТЕКУЩИЕ РЕЗУЛЬТАТЫ — модель может рассуждать об итогах
-      // («какой вариант победил», «сколько проголосовало»).
-      const popts = options.filter((o) => o.poll_id === poll.id);
-      const pvotes = votes.filter((v) => v.poll_id === poll.id);
-      const perOpt = new Map<number, number>();
-      for (const v of pvotes) perOpt.set(v.option_id, (perOpt.get(v.option_id) ?? 0) + 1);
-      const totalVoters = new Set(pvotes.map((v) => v.user_id)).size;
-      const optsDesc = popts
-        .map((o) => `«${o.text}» — ${perOpt.get(o.id) ?? 0} голос(ов)`)
+      // Варианты + текущие результаты - модель может рассуждать об итогах
+      // ("какой вариант победил", "сколько проголосовало").
+      const totalVoters = new Set(poll.options.flatMap((o) => o.votes.map((v) => v.user_id))).size;
+      const optsDesc = poll.options
+        .map((o) => `«${o.text}» — ${o.votes.length} голос(ов)`)
         .join('; ');
       extras.push(`голосование «${poll.question}»: ${optsDesc} (проголосовало: ${totalVoters})`);
     }
@@ -219,7 +200,7 @@ async function historyFor(
 
     if (!isAi) {
       const u = senders.get(m.sender_id);
-      // Полное ФИО (а не «Фамилия И.») — чтобы модель точно знала, кто автор.
+      // Полное ФИО (а не "Фамилия И.") - чтобы модель точно знала, кто автор.
       const name = (u ? fullName(u) : '') || 'Сотрудник';
       text = `[${name}]: ${text}`;
     }
@@ -234,18 +215,18 @@ async function historyFor(
 
 interface VotePlan {
   mode: 'random' | 'reason';
-  pollId: number;
-  msgId: number;
-  optionIds: number[];
+  pollId: string;
+  msgId: string;
+  optionIds: string[];
   texts: string[];
   question: string;
   chosenIdx: number | null;
 }
 
-/** _last_poll_in_thread: последнее голосование диалога с непустым списком вариантов. */
+/** Последнее голосование диалога с непустым списком вариантов. */
 async function lastPollInThread(
   where: Prisma.user_messagesWhereInput
-): Promise<{ msgId: number; poll: { id: number; question: string; allow_bot: boolean }; options: { id: number; text: string }[] } | null> {
+): Promise<{ msgId: string; poll: { id: string; question: string; allow_bot: boolean }; options: { id: string; text: string }[] } | null> {
   const msgs = await prisma.user_messages.findMany({
     where,
     orderBy: { id: 'desc' },
@@ -256,27 +237,24 @@ async function lastPollInThread(
 
   const polls = await prisma.polls.findMany({
     where: { message_id: { in: msgs.map((m) => m.id) } },
-    orderBy: { id: 'asc' },
-    select: { id: true, message_id: true, question: true, allow_bot: true },
-  });
-  if (!polls.length) return null;
-  const options = await prisma.poll_options.findMany({
-    where: { poll_id: { in: polls.map((p) => p.id) } },
-    orderBy: { position: 'asc' },
-    select: { id: true, text: true, poll_id: true },
+    select: {
+      id: true,
+      message_id: true,
+      question: true,
+      allow_bot: true,
+      options: { orderBy: { position: 'asc' }, select: { id: true, text: true } },
+    },
   });
 
-  // Идём от свежих сообщений к старым; опрос без вариантов — как будто его нет.
+  // Идём от свежих сообщений к старым; опрос без вариантов - как будто его нет.
   for (const m of msgs) {
     const poll = polls.find((p) => p.message_id === m.id);
-    if (!poll) continue;
-    const opts = options.filter((o) => o.poll_id === poll.id);
-    if (opts.length) return { msgId: m.id, poll, options: opts };
+    if (poll?.options.length) return { msgId: m.id, poll, options: poll.options };
   }
   return null;
 }
 
-/** _apply_bot_vote: засчитывает голос бота ПОСЛЕ генерации ответа. */
+/** Засчитывает голос бота после генерации ответа. */
 async function applyBotVote(vote: VotePlan, answerText: string): Promise<void> {
   try {
     const poll = await prisma.polls.findUnique({ where: { id: vote.pollId } });
@@ -294,10 +272,10 @@ async function applyBotVote(vote: VotePlan, answerText: string): Promise<void> {
     }
 
     const bot = await getBotUser();
-    await prisma.poll_votes.deleteMany({ where: { poll_id: poll.id, user_id: bot.id } });
-    await prisma.poll_votes.create({
-      data: { poll_id: poll.id, option_id: vote.optionIds[idx], user_id: bot.id },
-    });
+    await prisma.$transaction([
+      prisma.poll_votes.deleteMany({ where: { user_id: bot.id, option: { poll_id: poll.id } } }),
+      prisma.poll_votes.create({ data: { option_id: vote.optionIds[idx], user_id: bot.id } }),
+    ]);
 
     const recipients = [...new Set(await recipientsOf(pollMsg))];
     const byViewer = await pollForViewers(pollMsg, recipients);
@@ -310,8 +288,8 @@ async function applyBotVote(vote: VotePlan, answerText: string): Promise<void> {
       });
     }
   } catch {
-    // Python здесь только пишет warning «Голос бота не засчитан» — ответ
-    // ассистента всё равно доедет до собеседников.
+    // Голос бота не засчитан - не страшно: ответ ассистента всё равно доедет до
+    // собеседников.
   }
 }
 
@@ -328,7 +306,7 @@ export async function POST(request: NextRequest) {
   if ('response' in parsed) return parsed.response;
   const p = parsed.params;
 
-  const peerId = p.optInt('peer_id');
+  const peerId = p.optUuid('peer_id');
   const general = p.bool('general', false);
   const rawContent = p.str('content');
   const invalid = p.invalid();
@@ -338,26 +316,23 @@ export async function POST(request: NextRequest) {
   if (!content) return badRequest('Пустой вопрос');
   let other: Awaited<ReturnType<typeof userById>> = null;
   if (!general) {
-    // peer_id == user.id — запрос к ИИ внутри «Заметок» (диалог с собой).
+    // peer_id == user.id - запрос к ИИ внутри "Заметок" (диалог с собой).
     other = await userById(peerId);
     if (!peerId || !other) return notFound('Получатель не найден');
   }
 
-  // 1) вопрос — обычное сообщение, помеченное как запрос к ассистенту
+  // 1) вопрос - обычное сообщение, помеченное как запрос к ассистенту
   const q = await prisma.user_messages.create({
     data: {
       sender_id: user.id,
       recipient_id: general ? null : peerId,
       is_general: general,
       content,
-      forwarded_meta: Prisma.DbNull,
-      is_pinned: false,
-      is_edited: false,
       is_ai_query: true,
     },
   });
   const where = threadWhere(user.id, peerId, general);
-  await markRead(user.id, general ? GENERAL_KEY : pyStr(peerId), where);
+  await markRead(user.id, general || !peerId ? GENERAL_KEY : peerId, where);
   await broadcastMessage(q);
 
   // 2) плейсхолдер ответа ИИ (автор = спросивший, чтобы был на его стороне)
@@ -368,17 +343,14 @@ export async function POST(request: NextRequest) {
       is_general: general,
       content: '',
       forwarded_meta: { content: '', sources: [], ai: true },
-      is_pinned: false,
-      is_edited: false,
-      is_ai_query: false,
     },
   });
   const aiId = ai.id;
 
-  // Мета-вопрос о самой переписке → отвечаем по истории (без поиска по базе
+  // Мета-вопрос о самой переписке -> отвечаем по истории (без поиска по базе
   // знаний) и берём больше сообщений, чтобы было что пересказывать.
   // Детект: регэксп + контекстный классификатор (ловит перефразировки). Порядок
-  // важен — при совпадении регэкспа классификатор не дёргается (как `or` в Python),
+  // важен - при совпадении регэкспа классификатор не дёргается,
   // и запрос не платит за эмбеддинг с возможным LLM-уточнением.
   let history = await historyFor(where, q.id, 5);
   const isMeta =
@@ -389,7 +361,7 @@ export async function POST(request: NextRequest) {
   const asker = user.id;
 
   // Голосование по просьбе: пользователь просит бота проголосовать в опросе.
-  // 'reason' — бот высказывает мнение и голосует; 'random' — случайный выбор.
+  // 'reason' - бот высказывает мнение и голосует; 'random' - случайный выбор.
   let vote: VotePlan | null = null;
   const voteMode = detectVoteIntent(content);
   if (voteMode) {
@@ -407,7 +379,7 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // Контекст о чате и участниках — чтобы модель знала, где и с кем общается.
+  // Контекст о чате и участниках - чтобы модель знала, где и с кем общается.
   const askerDesc = fullName(user) + (user.position ? `, должность: ${user.position}` : '');
   let place: string;
   if (general) {
@@ -473,7 +445,7 @@ export async function POST(request: NextRequest) {
     }
   };
 
-  // after() продлевает жизнь запроса до конца генерации — без него Next может
+  // after() продлевает жизнь запроса до конца генерации - без него Next может
   // свернуть контекст сразу после ответа и оборвать стрим на первом же кадре.
   after(async () => {
     publishFrame({ phase: 'start', status: 'search' });
@@ -487,7 +459,7 @@ export async function POST(request: NextRequest) {
         onStatus: (st) => publishFrame({ phase: 'status', status: st }),
         extraContext,
         allowNoContextAnswer: true,
-        // null (а не уже вычисленный интент) — как в Python: для НЕ мета-вопроса
+        // null (а не уже вычисленный интент): для не мета-вопроса
         // пайплайн классифицирует запрос сам, по своей исправленной формулировке.
         intentHint: isMeta ? 'meta_chat' : null,
         userId: asker,
@@ -502,8 +474,7 @@ export async function POST(request: NextRequest) {
       }
     } catch (e) {
       if (!acc) {
-        // Отказ очереди в Python прилетает ещё до старта работы и кладётся
-        // прямо в плейсхолдер — итог для пользователя тот же.
+        // Отказ очереди кладётся прямо в плейсхолдер.
         acc =
           e instanceof QueueRejected
             ? (QUEUE_REJECT_TEXT[e.reason] ?? e.message)
@@ -512,9 +483,9 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Голос бота (по просьбе в чате): засчитываем ПОСЛЕ ответа.
+    // Голос бота (по просьбе в чате): засчитываем после ответа.
     if (vote) await applyBotVote(vote, acc);
-    // Служебную строку голосования вырезаем ВСЕГДА — даже если запрос не был
+    // Служебную строку голосования вырезаем всегда - даже если запрос не был
     // про голосование: модель иногда имитирует её из контекста прошлых сообщений.
     // Иначе она попадает в чат и в историю, и имитация усиливается.
     const display = stripVoteMarker(acc);
@@ -530,7 +501,7 @@ export async function POST(request: NextRequest) {
         },
       });
     } catch {
-      // Заготовку могли удалить — кадр done всё равно отдаём открытым вкладкам.
+      // Заготовку могли удалить - кадр done всё равно отдаём открытым вкладкам.
     }
     publishFrame({ phase: 'done', content: display, sources: srcs });
   });

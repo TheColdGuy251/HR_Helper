@@ -1,11 +1,10 @@
 import type { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import { notFound, requireUser } from '@/lib/auth';
-import { baseName, boolQuery, fileResponse, fromDocsPath, isFile, parsePathId, suffixOf } from '@/lib/kb';
+import { baseName, boolQuery, fileResponse, isFile, parsePathId, suffixOf } from '@/lib/kb';
 import { previewPdfResponse } from '@/lib/file-preview';
 
 // Отдача файла сгенерированного документа.
-// Порт GET /api/documents/{document_id}/download из backend/routes/documents.py.
 
 type Ctx = { params: Promise<{ document_id: string }> };
 
@@ -28,20 +27,20 @@ export async function GET(request: NextRequest, { params }: Ctx) {
   if ('response' in inline) return inline.response;
   const asFormat = query.get('as');
 
-  // Документы общие для всех сотрудников (внутренний инструмент) — без проверки владельца.
+  // Документы общие для всех сотрудников (внутренний инструмент) - без проверки владельца.
   const doc =
     parsed.value === null
       ? null
       : await prisma.my_documents.findUnique({ where: { id: parsed.value } });
   if (!doc) return notFound('Документ не найден');
 
-  const file = doc.file_path ? fromDocsPath(doc.file_path) : null;
+  const file = doc.file_path;
   if (!file || !(await isFile(file))) return notFound('Файл документа отсутствует');
 
   const name = baseName(file);
   const ext = suffixOf(name).toLowerCase();
 
-  // as=pdf — PDF-версия презентации (pptx/ppt/odp) для предпросмотра; для
+  // as=pdf - PDF-версия презентации (pptx/ppt/odp) для предпросмотра; для
   // остальных форматов превью нет и ниже уходит исходный файл.
   if (asFormat === 'pdf') {
     const preview = await previewPdfResponse(file);

@@ -8,36 +8,33 @@ import { ocrImageBytes, ocrPdfPages } from './ocr';
 import { convertToModern } from './office-convert';
 
 /**
- * Извлечение текста из файлов — порт backend/services/parsers/*.py
- * (dispatch.py, base.py, docx.py, xlsx.py, pptx.py, plain.py, rtf.py, pdf.py,
- * ocr.py, office_convert.py, xls.py).
+ * Извлечение текста из файлов.
  *
- * ЧТО РАЗБИРАЕТСЯ ЗДЕСЬ, В NEXT:
- *   .docx           — mammoth (HTML → абзацы + таблицы с разметкой столбцов);
- *   .xlsx / .xlsm   — SheetJS, все листы, блок «Лист: <имя>» на лист;
- *   .xls            — SheetJS читает и старый BIFF (в Python это xlrd);
- *   .pptx           — распаковка zip + разбор XML слайдов (текст фигур,
+ * Что разбирается:
+ *   .docx           - mammoth (HTML -> абзацы + таблицы с разметкой столбцов);
+ *   .xlsx / .xlsm   - SheetJS, все листы, блок "Лист: <имя>" на лист;
+ *   .xls            - SheetJS читает и старый BIFF;
+ *   .pptx           - распаковка zip + разбор XML слайдов (текст фигур,
  *                     таблицы, заметки докладчика);
- *   .txt .md .rst .csv .log — чтение файла как UTF-8;
- *   .rtf            — снятие управляющих последовательностей (мини-порт striprtf);
- *   .pdf            — постраничный текст через unpdf (pdf.js), пустые страницы
+ *   .txt .md .rst .csv .log - чтение файла как UTF-8;
+ *   .rtf            - снятие управляющих последовательностей;
+ *   .pdf            - постраничный текст через unpdf, пустые страницы
  *                     дораспознаются OCR (см. lib/parsers/ocr.ts);
- *   изображения     — Tesseract (.png .jpg .jpeg .webp .bmp .tif .tiff);
- *   .doc .odt .ods .ppt .odp — конвертация LibreOffice в docx/xlsx/pptx.
+ *   изображения     - Tesseract (.png .jpg .jpeg .webp .bmp .tif .tiff);
+ *   .doc .odt .ods .ppt .odp - конвертация LibreOffice в docx/xlsx/pptx.
  *
- * ОТЛИЧИЯ ОТ PYTHON (осознанные):
- *  - .docx: не извлекаются текст-боксы, фигуры и SmartArt (в Python по ним
- *    реконструируется схема процесса «по стрелкам»); колонтитулы тоже не
- *    читаются — mammoth отдаёт только тело документа;
- *  - PDF-сканы: PyMuPDF рендерит страницу целиком (get_pixmap), pdf.js так не
- *    умеет без нативного canvas — берём самую крупную вложенную в страницу
- *    картинку. Для сканов это и есть страница, но у «смешанных» страниц
- *    (вектор + картинки) OCR увидит только картинку.
+ * Ограничения:
+ *  - .docx: не извлекаются текст-боксы, фигуры и SmartArt; колонтитулы тоже не
+ *    читаются - mammoth отдаёт только тело документа;
+ *  - PDF-сканы: без нативного canvas pdf.js не рендерит страницу целиком, поэтому
+ *    берём самую крупную вложенную в страницу картинку. Для сканов это и есть
+ *    страница, но у "смешанных" страниц (вектор + картинки) OCR увидит только
+ *    картинку.
  */
 
-// ── Юникод-регэкспы ────────────────────────────────────────────────────────
-// В Python `\b` и `\w` знают кириллицу, в JS — только ASCII. Тот же приём, что
-// в lib/ml/pipeline.ts: подставляем расширенный класс слова и границу слова.
+// Юникод-регэкспы
+// В JS `\b` и `\w` знают только ASCII, поэтому, как и в lib/ml/pipeline.ts,
+// подставляем расширенный класс слова и границу слова.
 
 const W = '0-9A-Za-zА-Яа-яЁё_';
 const B = `(?:(?<![${W}])(?=[${W}])|(?<=[${W}])(?![${W}]))`;
@@ -46,22 +43,22 @@ function ru(pattern: string, flags = ''): RegExp {
   return new RegExp(pattern.replace(/\\b/g, B).replace(/\\w/g, `[${W}]`), flags);
 }
 
-/** str.isalpha() для одного символа. */
+/** Символ - буква. */
 export function isAlphaChar(c: string): boolean {
   return /\p{L}/u.test(c);
 }
 
-/** str.isupper() для одного символа (Lu и Lt, как в Python). */
+/** Символ - заглавная буква (Lu и Lt). */
 function isUpperChar(c: string): boolean {
   return /\p{Lu}|\p{Lt}/u.test(c);
 }
 
-/** str.split() без аргументов: режет по любым пробелам, пустые отбрасывает. */
+/** Режет по любым пробелам, пустые отбрасывает. */
 function pySplit(s: string): string[] {
   return s.split(/\s+/).filter((x) => x !== '');
 }
 
-/** str.strip(chars): снимает с обоих концов любые символы из набора. */
+/** Снимает с обоих концов любые символы из набора. */
 function stripChars(s: string, chars: string): string {
   let start = 0;
   let end = s.length;
@@ -70,12 +67,12 @@ function stripChars(s: string, chars: string): string {
   return s.slice(start, end);
 }
 
-// ── Результат разбора ──────────────────────────────────────────────────────
+// Результат разбора
 
 export interface ParsedMeta {
-  /** ParsedDocument.title — имя файла без расширения либо название из шапки. */
+  /** ParsedDocument.title - имя файла без расширения либо название из шапки. */
   title: string;
-  /** ParsedDocument.source_uri — абсолютный путь к файлу. */
+  /** ParsedDocument.source_uri - абсолютный путь к файлу. */
   source_uri: string;
   /** local | web | upload */
   source_type: string;
@@ -84,7 +81,7 @@ export interface ParsedMeta {
   /** ParsedDocument.extra: filename, ocr_applied, pii_warning и т.п. */
   extra: Record<string, unknown>;
   /**
-   * true — формат не разбирается здесь. Сейчас parseFile такого не возвращает
+   * true - формат не разбирается здесь. Сейчас parseFile такого не возвращает
    * (все форматы из ALLOWED поддержаны), поле оставлено как контракт для
    * вызывающих: индексатор на нём завершает документ статусом failed.
    */
@@ -114,12 +111,12 @@ function meta(
   };
 }
 
-// ── base.py: format_table ──────────────────────────────────────────────────
+// Таблица -> текст
 
 /**
- * Сериализует таблицу с СОХРАНЕНИЕМ связи строка↔столбец: первая строка —
+ * Сериализует таблицу с сохранением связи строка<->столбец: первая строка -
  * заголовки, каждая строка данных размечается метками колонок
- * («Должность: Бухгалтер; Оклад: 60000»). Порт format_table.
+ * ("Должность: Бухгалтер; Оклад: 60000").
  */
 export function formatTable(rows: string[][]): string[] {
   const cleaned: string[][] = [];
@@ -132,7 +129,7 @@ export function formatTable(rows: string[][]): string[] {
   const ncols = Math.max(...cleaned.map((r) => r.length));
   for (const r of cleaned) while (r.length < ncols) r.push('');
 
-  // Нечего размечать — отдаём построчно через « | »
+  // Нечего размечать - отдаём построчно через " | "
   if (cleaned.length < 2 || ncols < 2) {
     return cleaned.map((r) => r.filter((c) => c).join(' | '));
   }
@@ -151,18 +148,18 @@ export function formatTable(rows: string[][]): string[] {
   return out;
 }
 
-// ── base.py: derive_title ──────────────────────────────────────────────────
+// Заголовок документа
 
-// Сильные «имена» документов (само название) vs слабые ссылки (на утверждающий
-// акт). «ПОЛОЖЕНИЕ» важнее, чем «Приказом № 5», которым оно утверждено.
+// Сильные "имена" документов (само название) vs слабые ссылки (на утверждающий
+// акт). "ПОЛОЖЕНИЕ" важнее, чем "Приказом № 5", которым оно утверждено.
 const TITLE_STRONG = [
   'положени', 'инструкци', 'регламент', 'правил', 'порядок', 'кодекс', 'устав',
   'договор', 'соглашени', 'методическ', 'стандарт', 'политик', 'руководств',
   'памятк', 'перечень', 'штатн',
 ];
 const TITLE_STRONG_RE = ru(`\\b(${TITLE_STRONG.join('|')})`, 'iu');
-// Слабые — только если строка С НИХ начинается (именительный: «ПРИКАЗ № 5 …»),
-// чтобы не цеплять ссылку «Приказом № 5» под «УТВЕРЖДЕНО».
+// Слабые - только если строка с них начинается (именительный: "ПРИКАЗ № 5 ..."),
+// чтобы не цеплять ссылку "Приказом № 5" под "УТВЕРЖДЕНО".
 const TITLE_WEAK_RE = ru('^(приказ|распоряжение)\\b', 'iu');
 const TITLE_CONT_RE = ru('^(о|об|по|для|при)\\b', 'iu');
 const TITLE_SKIP_RE = /^(утвержд|согласован|приложени|г\.|№|\p{Nd})/iu;
@@ -172,7 +169,7 @@ function cleanTitle(s: string): string {
   return stripChars(collapsed, '«»"\'').trim().slice(0, 200);
 }
 
-/** Приклеивает продолжение названия со следующей строки («об оплате труда»). */
+/** Приклеивает продолжение названия со следующей строки ("об оплате труда"). */
 function withContinuation(lines: string[], i: number): string {
   let title = lines[i];
   if (i + 1 < lines.length && TITLE_CONT_RE.test(lines[i + 1]) && title.length < 120) {
@@ -182,9 +179,8 @@ function withContinuation(lines: string[], i: number): string {
 }
 
 /**
- * Извлекает человекочитаемое название из шапки документа («ПОЛОЖЕНИЕ об оплате
- * труда»). Иначе — fallback (имя файла). Порт derive_title: улучшает и
- * цитирование, и разрешение doc_hint при множестве документов.
+ * Извлекает человекочитаемое название из шапки документа ("ПОЛОЖЕНИЕ об оплате
+ * труда"). Иначе - fallback (имя файла).
  */
 export function deriveTitle(text: string, fallback = ''): string {
   const lines = (text || '')
@@ -201,7 +197,7 @@ export function deriveTitle(text: string, fallback = ''): string {
     }
   }
 
-  // 2) Заголовок КАПСОМ в шапке
+  // 2) Заголовок капсом в шапке
   for (const ln of lines) {
     const letters = Array.from(ln).filter(isAlphaChar);
     if (letters.length && ln.length >= 8 && ln.length <= 120 && pySplit(ln).length >= 2) {
@@ -221,7 +217,7 @@ export function deriveTitle(text: string, fallback = ''): string {
   return fallback;
 }
 
-// ── Общие XML/HTML-утилиты ─────────────────────────────────────────────────
+// Общие XML/HTML-утилиты
 
 const ENTITIES: Record<string, string> = {
   amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ',
@@ -248,18 +244,17 @@ function drawingText(fragment: string): string {
   return out;
 }
 
-// ── plain.py ───────────────────────────────────────────────────────────────
+// Текстовые файлы
 
 const PLAIN_EXTS = new Set(['.txt', '.md', '.rst', '.csv', '.log']);
 
 async function parseTextFile(file: string): Promise<ParsedFile> {
-  // errors="ignore" в Python: битые байты просто выпадают. Node подставляет
-  // U+FFFD — убираем его, чтобы результат совпадал.
+  // Битые байты выбрасываем: Node подставляет на их место U+FFFD.
   const raw = await readFile(file, 'utf8');
   return { text: raw.replace(/�/g, ''), meta: meta(file, 'text/plain') };
 }
 
-// ── docx.py (через mammoth) ────────────────────────────────────────────────
+// DOCX (через mammoth)
 
 const DOCX_MIME =
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
@@ -272,8 +267,8 @@ interface HtmlBlocks {
 const BLOCK_OPEN_RE = /^(p|h[1-6]|li)$/;
 
 /**
- * Разбирает HTML от mammoth на абзацы и таблицы. Порядок как у python-docx:
- * сначала все абзацы тела, затем все таблицы (doc.paragraphs не видит ячейки).
+ * Разбирает HTML от mammoth на абзацы и таблицы: сначала все абзацы тела,
+ * затем все таблицы (абзацы из ячеек в первый список не попадают).
  */
 function htmlBlocks(html: string): HtmlBlocks {
   const paragraphs: string[] = [];
@@ -286,7 +281,7 @@ function htmlBlocks(html: string): HtmlBlocks {
   let inBlock = false;
 
   const flushBlock = () => {
-    // python-docx отдаёт текст абзаца как есть, без схлопывания пробелов.
+    // Текст абзаца отдаём как есть, без схлопывания пробелов.
     const text = buf.replace(/[ \t]+\n/g, '\n').trim();
     buf = '';
     inBlock = false;
@@ -306,7 +301,7 @@ function htmlBlocks(html: string): HtmlBlocks {
     const closing = chunk[1] === '/';
 
     if (tag === 'br') {
-      // python-docx превращает <w:br> в перевод строки внутри абзаца.
+      // <w:br> - перевод строки внутри абзаца.
       if (inBlock) buf += '\n';
       continue;
     }
@@ -331,7 +326,7 @@ function htmlBlocks(html: string): HtmlBlocks {
     if (tag === 'td' || tag === 'th') {
       if (closing) {
         if (inBlock) flushBlock();
-        // Несколько абзацев в ячейке python-docx склеивает через \n.
+        // Несколько абзацев в ячейке склеиваем через \n.
         if (row) row.push((cell || []).join('\n'));
         cell = null;
       } else {
@@ -347,7 +342,7 @@ function htmlBlocks(html: string): HtmlBlocks {
       }
       continue;
     }
-    // Инлайновые теги (strong, em, a, sup…) — текст внутри уже придёт отдельным
+    // Инлайновые теги (strong, em, a, sup...) - текст внутри уже придёт отдельным
     // токеном, сам тег игнорируем.
   }
   if (inBlock) flushBlock();
@@ -366,7 +361,7 @@ async function parseDocx(file: string): Promise<ParsedFile> {
   return { text: parts.join('\n\n'), meta: meta(file, DOCX_MIME) };
 }
 
-// ── xlsx.py (через SheetJS) ────────────────────────────────────────────────
+// XLSX (через SheetJS)
 
 const XLSX_MIME =
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
@@ -375,7 +370,7 @@ function two(n: number): string {
   return String(n).padStart(2, '0');
 }
 
-/** `str(cell)` как в openpyxl: даты — «YYYY-MM-DD HH:MM:SS», bool — True/False. */
+/** Ячейка строкой: даты - "YYYY-MM-DD HH:MM:SS", bool - True/False. */
 function cellToString(v: unknown): string {
   if (v === null || v === undefined) return '';
   if (v instanceof Date) {
@@ -388,7 +383,7 @@ function cellToString(v: unknown): string {
   return String(v);
 }
 
-/** Общий обход листов книги: блок «Лист: <имя>» + размеченные строки таблицы. */
+/** Общий обход листов книги: блок "Лист: <имя>" + размеченные строки таблицы. */
 function workbookText(wb: XLSX.WorkBook, toString: (v: unknown) => string): string {
   const parts: string[] = [];
   for (const name of wb.SheetNames) {
@@ -412,16 +407,16 @@ function workbookText(wb: XLSX.WorkBook, toString: (v: unknown) => string): stri
 
 async function parseXlsx(file: string): Promise<ParsedFile> {
   const buf = await readFile(file);
-  // cellDates: иначе даты приходят числами Excel и «13.05.2024» станет «45425».
+  // cellDates: иначе даты приходят числами Excel и "13.05.2024" станет "45425".
   const wb = XLSX.read(buf, { type: 'buffer', cellDates: true });
   return { text: workbookText(wb, cellToString), meta: meta(file, XLSX_MIME) };
 }
 
-// ── xls.py (старый BIFF, тоже через SheetJS) ───────────────────────────────
+// XLS (старый BIFF, тоже через SheetJS)
 
 const XLS_MIME = 'application/vnd.ms-excel';
 
-/** `str(cell)` как в xlrd: числа — float (целые печатаем без «.0»), bool — 0/1. */
+/** Ячейка строкой (.xls): целые без ".0", bool - 0/1. */
 function xlsCellToString(v: unknown): string {
   if (v === null || v === undefined) return '';
   if (typeof v === 'boolean') return v ? '1' : '0';
@@ -429,9 +424,8 @@ function xlsCellToString(v: unknown): string {
 }
 
 /**
- * Нативный парсер старого Excel .xls (без LibreOffice). В Python это xlrd,
- * здесь — тот же SheetJS: он читает и BIFF. cellDates не включаем, чтобы даты
- * оставались числами, как их отдаёт xlrd.
+ * Старый Excel .xls без LibreOffice: SheetJS читает и BIFF. cellDates не
+ * включаем, чтобы даты оставались числами.
  */
 async function parseXls(file: string): Promise<ParsedFile> {
   const buf = await readFile(file);
@@ -439,12 +433,12 @@ async function parseXls(file: string): Promise<ParsedFile> {
   return { text: workbookText(wb, xlsCellToString), meta: meta(file, XLS_MIME) };
 }
 
-// ── pptx.py (распаковка zip + XML) ─────────────────────────────────────────
+// PPTX (распаковка zip + XML)
 
 const PPTX_MIME =
   'application/vnd.openxmlformats-officedocument.presentationml.presentation';
 
-/** Текст абзаца <a:p>: только прогоны <a:r>, как у python-pptx `para.runs`. */
+/** Текст абзаца <a:p>: только прогоны <a:r>. */
 function pptxParagraphText(xml: string): string {
   let out = '';
   for (const r of xml.matchAll(/<a:r(?:\s[^>]*)?>([\s\S]*?)<\/a:r>/g)) out += drawingText(r[1]);
@@ -468,7 +462,7 @@ function pptxTableRows(xml: string): string[][] {
   return rows;
 }
 
-/** Номер слайда из имени части: ppt/slides/slide12.xml → 12. */
+/** Номер слайда из имени части: ppt/slides/slide12.xml -> 12. */
 function slideOrder(name: string): number {
   const m = /(\d+)\.xml$/.exec(name);
   return m ? Number(m[1]) : 0;
@@ -485,8 +479,8 @@ async function parsePptx(file: string): Promise<ParsedFile> {
     const xml = zip.files[name].asText();
     const slideParts: string[] = [];
 
-    // Таблицы и абзацы собираем В ПОРЯДКЕ следования в XML: у python-pptx это
-    // порядок фигур на слайде, важный для схем процессов.
+    // Таблицы и абзацы собираем в порядке следования в XML - это порядок фигур
+    // на слайде, важный для схем процессов.
     const tableSpans: [number, number, string][] = [];
     for (const m of xml.matchAll(/<a:tbl(?:\s[^>]*)?>[\s\S]*?<\/a:tbl>/g)) {
       tableSpans.push([m.index ?? 0, (m.index ?? 0) + m[0].length, m[0]]);
@@ -512,7 +506,7 @@ async function parsePptx(file: string): Promise<ParsedFile> {
       }
     }
 
-    // Заметки докладчика — часто содержат пояснения к схеме. Связь слайда с
+    // Заметки докладчика - часто содержат пояснения к схеме. Связь слайда с
     // заметками лежит в его .rels (имена файлов не обязаны совпадать).
     const rels = zip.files[`ppt/slides/_rels/${path.posix.basename(name)}.rels`];
     if (rels) {
@@ -541,7 +535,7 @@ async function parsePptx(file: string): Promise<ParsedFile> {
   return { text: parts.join('\n\n'), meta: meta(file, PPTX_MIME) };
 }
 
-// ── rtf.py (мини-порт striprtf) ────────────────────────────────────────────
+// RTF
 
 // Группы, содержимое которых не является текстом документа.
 const RTF_SKIP_DESTINATIONS = new Set([
@@ -574,7 +568,7 @@ function decodeBytes(bytes: number[], codepage: number): string {
  * \\'xx с кодовой страницей из \\ansicpgNNNN (обычно 1251) либо как \\uNNNN.
  */
 export function rtfToText(raw: Buffer): string {
-  // latin1 сохраняет байты один-в-один — управляющие последовательности ASCII
+  // latin1 сохраняет байты один-в-один - управляющие последовательности ASCII
   // остаются нетронутыми, а высокие байты потом декодируем кодовой страницей.
   const src = raw.toString('latin1');
   const cpMatch = /\\ansicpg(\d+)/.exec(src);
@@ -599,7 +593,7 @@ export function rtfToText(raw: Buffer): string {
     /\\([a-zA-Z]{1,32})(-?\d{1,10})?[ ]?|\\'([0-9a-fA-F]{2})|\\([^a-zA-Z])|([{}])|[\r\n]+|([\s\S])/g;
 
   for (const m of src.matchAll(TOKEN)) {
-    // Совпала только одна из альтернатив — остальные группы undefined.
+    // Совпала только одна из альтернатив - остальные группы undefined.
     const [, word, arg, hex, symbol, brace, char] = m as unknown as (string | undefined)[];
     const top = stack[stack.length - 1];
 
@@ -658,7 +652,7 @@ export function rtfToText(raw: Buffer): string {
         continue;
       }
       if (!top.skip) {
-        // \\\\ \\{ \\} — экранированные литералы; \\~ и прочие — из таблицы.
+        // \\\\ \\{ \\} - экранированные литералы; \\~ и прочие - из таблицы.
         out.push(RTF_SPECIALS[symbol] ?? symbol);
       }
       continue;
@@ -670,7 +664,7 @@ export function rtfToText(raw: Buffer): string {
         skipChars -= 1;
         continue;
       }
-      // Одиночный высокий байт вне \\'xx — тоже текст в кодовой странице.
+      // Одиночный высокий байт вне \\'xx - тоже текст в кодовой странице.
       const code = char.charCodeAt(0);
       out.push(code > 127 ? decodeBytes([code], codepage) : char);
       continue;
@@ -690,11 +684,11 @@ async function parseRtf(file: string): Promise<ParsedFile> {
   };
 }
 
-// ── pdf.py (unpdf = pdf.js) ────────────────────────────────────────────────
+// PDF
 
 const PDF_MIME = 'application/pdf';
 
-/** settings.ocr_min_chars_per_page: меньше символов на странице — считаем сканом. */
+/** Меньше символов на странице - считаем сканом. */
 function ocrMinCharsPerPage(): number {
   const raw = Number(process.env.OCR_MIN_CHARS_PER_PAGE);
   return Number.isFinite(raw) && raw > 0 ? raw : 80;
@@ -733,18 +727,18 @@ async function parsePdf(file: string): Promise<ParsedFile> {
     meta: meta(file, PDF_MIME, {
       title: (info.Title as string) || stem,
       pages: pages.length,
-      // ocr_applied — был ли распознан хотя бы один скан-лист (для двойного
-      // предпросмотра «оригинал + извлечённый текст» в /kb).
+      // ocr_applied - был ли распознан хотя бы один скан-лист (для двойного
+      // предпросмотра "оригинал + извлечённый текст" в /kb).
       extra: { author: info.Author ?? null, ocr_applied: ocrTargets.length > 0 },
     }),
   };
 }
 
-// ── dispatch.py: изображения и старый Office ───────────────────────────────
+// Изображения и старый Office
 
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tif', '.tiff']);
 
-/** Изображение → текст через OCR (содержимое фото документа/скана). */
+/** Изображение -> текст через OCR (содержимое фото документа/скана). */
 async function parseImage(file: string): Promise<ParsedFile> {
   const data = await readFile(file);
   let text = '';
@@ -765,7 +759,7 @@ async function parseImage(file: string): Promise<ParsedFile> {
 
 /**
  * Конвертирует старый формат в docx/xlsx/pptx (LibreOffice) и парсит результат.
- * Метаданные (source_uri, title) сохраняем по ОРИГИНАЛЬНОМУ файлу.
+ * Метаданные (source_uri, title) сохраняем по оригинальному файлу.
  */
 async function parseLegacyOffice(file: string): Promise<ParsedFile> {
   const converted = await convertToModern(file);
@@ -787,13 +781,13 @@ async function parseLegacyOffice(file: string): Promise<ParsedFile> {
       },
     };
   } finally {
-    // Временный каталог конвертации — целиком наш, удаляем вместе с профилем.
+    // Временный каталог конвертации - целиком наш, удаляем вместе с профилем.
     await rm(path.dirname(converted), { recursive: true, force: true });
   }
 }
 
 /**
- * Пробуем чистый JS-парсер; если он упал или дал пустой текст —
+ * Пробуем чистый JS-парсер; если он упал или дал пустой текст -
  * откатываемся на конвертацию через LibreOffice (когда он доступен).
  */
 async function tryNative(
@@ -811,11 +805,11 @@ async function tryNative(
   return parseLegacyOffice(file);
 }
 
-// ── dispatch.py ────────────────────────────────────────────────────────────
+// Выбор парсера по расширению
 
 /**
  * Форматы, которые Next разбирает сам. Совпадает со списком parse_file:
- * PDF и OCR идут через unpdf/Tesseract, старый Office — через LibreOffice.
+ * PDF и OCR идут через unpdf/Tesseract, старый Office - через LibreOffice.
  */
 export const NATIVE_EXTS = new Set([
   '.pdf', '.docx', '.xlsx', '.xlsm', '.pptx', '.rtf', '.xls',
@@ -823,12 +817,12 @@ export const NATIVE_EXTS = new Set([
   ...IMAGE_EXTS, ...PLAIN_EXTS,
 ]);
 
-/** Разбирается ли расширение силами Next (иначе файл нужно отдать в FastAPI). */
+/** Есть ли встроенный парсер для расширения. */
 export function isNativelyParsable(ext: string): boolean {
   return NATIVE_EXTS.has(ext.toLowerCase());
 }
 
-/** Единая точка входа: файл → текст и метаданные. Порт parse_file из dispatch.py. */
+/** Единая точка входа: файл -> текст и метаданные. */
 export async function parseFile(filePath: string): Promise<ParsedFile> {
   const file = path.resolve(filePath);
   const ext = suffixOf(baseName(file)).toLowerCase();
@@ -839,10 +833,10 @@ export async function parseFile(filePath: string): Promise<ParsedFile> {
   if (ext === '.pptx') return parsePptx(file);
   if (PLAIN_EXTS.has(ext)) return parseTextFile(file);
   if (IMAGE_EXTS.has(ext)) return parseImage(file);
-  // .rtf и .xls читаем НАТИВНО (без LibreOffice); при неудаче — откат на конвертацию.
+  // .rtf и .xls читаем нативно (без LibreOffice); при неудаче - откат на конвертацию.
   if (ext === '.rtf') return tryNative(parseRtf, file);
   if (ext === '.xls') return tryNative(parseXls, file);
-  // Прочие старые форматы (.doc/.odt/.ods/.ppt/.odp) → LibreOffice.
+  // Прочие старые форматы (.doc/.odt/.ods/.ppt/.odp) -> LibreOffice.
   if (ext === '.doc' || ext === '.odt' || ext === '.ods' || ext === '.ppt' || ext === '.odp') {
     return parseLegacyOffice(file);
   }

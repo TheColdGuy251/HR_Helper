@@ -7,25 +7,24 @@ import { readZipEntries } from './zip';
 import { innerText, isElement, parseXml, type XElement, type XNode } from './xml';
 
 /**
- * А10: приведение схем процессов «из разных программ Microsoft» к единому виду.
- * Порт backend/services/processes.py.
+ * А10: приведение схем процессов "из разных программ Microsoft" к единому виду.
  *
- * Экстрактор графа процесса из docx / pptx / xlsx (старые .doc/.ppt/.xls — через
- * LibreOffice-конвертацию): фигуры с текстом — узлы, коннекторы — рёбра
+ * Экстрактор графа процесса из docx / pptx / xlsx (старые .doc/.ppt/.xls - через
+ * LibreOffice-конвертацию): фигуры с текстом - узлы, коннекторы - рёбра
  * (направление по логической привязке stCxn/endCxn или по наконечникам стрелок),
- * короткие несоединённые надписи — роли блоков («УРП», «Ректор») либо метки
- * условий на стрелках («с командировкой», «отказ»). Затем послойный автолейаут
+ * короткие несоединённые надписи - роли блоков ("УРП", "Ректор") либо метки
+ * условий на стрелках ("с командировкой", "отказ"). Затем послойный автолейаут
  * и рендер в SVG в едином стиле ТИУ.
  *
  * Всё детерминированное, без LLM.
  */
 
 const EMU_MATCH = 700_000; // макс. расстояние конца стрелки до блока (~0.77 см)
-const LABEL_MAX_CHARS = 60; // длиннее — точно блок, а не подпись
+const LABEL_MAX_CHARS = 60; // длиннее - точно блок, а не подпись
 
-// ── мелочи, повторяющие поведение Python ───────────────────────────────────
+// Вспомогательные функции
 
-/** Локальное имя тега: у ElementTree это часть после '}', здесь — после ':'. */
+/** Локальное имя тега: у ElementTree это часть после '}', здесь - после ':'. */
 function lc(tag: string): string {
   const i = tag.lastIndexOf(':');
   return i < 0 ? tag : tag.slice(i + 1);
@@ -40,18 +39,18 @@ function norm(s: string): string {
   return (s || '').replace(/\s+/g, ' ').trim();
 }
 
-/** str.split() без аргументов: режет по любым пробелам, пустые отбрасывает. */
+/** Режет по любым пробелам, пустые отбрасывает. */
 function pySplit(s: string): string[] {
   return s.split(/\s+/).filter((x) => x !== '');
 }
 
-/** Первый символ — строчная буква (str[:1].islower()). */
+/** Первый символ - строчная буква (str[:1].islower()). */
 function firstIsLower(s: string): boolean {
   const ch = Array.from(s)[0];
   return ch !== undefined && /\p{Ll}/u.test(ch);
 }
 
-/** str.isupper(): все буквы прописные и есть хотя бы одна буква. */
+/** Все буквы прописные и есть хотя бы одна буква. */
 function pyIsUpper(s: string): boolean {
   let cased = false;
   for (const ch of s) {
@@ -61,7 +60,7 @@ function pyIsUpper(s: string): boolean {
   return cased;
 }
 
-/** round() из Python: половина округляется к чётному, а не «от нуля». */
+/** Округление с половиной к чётному (банковское), а не от нуля. */
 function pyRound(v: number): number {
   const fl = Math.floor(v);
   const diff = v - fl;
@@ -70,15 +69,15 @@ function pyRound(v: number): number {
   return fl % 2 === 0 ? fl : fl + 1;
 }
 
-/** format(v, '.0f'): та же половина к чётному + «-0» у отрицательных дробей. */
+/** format(v, '.0f'): та же половина к чётному + "-0" у отрицательных дробей. */
 function f0(v: number): string {
   const r = pyRound(v);
   return r === 0 && v < 0 ? '-0' : String(r);
 }
 
 /**
- * str(float) из Python: целые печатаются с «.0» («467.0»), а не «467».
- * В SVG это попадает в viewBox/height, поэтому расхождение было бы видно.
+ * Число для SVG: целые печатаются с ".0" ("467.0"), а не "467" - в таком виде
+ * они попадают в viewBox/height.
  */
 function pyFloat(v: number): string {
   return Number.isInteger(v) && Math.abs(v) < 1e16 ? `${v}.0` : String(v);
@@ -94,9 +93,9 @@ function escapeHtml(s: string): string {
     .replace(/'/g, '&#x27;');
 }
 
-// ── обход XML ──────────────────────────────────────────────────────────────
+// обход XML
 
-/** Префикс → URI: нужен единственный раз — отличить w:p (Word) от a:p (DrawingML). */
+/** Префикс -> URI: нужен единственный раз - отличить w:p (Word) от a:p (DrawingML). */
 export type NsMap = Map<string, string>;
 
 interface XDoc {
@@ -158,8 +157,8 @@ function kids(el: XElement): XElement[] {
 }
 
 /**
- * ET.Element.text: текст ДО первого дочернего элемента (хвосты не считаются).
- * Для <a:t>…</a:t> совпадает с полным текстом, но семантику держим точной.
+ * ET.Element.text: текст до первого дочернего элемента (хвосты не считаются).
+ * Для <a:t>...</a:t> совпадает с полным текстом, но семантику держим точной.
  */
 function etText(el: XElement): string {
   const lead: XNode[] = [];
@@ -171,7 +170,7 @@ function etText(el: XElement): string {
   return innerText({ ...el, children: lead });
 }
 
-// ── Сырые фигуры из XML ────────────────────────────────────────────────────
+// Сырые фигуры из XML
 
 export interface Shape {
   text: string;
@@ -212,7 +211,7 @@ const cyOf = (s: Shape) => s.y + s.h / 2;
 
 const WORDML_NS = 'http://schemas.openxmlformats.org/wordprocessingml';
 
-/** Абзацы текста фигуры (a:p → a:t), склеенные через перенос. */
+/** Абзацы текста фигуры (a:p -> a:t), склеенные через перенос. */
 function shapeText(el: XElement, ns: NsMap): string {
   const lines: string[] = [];
   for (const p of iterAll(el)) {
@@ -314,7 +313,7 @@ function xfrmGeom(el: XElement): Geom {
   return [null, null, 0, 0, false, false];
 }
 
-/** Фигуры слайда pptx (p:sp / p:cxnSp) — координаты в a:xfrm. */
+/** Фигуры слайда pptx (p:sp / p:cxnSp) - координаты в a:xfrm. */
 export function shapesFromPptxLike(root: XElement, ns: NsMap): Shape[] {
   const out: Shape[] = [];
   for (const el of iterAll(root)) {
@@ -349,8 +348,7 @@ export function shapesFromPptxLike(root: XElement, ns: NsMap): Shape[] {
 
 /**
  * Геометрия плавающей фигуры Word: координата (posOffset, EMU), размер (extent)
- * и отражение (flipH/flipV). Порт _anchor_geometry из services/parsers/docx.py —
- * в lib/parsers его нет, docx там читает mammoth, который фигур не видит.
+ * и отражение (flipH/flipV).
  */
 function ownOffset(anchor: XElement, which: string): number | null {
   for (const e of iterAll(anchor)) {
@@ -392,7 +390,7 @@ function anchorGeometry(anchor: XElement): Geom {
   return [x, y, cx, cy, flipH, flipV];
 }
 
-/** Плавающие фигуры Word (wp:anchor / wp:inline) — абсолютный posOffset. */
+/** Плавающие фигуры Word (wp:anchor / wp:inline) - абсолютный posOffset. */
 export function shapesFromDocx(root: XElement, ns: NsMap): Shape[] {
   const out: Shape[] = [];
   for (const el of iterAll(root)) {
@@ -421,7 +419,7 @@ export function shapesFromDocx(root: XElement, ns: NsMap): Shape[] {
   return out;
 }
 
-// ── xlsx: клетки как блоки, drawing как стрелки ────────────────────────────
+// xlsx: клетки как блоки, drawing как стрелки
 
 type Axis = (i: number) => number;
 
@@ -443,8 +441,8 @@ function xlsxAnchorPt(el: XElement, colx: Axis, rowy: Axis): [number, number] | 
 }
 
 /**
- * Стрелки/фигуры листа Excel (xdr:*CellAnchor). Координаты якорей — клетки,
- * переводятся в EMU по РЕАЛЬНЫМ ширинам колонок и высотам строк (colx/rowy).
+ * Стрелки/фигуры листа Excel (xdr:*CellAnchor). Координаты якорей - клетки,
+ * переводятся в EMU по реальным ширинам колонок и высотам строк (colx/rowy).
  */
 export function shapesFromXlsxDrawing(
   root: XElement,
@@ -498,8 +496,8 @@ export function shapesFromXlsxDrawing(
   return out;
 }
 
-// Чтение книги: openpyxl здесь заменить нечем — SheetJS не отдаёт ни ширины
-// колонок в «символах», ни max_row по стилизованным пустым ячейкам, а от них
+// Чтение книги: свой разбор XML, потому что SheetJS не отдаёт ни ширины
+// колонок в "символах", ни max_row по стилизованным пустым ячейкам, а от них
 // зависят координаты якорей. Поэтому лист разбирается прямо из XML.
 
 type CellValue = string | number | boolean | Date | { int: string };
@@ -509,14 +507,14 @@ interface ParsedSheet {
   cells: Map<string, CellValue>;
   maxRow: number;
   maxCol: number;
-  /** Ширина в «символах» по индексу колонки, где начинается <col> (как в openpyxl). */
+  /** Ширина в "символах" по индексу колонки, где начинается <col>. */
   colWidth: Map<number, number>;
   /** Высота строки в пунктах. */
   rowHeight: Map<number, number>;
   merges: { r1: number; c1: number; r2: number; c2: number }[];
 }
 
-/** «A12» → [12, 1]. */
+/** "A12" -> [12, 1]. */
 function coordToTuple(ref: string): [number, number] {
   let col = 0;
   let i = 0;
@@ -528,7 +526,7 @@ function coordToTuple(ref: string): [number, number] {
   return [Number.parseInt(ref.slice(i), 10) || 0, col];
 }
 
-/** str(value) для ячейки — как его печатает Python. */
+/** Значение ячейки строкой. */
 function cellToPyString(v: CellValue): string {
   if (typeof v === 'string') return v;
   if (typeof v === 'number') return pyFloat(v);
@@ -544,17 +542,17 @@ function cellToPyString(v: CellValue): string {
   return v.int;
 }
 
-// Встроенные числовые форматы Excel, которые openpyxl считает датами
-// (is_date_format по BUILTIN_FORMATS — только эти id дают True).
+// Встроенные числовые форматы Excel, которые считаются датами
+// (is_date_format по BUILTIN_FORMATS - только эти id дают True).
 const DATE_BUILTINS = new Set([14, 15, 16, 17, 18, 19, 20, 21, 22, 45, 46, 47]);
 
-/** openpyxl.styles.numbers.is_date_format — для пользовательских форматов. */
+/** Является ли пользовательский формат форматом даты. */
 function isDateFormat(fmt: string): boolean {
   const head = fmt.split(';')[0].replace(/".*?"|\[(?!hh?\]|mm?\]|ss?\])[^\]]*\]/g, '');
   return /(?<![_\\])[dmhysDMHYS]/.test(head);
 }
 
-/** Индексы cellXfs, у которых числовой формат — дата (wb._date_formats). */
+/** Индексы cellXfs, у которых числовой формат - дата (wb._date_formats). */
 function dateStyleIds(stylesXml: Buffer | undefined): Set<number> {
   const out = new Set<number>();
   if (!stylesXml) return out;
@@ -575,7 +573,7 @@ function dateStyleIds(stylesXml: Buffer | undefined): Set<number> {
   return out;
 }
 
-/** openpyxl._cast_number: «5» → int, «5.0» → float (str() у них разный). */
+/** Число из ячейки: "5" -> целое, "5.0" -> дробное (печатаются по-разному). */
 function castNumber(raw: string): CellValue {
   if (/[.Ee]/.test(raw)) return Number(raw);
   try {
@@ -585,7 +583,7 @@ function castNumber(raw: string): CellValue {
   }
 }
 
-/** openpyxl.utils.datetime.from_excel для обычного случая «дата+время». */
+/** Дата из серийного номера Excel (обычный случай "дата+время"). */
 function fromExcelSerial(value: number): Date {
   const day = Math.floor(value);
   const fraction = value - day;
@@ -632,7 +630,7 @@ function parseSheet(
   for (const e of iterAll(root)) {
     const name = lc(e.tag);
     if (name === 'col') {
-      // openpyxl заводит ColumnDimension ТОЛЬКО под буквой min: <col min=3 max=16384>
+      // Ширина колонки заводится только под буквой min: <col min=3 max=16384>
       // задаёт ширину лишь колонке C, остальные получают дефолтные 8.43.
       const min = Number.parseInt(attr(e, 'min') || '', 10);
       const width = Number.parseFloat(attr(e, 'width') || '');
@@ -675,14 +673,14 @@ function parseSheet(
         let value: CellValue | null = null;
         if (raw) {
           if (type === 'n') {
-            // _cast_number: без точки и экспоненты это int, а str(int) ≠ str(float).
+            // Без точки и экспоненты это целое: целое и дробное печатаются по-разному.
             value = dateStyles.has(styleId) ? fromExcelSerial(Number(raw)) : castNumber(raw);
           } else if (type === 's') {
             value = shared[Number.parseInt(raw, 10)] ?? '';
           } else if (type === 'b') {
             value = Number(raw) !== 0;
           } else {
-            value = raw; // str / e / d — openpyxl отдаёт строку
+            value = raw; // str / e / d - строка
           }
         } else if (type === 'inlineStr') {
           const is = kids(c).find((k) => lc(k.tag) === 'is');
@@ -705,8 +703,8 @@ function relTarget(target: string): string {
 }
 
 /**
- * Наборы фигур по листам Excel: БЛОКИ схемы — это заполненные ЯЧЕЙКИ
- * (в т.ч. объединённые), стрелки — фигуры из drawingN.xml того же листа.
+ * Наборы фигур по листам Excel: блоки схемы - это заполненные ячейки
+ * (в т.ч. объединённые), стрелки - фигуры из drawingN.xml того же листа.
  */
 function xlsxSheetShapeSets(zip: Map<string, Buffer>): Shape[][] {
   const readXml = (n: string) => {
@@ -714,7 +712,7 @@ function xlsxSheetShapeSets(zip: Map<string, Buffer>): Shape[][] {
     return buf ? loadXml(buf) : null;
   };
 
-  // sheet name → файл листа (workbook.xml → rels → target)
+  // sheet name -> файл листа (workbook.xml -> rels -> target)
   const wbRoot = readXml('xl/workbook.xml');
   const wbRels = readXml('xl/_rels/workbook.xml.rels');
   const rid2target = new Map<string, string>();
@@ -764,7 +762,7 @@ function xlsxSheetShapeSets(zip: Map<string, Buffer>): Shape[][] {
     if (!buf) continue;
     const ws = parseSheet(title, buf, shared, dateStyles);
 
-    // Кумулятивные координаты колонок/строк в EMU (ширина в символах ≈ 7px/симв.)
+    // Кумулятивные координаты колонок/строк в EMU (ширина в символах ~ 7px/симв.)
     const maxCol = Math.min(ws.maxCol || 1, 60) + 4;
     const maxRow = Math.min(ws.maxRow || 1, 300) + 4;
     const cumX = [0];
@@ -783,7 +781,7 @@ function xlsxSheetShapeSets(zip: Map<string, Buffer>): Shape[][] {
     const rowy: Axis = (r) => cumY[Math.min(r, cumY.length - 1)];
 
     const shapes: Shape[] = [];
-    // Объединённые ячейки → блоки
+    // Объединённые ячейки -> блоки
     const mergedCells = new Set<string>();
     for (const rng of ws.merges) {
       const v = ws.cells.get(`${rng.r1}:${rng.c1}`);
@@ -824,9 +822,9 @@ function xlsxSheetShapeSets(zip: Map<string, Buffer>): Shape[][] {
   return sets;
 }
 
-// ── обход частей контейнера ────────────────────────────────────────────────
+// обход частей контейнера
 
-/** Наборы фигур-кандидатов (по одному на «полотно»: документ/слайды/лист). */
+/** Наборы фигур-кандидатов (по одному на "полотно": документ/слайды/лист). */
 export async function collectShapeSets(file: string): Promise<Shape[][]> {
   const suffix = suffixOf(baseName(file)).toLowerCase();
   const zip = new Map<string, Buffer>();
@@ -841,7 +839,7 @@ export async function collectShapeSets(file: string): Promise<Shape[][]> {
     return [shapesFromDocx(doc.root, doc.ns)];
   }
   if (suffix === '.pptx') {
-    // Порядок как у sorted() в Python — лексикографический, а не по номеру.
+    // Сортировка лексикографическая, а не по номеру.
     const slides = [...zip.keys()].filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n)).sort();
     return slides.map((n) => {
       const doc = loadXml(zip.get(n) as Buffer);
@@ -852,7 +850,7 @@ export async function collectShapeSets(file: string): Promise<Shape[][]> {
   return [];
 }
 
-// ── Сборка графа: блоки / роли / рёбра / метки условий ─────────────────────
+// Сборка графа: блоки / роли / рёбра / метки условий
 
 export interface PNode {
   id: number;
@@ -891,8 +889,8 @@ function looksLikeLabel(s: Shape): boolean {
 }
 
 /**
- * Извлекает граф процесса из файла со схемой (лучшее «полотно» файла).
- * null — схема не распознана (нет блоков со стрелками, либо она — картинка).
+ * Извлекает граф процесса из файла со схемой (лучшее "полотно" файла).
+ * null - схема не распознана (нет блоков со стрелками, либо она - картинка).
  */
 export async function extractProcessGraph(file: string): Promise<ProcessGraph | null> {
   let target = file;
@@ -918,19 +916,19 @@ export async function extractProcessGraph(file: string): Promise<ProcessGraph | 
     }
     return best;
   } finally {
-    // Python временный каталог конвертации не убирает — здесь чистим за собой.
+    // Временный каталог конвертации убираем за собой.
     if (tmpDir) await rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
   }
 }
 
 export function assembleGraph(shapes: Shape[]): ProcessGraph | null {
-  // «? …» — комментарии-идеи на полях схем (не шаги процесса)
+  // "? ..." - комментарии-идеи на полях схем (не шаги процесса)
   const texted = shapes.filter((s) => s.text && !s.isConn && !s.text.replace(/^\s+/, '').startsWith('?'));
   const conns = shapes.filter((s) => s.isConn);
   if (texted.length < 2 || !conns.length) return null;
 
-  // Надпись со строчной буквы («согласовано», «с командировкой») — метка
-  // условия; короткая аббревиатура КАПСОМ («УРП», «ДЭФИ») — роль-дорожка.
+  // Надпись со строчной буквы ("согласовано", "с командировкой") - метка
+  // условия; короткая аббревиатура капсом ("УРП", "ДЭФИ") - роль-дорожка.
   // Ни то ни другое не шаг процесса: исключаем из привязки концов стрелок.
   const forcedLabel = (s: Shape): boolean => {
     const t = s.text.replace(/\n/g, ' ');
@@ -942,12 +940,12 @@ export function assembleGraph(shapes: Shape[]): ProcessGraph | null {
   for (const s of texted) if (s.shapeId) idBySpid.set(s.shapeId, s);
   const matchPool = texted.filter((s) => !forcedLabel(s));
 
-  // 1) Рёбра: логические привязки (pptx/xlsx) → геометрия концов линии.
+  // 1) Рёбра: логические привязки (pptx/xlsx) -> геометрия концов линии.
   const rawEdges: [Shape, Shape, Shape][] = [];
 
   /**
-   * Ближайший блок к точке; короткие подписи (роли) — со штрафом, чтобы
-   * конец стрелки у заголовка колонки не «прилипал» к нему вместо шага.
+   * Ближайший блок к точке; короткие подписи (роли) - со штрафом, чтобы
+   * конец стрелки у заголовка колонки не "прилипал" к нему вместо шага.
    */
   const nearestBlock = (px: number, py: number): [Shape | null, number] => {
     let best: Shape | null = null;
@@ -969,14 +967,14 @@ export function assembleGraph(shapes: Shape[]): ProcessGraph | null {
     if (src === null || dst === null) {
       const p1: [number, number] = [c.x + (c.flipH ? c.w : 0), c.y + (c.flipV ? c.h : 0)];
       const p2: [number, number] = [c.x + (c.flipH ? 0 : c.w), c.y + (c.flipV ? 0 : c.h)];
-      // Наконечник tailEnd — на КОНЦЕ линии (p2): поток p1→p2; headEnd — наоборот.
+      // Наконечник tailEnd - на конце линии (p2): поток p1->p2; headEnd - наоборот.
       const [startPt, endPt] = c.head && !c.tail ? [p2, p1] : [p1, p2];
       const [start, d1] = nearestBlock(startPt[0], startPt[1]);
       const [end, d2] = nearestBlock(endPt[0], endPt[1]);
       let s1 = start;
       let s2 = end;
       if (!s1 || !s2 || s1 === s2 || d1 > EMU_MATCH || d2 > EMU_MATCH) continue;
-      // линия без стрелки — сверху вниз / слева направо
+      // линия без стрелки - сверху вниз / слева направо
       if (!c.tail && !c.head && gt2(cyOf(s1), cxOf(s1), cyOf(s2), cxOf(s2))) {
         [s1, s2] = [s2, s1];
       }
@@ -1001,7 +999,7 @@ export function assembleGraph(shapes: Shape[]): ProcessGraph | null {
   const blocks = texted.filter((s) => !labelSet.has(s));
   if (blocks.length < 2) return null;
 
-  // Заголовок схемы: надпись ВЫШЕ всех блоков, ШИРЕ типового блока (роли —
+  // Заголовок схемы: надпись выше всех блоков, шире типового блока (роли -
   // узкие подписи над конкретным блоком) и начинающаяся в левой половине.
   let title: string | null = null;
   if (labels.length) {
@@ -1017,13 +1015,13 @@ export function assembleGraph(shapes: Shape[]): ProcessGraph | null {
       let top = cands[0];
       for (const s of cands) if (s.y < top.y) top = s;
       title = top.text.replace(/\n/g, ' ');
-      // list.remove() в Python сравнивает по значению полей, не по ссылке
+      // Удаляем по значению полей, а не по ссылке
       const at = labels.findIndex((s) => shapeEq(s, top));
       if (at >= 0) labels.splice(at, 1);
     }
   }
 
-  // Метка ребра — если её центр ближе к середине какой-то стрелки, чем к блокам.
+  // Метка ребра - если её центр ближе к середине какой-то стрелки, чем к блокам.
   const edgeLabel = new Map<number, string>();
   const roles = new Map<Shape, string>();
   for (const lb of labels) {
@@ -1050,13 +1048,13 @@ export function assembleGraph(shapes: Shape[]): ProcessGraph | null {
         bdb = d;
       }
     }
-    // Метка со строчной буквы — условие перехода: ТОЛЬКО на стрелку
+    // Метка со строчной буквы - условие перехода: только на стрелку
     // (в сетке Excel она всегда вплотную к какому-нибудь блоку, поэтому
-    // сравнение расстояний с блоками тут не работает). Прочие подписи —
+    // сравнение расстояний с блоками тут не работает). Прочие подписи -
     // роль ближайшего блока.
     const addLabel = (i: number) => {
       const prev = edgeLabel.get(i);
-      // Внимание: в ветке склейки Python НЕ убирает перенос строки — повторяем.
+      // В ветке склейки перенос строки не убираем.
       edgeLabel.set(i, prev ? `${prev} / ${lb.text}` : lb.text.replace(/\n/g, ' '));
     };
     if (firstIsLower(lb.text)) {
@@ -1066,7 +1064,7 @@ export function assembleGraph(shapes: Shape[]): ProcessGraph | null {
     if (bestE >= 0 && bde < bdb && bde < EMU_MATCH * 2) {
       addLabel(bestE);
     } else if (bestB !== null && bdb < EMU_MATCH * 3) {
-      // роль пишут НАД блоком или слева — принимаем ближайший блок
+      // роль пишут над блоком или слева - принимаем ближайший блок
       if (!roles.has(bestB)) roles.set(bestB, lb.text.replace(/\n/g, ' '));
     }
   }
@@ -1098,7 +1096,7 @@ export function assembleGraph(shapes: Shape[]): ProcessGraph | null {
     const ib = idx.get(b);
     if (ia === undefined || ib === undefined) return;
     const label = edgeLabel.get(i) ?? null;
-    // Ключ дедупликации (src, dst, label) — JSON безопасен для любых подписей.
+    // Ключ дедупликации (src, dst, label) - JSON безопасен для любых подписей.
     const key = JSON.stringify([ia, ib, label]);
     if (seenE.has(key)) return;
     seenE.add(key);
@@ -1108,7 +1106,7 @@ export function assembleGraph(shapes: Shape[]): ProcessGraph | null {
   return { title, nodes, edges };
 }
 
-/** Сравнение кортежей (a1, a2) > (b1, b2), как в Python. */
+/** Сравнение кортежей (a1, a2) > (b1, b2). */
 function gt2(a1: number, a2: number, b1: number, b2: number): boolean {
   return a1 !== b1 ? a1 > b1 : a2 > b2;
 }
@@ -1123,13 +1121,13 @@ function shapeEq(a: Shape, b: Shape): boolean {
   );
 }
 
-// ── Автолейаут: слои по потоку (длиннейший путь), внутри слоя — по исходному y ──
+// Автолейаут: слои по потоку (длиннейший путь), внутри слоя - по исходному y
 
 const NODE_W = 230;
 const GAP_X = 110;
 const GAP_Y = 36;
-const BAND_GAP = 70; // зазор между лентами «змейки»
-const MAX_COLS = 4; // колонок в ленте (дальше — перенос на следующую)
+const BAND_GAP = 70; // зазор между лентами "змейки"
+const MAX_COLS = 4; // колонок в ленте (дальше - перенос на следующую)
 const FONT = 13;
 const LINE_H = 17;
 const PAD = 12;
@@ -1212,7 +1210,7 @@ export function layoutGraph(g: ProcessGraph): Layout {
     heights.set(i, wrap(node.text).length * LINE_H + PAD * 2 + (node.role ? 16 : 0));
   });
 
-  // «Змейка»: длинная цепочка не должна растягиваться в километровую полосу —
+  // "Змейка": длинная цепочка не должна растягиваться в километровую полосу -
   // уровни складываются в ленты по MAX_COLS колонок, лента под лентой.
   const levelKeys = [...cols.keys()];
   const nLevels = Math.max(...levelKeys) + 1;
@@ -1228,7 +1226,7 @@ export function layoutGraph(g: ProcessGraph): Layout {
   const bandH = new Map<number, number>();
   for (let b = 0; b < nBands; b += 1) {
     const inBand = levelKeys.filter((lv) => bandOf.get(lv) === b).map((lv) => colH.get(lv) as number);
-    // В Python max() пустой ленты бросает ValueError → 500; поведение сохраняем.
+    // Пустая лента - ошибка сервера.
     if (!inBand.length) throw new Error('max() arg is an empty sequence');
     bandH.set(b, Math.max(...inBand));
   }
@@ -1255,7 +1253,7 @@ export function layoutGraph(g: ProcessGraph): Layout {
   return { pos, width: Math.max(width, 460), height: yCursor - BAND_GAP + 50 };
 }
 
-// ── SVG в едином стиле ТИУ ─────────────────────────────────────────────────
+// SVG в едином стиле ТИУ
 
 const BLUE = '#1E40AF';
 const INK = '#0F172A';
@@ -1286,7 +1284,7 @@ export function renderProcessSvg(g: ProcessGraph): string {
     out.push(`<rect x="40" y="48" width="56" height="4" rx="2" fill="${BLUE}"/>`);
   }
 
-  // Рёбра — под блоками
+  // Рёбра - под блоками
   for (const e of g.edges) {
     const [x1, y1, w1, h1] = pos.get(e.src) as [number, number, number, number];
     const [x2, y2, w2, h2] = pos.get(e.dst) as [number, number, number, number];
@@ -1296,12 +1294,12 @@ export function renderProcessSvg(g: ProcessGraph): string {
     let ey: number;
     let d: string;
     if (x2 > x1 + w1) {
-      // вперёд по потоку: правая грань → левая грань
+      // вперёд по потоку: правая грань -> левая грань
       [sx, sy, ex, ey] = [x1 + w1, y1 + h1 / 2, x2, y2 + h2 / 2];
       const mx = (sx + ex) / 2;
       d = `M ${f0(sx)} ${f0(sy)} C ${f0(mx)} ${f0(sy)} ${f0(mx)} ${f0(ey)} ${f0(ex - 3)} ${f0(ey)}`;
     } else if (y2 > y1 + h1 + 20) {
-      // переход на ленту ниже («змейка»): вниз → вбок → вниз
+      // переход на ленту ниже ("змейка"): вниз -> вбок -> вниз
       [sx, sy, ex, ey] = [x1 + w1 / 2, y1 + h1, x2 + w2 / 2, y2];
       const my = (sy + ey) / 2;
       d = `M ${f0(sx)} ${f0(sy)} L ${f0(sx)} ${f0(my)} L ${f0(ex)} ${f0(my)} L ${f0(ex)} ${f0(ey - 3)}`;

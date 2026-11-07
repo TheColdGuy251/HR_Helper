@@ -1,35 +1,34 @@
 'use client';
 
-// Типы и утилиты мессенджера. Формы данных сверены с бэкендом:
-// HR Helper/routes/messenger.py (_serialize, _serialize_file, _poll_of,
-// /conversations, /thread) и легаси messenger_common.js / messenger_page.js.
+// Типы и утилиты мессенджера.
 
+import { compareIds, isUuid } from '@/lib/ids';
 import type { MessageSource } from '@/lib/msgfmt';
 
-// ─────────── данные с бэкенда ───────────
+// данные с бэкенда
 
 export interface MsgAttachment {
-  id: number;
+  id: string;
   name: string;
   size: number;
   is_image: boolean;
   url: string;           // /api/messenger/files/{id}
   download_url: string;  // /api/messenger/files/{id}?download=1
   created_at?: string;
-  message_id?: number | null;
+  message_id?: string | null;
   w?: number | null;
   h?: number | null;
 }
 
 export interface PollVoter {
-  id: number;
+  id: string;
   name: string;
   initials: string;
   is_bot?: boolean;
 }
 
 export interface PollOptionData {
-  id: number;
+  id: string;
   text: string;
   votes: number;
   mine: boolean;
@@ -37,7 +36,7 @@ export interface PollOptionData {
 }
 
 export interface PollData {
-  id: number;
+  id: string;
   question: string;
   description: string;
   allow_multiple: boolean;
@@ -56,7 +55,7 @@ export interface ReactionData {
 }
 
 export interface ReplyPreview {
-  id: number;
+  id: string;
   sender_name: string;
   text: string;
 }
@@ -67,11 +66,11 @@ export interface ForwardedMeta {
   ai?: boolean;
   system?: boolean;
   pii?: boolean;
-  attachment?: { id: number; title: string; filename: string } | null;
+  attachment?: { id: string; title: string; filename: string } | null;
 }
 
 export interface ForwardedFrom {
-  id?: number;
+  id?: string;
   name: string;
   initials: string;
 }
@@ -84,8 +83,9 @@ export interface AiStreamState {
 }
 
 export interface Msg {
-  id: number | string; // string — временный id оптимистичного сообщения
-  sender_id: number;
+  /** UUID сообщения или временный "tmpN" оптимистичного (см. isSavedId). */
+  id: string;
+  sender_id: string;
   sender_name: string;
   sender_initials: string;
   content: string;
@@ -111,7 +111,7 @@ export interface Msg {
 
 export interface ConvItem {
   key: string;
-  peer_id: number | null;
+  peer_id: string | null;
   name: string;
   short_name?: string;
   initials: string;
@@ -132,7 +132,7 @@ export interface ConversationsData {
 export interface ThreadResponse {
   peer_key: string;
   has_more: boolean;
-  first_unread_id: number | null;
+  first_unread_id: string | null;
   unread_count: number;
   messages: Msg[];
 }
@@ -145,7 +145,7 @@ export interface PresenceInfo {
 export interface AttachmentsData {
   media: MsgAttachment[];
   documents: MsgAttachment[];
-  links: { url: string; message_id: number }[];
+  links: { url: string; message_id: string }[];
 }
 
 export interface PollPayload {
@@ -160,35 +160,35 @@ export interface PollPayload {
 
 /** Активная беседа (выбранная в списке). */
 export interface ActiveConv {
-  key: string;          // 'general' | String(peer_id)
-  peerId: number | null;
+  key: string;          // 'general' | peer_id
+  peerId: string | null;
   general: boolean;
-  notes: boolean;       // «Заметки» — диалог с самим собой
+  notes: boolean;       // "Заметки" - диалог с самим собой
   name: string;
   initials: string;
   position: string;
 }
 
-// ─────────── SSE-события (detail) ───────────
+// SSE-события (detail)
 
 export interface TypingEvent {
   peer_key: string;
-  sender_id: number;
+  sender_id: string;
   sender_name: string;
   sender_initials: string;
   typing: boolean;
 }
-export interface ReadEvent { peer_key: string; last_read_id: number }
-export interface DeletedEvent { peer_key: string; id: number }
-export interface PinnedEvent { peer_key: string; id: number; pinned: boolean }
-export interface EditedEvent { peer_key: string; id: number; content: string }
-export interface ReactionEvent { peer_key: string; id: number; reactions: ReactionData[] }
-export interface PollEvent { peer_key: string; id: number; poll: PollData }
-export interface PresenceEvent { user_id: number; online: boolean; last_seen?: string | null }
+export interface ReadEvent { peer_key: string; last_read_id: string }
+export interface DeletedEvent { peer_key: string; id: string }
+export interface PinnedEvent { peer_key: string; id: string; pinned: boolean }
+export interface EditedEvent { peer_key: string; id: string; content: string }
+export interface ReactionEvent { peer_key: string; id: string; reactions: ReactionData[] }
+export interface PollEvent { peer_key: string; id: string; poll: PollData }
+export interface PresenceEvent { user_id: string; online: boolean; last_seen?: string | null }
 export interface AiStreamEvent {
-  id: number;
+  id: string;
   peer_key: string;
-  asker_id: number;
+  asker_id: string;
   phase: 'queued' | 'start' | 'status' | 'sources' | 'chunk' | 'done';
   status?: string;
   chunk?: string;
@@ -198,16 +198,18 @@ export interface AiStreamEvent {
   queue_total?: number;
 }
 
-// ─────────── утилиты ───────────
+// утилиты
 
-/** Эмодзи ряда реакций — состав и порядок 1-в-1 из легаси
- *  (messenger_common.js:126: `const REACTIONS = ["❤️","🔥","👍","👎","👌","😢","🤯"]`).
- *  Первые 4 видны сразу, остальные 3 — под стрелкой (см. ReactionRow). */
+/**
+ * Эмодзи ряда реакций. Первые 4 видны сразу, остальные 3 - под стрелкой (см.
+ * ReactionRow).
+ */
 export const REACTION_EMOJIS = ['❤️', '🔥', '👍', '👎', '👌', '😢', '🤯'];
 
-/** Совпадает ли поисковый запрос со строкой «HR-ассистент».
- *  Порт условия из легаси (messenger_page.js:141, messenger.js:450):
- *  `if (!term || "hr-ассистент ассистент ии бот".indexOf(term) >= 0)`. */
+/**
+ * Совпадает ли поисковый запрос со строкой "HR-ассистент": пустой запрос или
+ * подстрока "hr-ассистент ассистент ии бот".
+ */
 const ASSISTANT_TERMS = 'hr-ассистент ассистент ии бот';
 
 export function matchesAssistant(q: string): boolean {
@@ -238,7 +240,7 @@ export function dayKey(iso: string): string {
   return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
 }
 
-/** «Сегодня» / «Вчера» / «5 марта» / «5 марта 2024». */
+/** "Сегодня" / "Вчера" / "5 марта" / "5 марта 2024". */
 export function dayLabel(iso: string): string {
   const d = new Date(iso);
   const now = new Date();
@@ -252,7 +254,7 @@ export function dayLabel(iso: string): string {
   return d.toLocaleDateString('ru-RU', opts);
 }
 
-/** «был(а) только что / N минут назад / вчера / дата» (порт lastSeenText). */
+/** "был(а) только что / N минут назад / вчера / дата". */
 export function lastSeenText(iso: string | null | undefined): string {
   if (!iso) return 'не в сети';
   const d = new Date(iso);
@@ -268,7 +270,7 @@ export function lastSeenText(iso: string | null | undefined): string {
   return `был(а) ${d.toLocaleDateString('ru-RU')}`;
 }
 
-/** «X печатает» / «X, Y и другие печатают». */
+/** "X печатает" / "X, Y и другие печатают". */
 export function typingLabel(names: string[]): string {
   const list = names.filter(Boolean);
   if (!list.length) return '';
@@ -289,8 +291,8 @@ export function messageText(m: Msg): string {
   return t;
 }
 
-/** Копирование нескольких сообщений: подряд идущие от одного автора — под его
- *  именем, смена автора — новая группа, группы через пустую строку. */
+/** Копирование нескольких сообщений: подряд идущие от одного автора - под его
+ *  именем, смена автора - новая группа, группы через пустую строку. */
 export function groupedCopyText(msgs: Msg[]): string {
   const groups: { name: string; lines: string[] }[] = [];
   (msgs || []).forEach((m) => {
@@ -304,9 +306,9 @@ export function groupedCopyText(msgs: Msg[]): string {
   return groups.map((g) => `${g.name}:\n${g.lines.join('\n')}`).join('\n\n');
 }
 
-const GAP_MS = 10 * 60 * 1000; // порог группировки — 10 минут
+const GAP_MS = 10 * 60 * 1000; // порог группировки - 10 минут
 
-/** Флаги группировки подряд идущих сообщений одного автора (порт groupFlag). */
+/** Флаги группировки подряд идущих сообщений одного автора. */
 export function groupFlag(prev: Msg | undefined, m: Msg): { grouped: boolean; gap: boolean } {
   if (!prev || prev.system || m.system) return { grouped: false, gap: false };
   const dt = new Date(m.created_at).getTime() - new Date(prev.created_at).getTime();
@@ -315,7 +317,7 @@ export function groupFlag(prev: Msg | undefined, m: Msg): { grouped: boolean; ga
   return { grouped: same, gap: false };
 }
 
-/** Статусы генерации ответа ИИ (порт AI_STATUS из messenger_common.js). */
+/** Статусы генерации ответа ИИ. */
 const AI_STATUS: Record<string, string> = {
   search: 'Ищу в базе знаний…',
   rerank: 'Подбираю релевантные фрагменты…',
@@ -352,12 +354,19 @@ export function initialsOf(name: string | undefined): string {
   return parts.slice(0, 2).map((p) => p[0].toUpperCase()).join('');
 }
 
-/** Вставка сообщения с сохранением порядка по числовому id (без дублей). */
+/** Сохранённое на сервере сообщение (UUID), а не оптимистичное "tmpN". */
+export function isSavedId(id: string | null | undefined): id is string {
+  return isUuid(id);
+}
+
+/**
+ * Вставка сообщения с сохранением порядка по id (без дублей). UUIDv7 растут
+ * со временем, поэтому сравнение id - это сравнение моментов отправки.
+ */
 export function insertOrdered(list: Msg[], m: Msg): Msg[] {
-  if (list.some((x) => String(x.id) === String(m.id))) return list;
-  const idNum = typeof m.id === 'number' ? m.id : NaN;
-  if (!Number.isNaN(idNum)) {
-    const idx = list.findIndex((x) => typeof x.id === 'number' && x.id > idNum);
+  if (list.some((x) => x.id === m.id)) return list;
+  if (isSavedId(m.id)) {
+    const idx = list.findIndex((x) => isSavedId(x.id) && compareIds(x.id, m.id) > 0);
     if (idx >= 0) {
       const next = list.slice();
       next.splice(idx, 0, m);

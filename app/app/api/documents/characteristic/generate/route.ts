@@ -6,7 +6,6 @@ import { docLinks, errText } from '@/lib/docs/common';
 import { createCharacteristic, petitionFieldsFromJson } from '@/lib/docs/characteristic';
 
 // Б1, шаг 2: генерация характеристики по (возможно поправленным) полям.
-// Порт POST /api/documents/characteristic/generate из backend/routes/documents.py.
 
 export async function POST(request: NextRequest) {
   const gate = await requireUser();

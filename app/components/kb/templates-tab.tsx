@@ -6,15 +6,15 @@ import { Card, EmptyState, ErrorCallout, PrimaryButton, SearchInput, SecondaryBu
 import GroupBlocks, { buildSections } from '@/components/kb/group-blocks';
 import KbFilters, { type FilterDef } from '@/components/kb/filters-modal';
 
-// Вкладка «Шаблоны» — порт loadCategories/loadTemplates/renderTemplates из kb.js.
+// Вкладка "Шаблоны": категории и шаблоны документов.
 
 interface TplCategory {
-  id: number;
+  id: string;
   slug: string;
   name: string;
   icon: string | null;
   sort_order: number;
-  default_template_id: number | null;
+  default_template_id: string | null;
 }
 
 interface TplField {
@@ -26,12 +26,12 @@ interface TplField {
 }
 
 interface KbTemplate {
-  id: number;
+  id: string;
   key: string;
   title: string;
   description: string | null;
   is_enabled: boolean;
-  category_id: number | null;
+  category_id: string | null;
   fields_count: number;
   fields: TplField[];
   created_at: string;
@@ -76,11 +76,11 @@ export default function TemplatesTab({ canEdit }: { canEdit: boolean }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
-  // Фильтры вкладки — в модалке «Фильтры» (kb.html:312-326).
+  // Фильтры вкладки - в модалке "Фильтры".
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [status, setStatus] = useState<{ kind: 'ok' | 'error' | 'progress'; text: string } | null>(null);
   const [editTpl, setEditTpl] = useState<KbTemplate | null>(null);
-  const [openFields, setOpenFields] = useState<number | null>(null);
+  const [openFields, setOpenFields] = useState<string | null>(null);
 
   // Форма загрузки
   const [title, setTitle] = useState('');
@@ -146,7 +146,7 @@ export default function TemplatesTab({ canEdit }: { canEdit: boolean }) {
     }
   };
 
-  const deleteTemplate = async (id: number) => {
+  const deleteTemplate = async (id: string) => {
     if (!window.confirm('Удалить шаблон?')) return;
     try {
       await apiDelete(`/api/kb/templates/${id}`);
@@ -173,15 +173,15 @@ export default function TemplatesTab({ canEdit }: { canEdit: boolean }) {
     const cat = t.category_id ? catById.get(t.category_id) : undefined;
     return !!cat && cat.default_template_id === t.id;
   };
-  // Группа шаблона — категория (kb.js:905), «Без категории» отдельным блоком.
+  // Группа шаблона - категория, "Без категории" отдельным блоком.
   const tplGroupOf = (t: KbTemplate) => {
     const cat = t.category_id ? catById.get(t.category_id) : undefined;
     return cat ? { key: String(cat.id), name: cat.name } : { key: 'none', name: 'Без категории' };
   };
-  // Порядок групп: как в списке категорий, «Без категории» — в конце.
+  // Порядок групп: как в списке категорий, "Без категории" - в конце.
   const catOrder = new Map(categories.map((c, i) => [String(c.id), i]));
 
-  // Фильтры — порт tplPredicate из kb.js:833 + группа + поиск.
+  // Фильтры + группа + поиск.
   const q = search.trim().toLowerCase();
   const filtered = items.filter((t) => {
     if (filters.group && tplGroupOf(t).key !== filters.group) return false;
@@ -295,7 +295,7 @@ export default function TemplatesTab({ canEdit }: { canEdit: boolean }) {
 
       {error && <ErrorCallout>{error}</ErrorCallout>}
 
-      {/* Плитка групп по категориям (kb.js:905) */}
+      {/* Плитка групп по категориям */}
       {loading ? (
         <EmptyState>Загрузка…</EmptyState>
       ) : filtered.length === 0 ? (
@@ -357,7 +357,7 @@ function TemplateEditModal({
 }) {
   const [title, setTitle] = useState(tpl.title);
   const [description, setDescription] = useState(tpl.description || '');
-  const [categoryId, setCategoryId] = useState(tpl.category_id ? String(tpl.category_id) : '');
+  const [categoryId, setCategoryId] = useState(tpl.category_id ?? '');
   const [enabled, setEnabled] = useState(tpl.is_enabled);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
@@ -369,7 +369,7 @@ function TemplateEditModal({
       await apiPatch(`/api/kb/templates/${tpl.id}`, {
         title: title.trim(),
         description: description.trim() || null,
-        category_id: categoryId ? Number(categoryId) : null,
+        category_id: categoryId || null,
         is_enabled: enabled,
       });
       onSaved();
@@ -422,7 +422,6 @@ function TemplateEditModal({
     </Modal>
   );
 }
-
 
 /** Карточка шаблона внутри группы-блока. */
 function TemplateCard({

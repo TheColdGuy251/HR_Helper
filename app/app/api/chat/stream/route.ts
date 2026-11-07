@@ -3,8 +3,10 @@ import type { NextRequest } from 'next/server';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { badRequest, notFound, requireUser } from '@/lib/auth';
-import { validationError } from '@/lib/news';
+import { asUuid } from '@/lib/ids';
+import { uuidError, validationError } from '@/lib/news';
 import { pyBool } from '@/lib/kb';
+import { DOCUMENT_KIND_SELECT, documentTemplateKey } from '@/lib/docs/common';
 import {
   collectHistoryBefore,
   genTextForUserMessage,
@@ -17,8 +19,6 @@ import {
 import { runGeneration } from '@/lib/chat-generate';
 
 // Главный эндпоинт чата: SSE-поток ответа ассистента.
-// Порт POST /api/chat/stream (backend/routes/chat.py: stream + _run_generation).
-// Кадры, заголовки и коды статусов совпадают с FastAPI 1-в-1.
 
 export const dynamic = 'force-dynamic';
 
@@ -43,18 +43,18 @@ function baseName(p: string | null): string | null {
   return parts[parts.length - 1] || null;
 }
 
-async function attachmentInfo(documentId: number | null) {
+async function attachmentInfo(documentId: string | null) {
   if (!documentId) return null;
   const doc = await prisma.my_documents.findUnique({
     where: { id: documentId },
-    select: { id: true, title: true, file_path: true, template_key: true },
+    select: { id: true, title: true, file_path: true, ...DOCUMENT_KIND_SELECT },
   });
   if (!doc) return null;
   return {
     id: doc.id,
     title: doc.title,
     filename: baseName(doc.file_path),
-    template_key: doc.template_key,
+    template_key: documentTemplateKey(doc),
   };
 }
 
@@ -62,8 +62,8 @@ async function attachmentInfo(documentId: number | null) {
 // SSE-ответ
 // ---------------------------------------------------------------------------
 
-/** Порт `_build_done_payload`: финальный кадр берёт текст ПОСЛЕ пост-обработки. */
-async function buildDonePayload(messageId: number, lastSeq: number) {
+/** Финальный кадр берёт текст после пост-обработки. */
+async function buildDonePayload(messageId: string, lastSeq: number) {
   const payload: Record<string, unknown> = { done: true, message_id: messageId, last_seq: lastSeq };
   try {
     const msg = await prisma.chat_messages.findUnique({
@@ -71,7 +71,7 @@ async function buildDonePayload(messageId: number, lastSeq: number) {
       select: {
         id: true,
         role: true,
-        session_id: true,
+        dialogue_id: true,
         content: true,
         sources: true,
         meta: true,
@@ -86,11 +86,11 @@ async function buildDonePayload(messageId: number, lastSeq: number) {
     const att = await attachmentInfo(msg.attachment_document_id);
     if (att) payload.attachment = att;
 
-    // Инфо о вариантах ответа (‹ i/n ›) — актуально после ретрая.
+    // Инфо о вариантах ответа (< i/n >) - актуально после ретрая.
     if (msg.role === 'assistant') {
       const group = msg.variant_group ?? msg.id;
       const variants = await prisma.chat_messages.findMany({
-        where: { session_id: msg.session_id, variant_group: group, role: 'assistant' },
+        where: { dialogue_id: msg.dialogue_id, variant_group: group, role: 'assistant' },
         orderBy: { id: 'asc' },
         select: { id: true },
       });
@@ -102,7 +102,7 @@ async function buildDonePayload(messageId: number, lastSeq: number) {
       }
     }
   } catch {
-    /* вложение/варианты не сложились — отдаём базовый кадр */
+    /* вложение/варианты не сложились - отдаём базовый кадр */
   }
   return payload;
 }
@@ -120,12 +120,12 @@ function sseResponse(state: StreamState, initialSeq: number, isSubscribe: boolea
           controller.enqueue(payload instanceof Uint8Array ? payload : frame(payload));
           return true;
         } catch {
-          closed = true; // клиент отключился — генерация продолжается в фоне
+          closed = true; // клиент отключился - генерация продолжается в фоне
           return false;
         }
       };
 
-      // Сначала initial snapshot — для возобновлений и поздних подписчиков.
+      // Сначала initial snapshot - для возобновлений и поздних подписчиков.
       const head: Record<string, unknown> = {
         initial: true,
         initial_chunk: state.buffer.slice(initialSeq).join(''),
@@ -158,7 +158,7 @@ function sseResponse(state: StreamState, initialSeq: number, isSubscribe: boolea
         // Ждём новых событий (или таймаута для keepalive).
         const signaled = await state.event.wait(10_000);
         if (!signaled) {
-          // Heartbeat в виде data-события с маркером noop — клиент его явно
+          // Heartbeat в виде data-события с маркером noop - клиент его явно
           // отфильтровывает и не подмешивает в текст.
           if (!send(KEEPALIVE)) break;
           continue;
@@ -216,7 +216,7 @@ function sseResponse(state: StreamState, initialSeq: number, isSubscribe: boolea
 // ---------------------------------------------------------------------------
 
 interface StreamBody {
-  session_id?: unknown;
+  dialogue_id?: unknown;
   message?: unknown;
   assistant_message_id?: unknown;
   retry_of?: unknown;
@@ -229,16 +229,11 @@ function intOrNull(v: unknown): number | null {
   return typeof v === 'number' && Number.isFinite(v) ? Math.trunc(v) : null;
 }
 
-const SESSION_SELECT = {
+const DIALOGUE_SELECT = {
   id: true,
-  dialogues: {
-    select: {
-      id: true,
-      user_id: true,
-      memory_summary: true,
-      pending_forward: true,
-    },
-  },
+  user_id: true,
+  memory_summary: true,
+  pending_forward: true,
 } as const;
 
 export async function POST(request: NextRequest) {
@@ -253,27 +248,27 @@ export async function POST(request: NextRequest) {
   } catch {
     return validationError(['body', 0], 'json_invalid', 'JSON decode error', {});
   }
-  if (typeof body.session_id !== 'string') {
-    return validationError(['body', 'session_id'], 'missing', 'Field required', null);
+  if (body.dialogue_id === undefined || body.dialogue_id === null) {
+    return validationError(['body', 'dialogue_id'], 'missing', 'Field required', null);
   }
+  const dialogueId = asUuid(body.dialogue_id);
+  if (!dialogueId) return uuidError(['body', 'dialogue_id'], body.dialogue_id);
 
-  const sessionId = body.session_id;
-  const assistantMessageId = intOrNull(body.assistant_message_id);
-  const retryOf = intOrNull(body.retry_of);
-  const faqId = intOrNull(body.faq_id);
+  const assistantMessageId = asUuid(body.assistant_message_id);
+  const retryOf = asUuid(body.retry_of);
+  const faqId = asUuid(body.faq_id);
   const lastSeq = intOrNull(body.last_seq) ?? 0;
   const useRag = body.use_rag === undefined ? true : Boolean(body.use_rag);
 
-  const session = await prisma.chat_sessions.findUnique({
-    where: { id: sessionId },
-    select: SESSION_SELECT,
+  const dialogue = await prisma.dialogues.findUnique({
+    where: { id: dialogueId },
+    select: DIALOGUE_SELECT,
   });
-  if (!session || session.dialogues.user_id !== user.id) return notFound('Сессия не найдена');
+  if (!dialogue || dialogue.user_id !== user.id) return notFound('Диалог не найден');
 
-  const dialogue = session.dialogues;
   let state: StreamState;
 
-  // ─── Подписка на уже идущий стрим ──────────────────────────────────────
+  // Подписка на уже идущий стрим
   if (assistantMessageId) {
     const existing = getStream(assistantMessageId);
     if (existing) {
@@ -284,19 +279,19 @@ export async function POST(request: NextRequest) {
       where: { id: assistantMessageId },
       select: {
         id: true,
-        session_id: true,
+        dialogue_id: true,
         content: true,
         last_seq: true,
         attachment_document_id: true,
       },
     });
-    if (!msg || msg.session_id !== session.id) return notFound('Сообщение не найдено');
+    if (!msg || msg.dialogue_id !== dialogue.id) return notFound('Сообщение не найдено');
 
-    // Стрим завершён и убран из реестра — отдаём сохранённый ответ из БД.
+    // Стрим завершён и убран из реестра - отдаём сохранённый ответ из БД.
     // Если сообщение при этом не завершено, генерация была осиротена
     // перезапуском процесса: реестр живёт в памяти и рестарт его теряет.
-    // Python в такой ситуации поступает так же — отдаёт кадр done с тем, что
-    // успело сохраниться, и пузырь перестаёт «висеть» на клиенте.
+    // Тогда отдаём кадр done с тем, что успело сохраниться, и пузырь перестаёт
+    // "висеть" на клиенте.
     const att = await attachmentInfo(msg.attachment_document_id);
     const done: Record<string, unknown> = {
       done: true,
@@ -322,13 +317,13 @@ export async function POST(request: NextRequest) {
     return new Response(replay, { headers: SSE_HEADERS });
   }
 
-  // ─── «Попробовать снова»: новый вариант ответа на тот же вопрос ─────────
+  // "Попробовать снова": новый вариант ответа на тот же вопрос
   if (retryOf) {
     const retried = await prisma.chat_messages.findUnique({
       where: { id: retryOf },
-      select: { id: true, session_id: true, role: true, variant_group: true, reply_to: true },
+      select: { id: true, dialogue_id: true, role: true, variant_group: true, reply_to: true },
     });
-    if (!retried || retried.session_id !== session.id || retried.role !== 'assistant') {
+    if (!retried || retried.dialogue_id !== dialogue.id || retried.role !== 'assistant') {
       return notFound('Ответ для повтора не найден');
     }
 
@@ -341,11 +336,11 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // reply_to может быть пуст у старых сообщений — берём ближайший предыдущий вопрос.
+    // reply_to может быть пуст у старых сообщений - берём ближайший предыдущий вопрос.
     let replyToId = retried.reply_to;
     if (!replyToId) {
       const prevUser = await prisma.chat_messages.findFirst({
-        where: { session_id: session.id, role: 'user', id: { lt: retried.id } },
+        where: { dialogue_id: dialogue.id, role: 'user', id: { lt: retried.id } },
         orderBy: { id: 'desc' },
         select: { id: true },
       });
@@ -365,7 +360,7 @@ export async function POST(request: NextRequest) {
     });
     if (!userQ) return badRequest('Исходный вопрос недоступен');
 
-    // Новый вариант становится активным, прежние — неактивны.
+    // Новый вариант становится активным, прежние - неактивны.
     await prisma.chat_messages.updateMany({
       where: { variant_group: group },
       data: { variant_active: false },
@@ -373,15 +368,10 @@ export async function POST(request: NextRequest) {
 
     const newMsg = await prisma.chat_messages.create({
       data: {
-        session_id: session.id,
+        dialogue_id: dialogue.id,
         role: 'assistant',
-        content: '',
-        is_read: false,
         is_finished: false,
-        is_cancelled: false,
-        last_seq: 0,
         variant_group: group,
-        variant_active: true,
         reply_to: replyToId,
       },
       select: { id: true },
@@ -392,9 +382,9 @@ export async function POST(request: NextRequest) {
       data: { last_activity: new Date() },
     });
 
-    const history = await collectHistoryBefore(session.id, replyToId);
+    const history = await collectHistoryBefore(dialogue.id, replyToId);
     // Вложения исходного вопроса переиспользуем как контекст.
-    const attached = await prisma.session_documents.findMany({
+    const attached = await prisma.chat_attachments.findMany({
       where: { message_id: replyToId },
       orderBy: { id: 'asc' },
       select: { id: true, filename: true, content: true, stored_path: true },
@@ -406,11 +396,11 @@ export async function POST(request: NextRequest) {
       useRag
     );
 
-    state = new StreamState(session.id, newMsg.id);
+    state = new StreamState(dialogue.id, newMsg.id);
     registerStream(state);
     // Генерация живёт дольше HTTP-запроса (клиент может отвалиться и подписаться
-  // заново) — поэтому промис намеренно «висячий», но с перехватом отказа.
-  runGeneration({
+    // заново) - поэтому промис намеренно "висячий", но с перехватом отказа.
+    runGeneration({
       userText: gen.text,
       assistantMessageId: newMsg.id,
       dialogueId: dialogue.id,
@@ -427,17 +417,17 @@ export async function POST(request: NextRequest) {
     return sseResponse(state, lastSeq, false);
   }
 
-  // ─── Обычная отправка сообщения ────────────────────────────────────────
-  // Пересланные из мессенджера сообщения уходят с ПЕРВОЙ отправкой: текст
+  // Обычная отправка сообщения
+  // Пересланные из мессенджера сообщения уходят с первой отправкой: текст
   // пользователя при этом может быть пустым.
   const pendingFwd = pyBool(dialogue.pending_forward) ? dialogue.pending_forward : null;
   const msgText = typeof body.message === 'string' ? body.message.trim() : '';
   if (!msgText && !pendingFwd) return badRequest('Не передано сообщение');
 
-  // Якорь ветки: последний ВИДИМЫЙ ответ ассистента. Если пользователь
+  // Якорь ветки: последний видимый ответ ассистента. Если пользователь
   // переключился на старую ветку и продолжил, вопрос прицепится к ней.
   const allMsgs = await prisma.chat_messages.findMany({
-    where: { session_id: session.id },
+    where: { dialogue_id: dialogue.id },
     orderBy: { id: 'asc' },
     select: {
       id: true,
@@ -449,7 +439,7 @@ export async function POST(request: NextRequest) {
     },
   });
   const hidden = hiddenMessageIds(allMsgs);
-  let branchAnchor: number | null = null;
+  let branchAnchor: string | null = null;
   for (let i = allMsgs.length - 1; i >= 0; i--) {
     const m = allMsgs[i];
     if (m.role === 'assistant' && !hidden.has(m.id)) {
@@ -462,20 +452,16 @@ export async function POST(request: NextRequest) {
   const created = await prisma.$transaction(async (tx) => {
     const userMsg = await tx.chat_messages.create({
       data: {
-        session_id: session.id,
+        dialogue_id: dialogue.id,
         role: 'user',
         content: msgText,
         is_read: true,
-        is_finished: true,
-        is_cancelled: false,
-        last_seq: 0,
-        variant_active: true,
         forwarded_meta: pendingFwd ? (pendingFwd as unknown as Prisma.InputJsonValue) : Prisma.DbNull,
         branch_of: branchAnchor,
       },
       select: { id: true },
     });
-    // Пользовательское сообщение — первый вариант своей группы (для «изменить»).
+    // Пользовательское сообщение - первый вариант своей группы (для "изменить").
     await tx.chat_messages.update({
       where: { id: userMsg.id },
       data: { variant_group: userMsg.id },
@@ -489,14 +475,9 @@ export async function POST(request: NextRequest) {
 
     const assistantMsg = await tx.chat_messages.create({
       data: {
-        session_id: session.id,
+        dialogue_id: dialogue.id,
         role: 'assistant',
-        content: '',
-        is_read: false,
         is_finished: false,
-        is_cancelled: false,
-        last_seq: 0,
-        variant_active: true,
         reply_to: userMsg.id,
       },
       select: { id: true },
@@ -512,18 +493,18 @@ export async function POST(request: NextRequest) {
     return { userId: userMsg.id, assistantId: assistantMsg.id };
   });
 
-  // История — ДО текущего вопроса: сам он уходит в промпт отдельно.
-  const history = await collectHistoryBefore(session.id, created.userId);
+  // История - до текущего вопроса: сам он уходит в промпт отдельно.
+  const history = await collectHistoryBefore(dialogue.id, created.userId);
 
-  // Вложения, ОЖИДАЮЩИЕ отправки (message_id IS NULL) — привязываем их к
+  // Вложения, ожидающие отправки (message_id IS NULL) - привязываем их к
   // текущему сообщению пользователя и кладём в контекст.
-  const pendingDocs = await prisma.session_documents.findMany({
-    where: { session_id: session.id, message_id: null },
+  const pendingDocs = await prisma.chat_attachments.findMany({
+    where: { dialogue_id: dialogue.id, message_id: null },
     orderBy: { id: 'asc' },
     select: { id: true, filename: true, content: true, stored_path: true },
   });
   if (pendingDocs.length) {
-    await prisma.session_documents.updateMany({
+    await prisma.chat_attachments.updateMany({
       where: { id: { in: pendingDocs.map((d) => d.id) } },
       data: { message_id: created.userId },
     });
@@ -531,10 +512,10 @@ export async function POST(request: NextRequest) {
 
   const gen = genTextForUserMessage(msgText, pendingFwd, useRag);
 
-  state = new StreamState(session.id, created.assistantId, created.userId);
+  state = new StreamState(dialogue.id, created.assistantId, created.userId);
   registerStream(state);
   // Генерация живёт дольше HTTP-запроса (клиент может отвалиться и подписаться
-  // заново) — поэтому промис намеренно «висячий», но с перехватом отказа.
+  // заново) - поэтому промис намеренно "висячий", но с перехватом отказа.
   runGeneration({
     userText: gen.text,
     assistantMessageId: created.assistantId,
@@ -552,11 +533,7 @@ export async function POST(request: NextRequest) {
   return sseResponse(state, lastSeq, false);
 }
 
-/**
- * GET на этот путь FastAPI не обслуживает (405 Method Not Allowed), но без
- * экспорта Next вернул бы 405 сам — форма ответа при этом отличалась бы.
- * Отдаём то же, что Starlette.
- */
+/** GET на этом пути нет - отвечаем 405 с телом {detail}, а не стандартным 405 Next. */
 export async function GET() {
   return NextResponse.json({ detail: 'Method Not Allowed' }, { status: 405 });
 }

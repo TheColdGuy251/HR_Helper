@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import { Chrome } from '@/components/chrome';
 import './globals.css';
 
-// Корневой layout — серверный компонент (метаданные, PWA), вся клиентская
+// Корневой layout - серверный компонент (метаданные, PWA), вся клиентская
 // логика (авторизация, SSE, шапка) живёт в <Chrome>.
 
 export const metadata: Metadata = {

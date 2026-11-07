@@ -37,12 +37,12 @@ import { clearPendingGen, recordPendingGen } from '@/components/pending-generati
 import { ErrorCallout } from '@/components/ui';
 import { useComposerPadding, useKeyboardInset } from '@/lib/viewport';
 import type { MessageAttachment, MessageSource } from '@/lib/msgfmt';
+import { isUuid } from '@/lib/ids';
 
 // Чат-сессия с ИИ-ассистентом: слева список диалогов, справа лента + композер.
-// Порт static/js/chat.js; формы запросов/ответов — routes/chat.py и routes/dialogues.py.
 
 const DEFAULT_TITLE = 'Новый диалог';
-const SB_PAGE = 30;      // шаг «Показать ещё» в списке диалогов
+const SB_PAGE = 30;      // шаг "Показать ещё" в списке диалогов
 const SB_MAX = 100;      // page_size на бэкенде ограничен сотней
 
 const SB_FILTERS: { key: 'active' | 'finished' | 'all'; label: string }[] = [
@@ -56,16 +56,16 @@ const ACCEPT =
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : 'Неизвестная ошибка');
 
 /** Непрочитанные из ответа сервера: завершённые ответы ассистента с is_read=false. */
-function unreadOf(list: ChatMsg[]): Set<number> {
+function unreadOf(list: ChatMsg[]): Set<string> {
   return new Set(
     list
       .filter((m) => m.role === 'assistant' && m.is_read === false && m.is_finished)
       .map((m) => m.id)
-      .filter((id): id is number => typeof id === 'number')
+      .filter(isUuid)
   );
 }
 
-/** Текст выделенных сообщений с группировкой по автору (порт groupedCopyText). */
+/** Текст выделенных сообщений с группировкой по автору. */
 function groupedChatText(list: ChatMsg[]): string {
   const groups: { name: string; lines: string[] }[] = [];
   list.forEach((m) => {
@@ -79,14 +79,13 @@ function groupedChatText(list: ChatMsg[]): string {
   return groups.map((g) => `${g.name}:\n${g.lines.join('\n')}`).join('\n\n');
 }
 
-// ── Формы ответов бэкенда ───────────────────────────────────────────────────
+// Формы ответов бэкенда
 
 interface DialogueItem {
-  id: number;
+  id: string;
   title: string;
   is_finished: boolean;
   last_activity: string;
-  session_id: string | null;
   last_message: { role: string; text: string; ts: string | null } | null;
   unread: boolean;
 }
@@ -106,29 +105,29 @@ interface MessagesResponse {
 
 interface ActiveResponse {
   success: boolean;
-  active: { message_id: number; content: string; last_seq: number; started_at: string }[];
+  active: { message_id: string; content: string; last_seq: number; started_at: string }[];
 }
 
 interface SessionFile {
-  id: number;
+  id: string;
   name: string;
   size: number;
   chars: number;
 }
 
-/** Строка статуса загрузки файла (порт .upload-status из chat.html). */
+/** Строка статуса загрузки файла. */
 interface UploadState {
   text: string;
   percent: number;
   tone: 'busy' | 'success' | 'error';
 }
 
-/** Кадры SSE из POST /api/chat/stream (см. chat.py: event_source, _build_done_payload). */
+/** Кадры SSE из POST /api/chat/stream. */
 interface StreamFrame {
   initial?: boolean;
   initial_chunk?: string;
-  message_id?: number;
-  user_message_id?: number;
+  message_id?: string;
+  user_message_id?: string;
   last_seq?: number;
   status?: string;
   queue_position?: number;
@@ -148,18 +147,18 @@ interface StreamFrame {
 interface StreamCtx {
   handle: SSEStreamHandle | null;
   slot: ChatMsg['id']; // id пузыря, в который пишем (временный до ответа сервера)
-  assistantId: number | null;
+  assistantId: string | null;
   lastSeq: number;
   userSlot: ChatMsg['id'] | null; // временный пузырь пользователя
 }
 
 export default function ChatSessionPage() {
   const router = useRouter();
-  const { id: sessionId } = useParams<{ id: string }>();
+  // Адрес чата - /chat/{dialogue_id}.
+  const { id: dialogueId } = useParams<{ id: string }>();
 
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [dialogues, setDialogues] = useState<DialogueItem[]>([]);
-  const [dialogueId, setDialogueId] = useState<number | null>(null);
   const [title, setTitle] = useState('');
   const [titleStatus, setTitleStatus] = useState('');
   const [input, setInput] = useState('');
@@ -173,11 +172,11 @@ export default function ChatSessionPage() {
   const [collapsed, setCollapsed] = useState(false); // сайдбар свёрнут (только десктоп)
   const [atBottom, setAtBottom] = useState(true);
   const [dragOver, setDragOver] = useState(false);
-  // Непрочитанные ответы ассистента (id). Порт unreadMessages из chat.js.
-  const [unreadIds, setUnreadIds] = useState<Set<number>>(() => new Set());
+  // Непрочитанные ответы ассистента (id).
+  const [unreadIds, setUnreadIds] = useState<Set<string>>(() => new Set());
 
-  // выделение сообщений и пересылка в мессенджер (порт #chatSelTools)
-  // сайдбар: поиск, фильтр и постраничное «Показать ещё» (порт chat.js initChatSidebar)
+  // выделение сообщений и пересылка в мессенджер
+  // сайдбар: поиск, фильтр и постраничное "Показать ещё"
   const [sbQuery, setSbQuery] = useState('');
   const [sbFilter, setSbFilter] = useState<'active' | 'finished' | 'all'>('all');
   const [sbLimit, setSbLimit] = useState(SB_PAGE);
@@ -185,7 +184,7 @@ export default function ChatSessionPage() {
 
   const [selMode, setSelMode] = useState(false);
   const [selected, setSelected] = useState<Set<ChatMsg['id']>>(() => new Set());
-  const [forward, setForward] = useState<{ text?: string; snapshotId?: number; count: number } | null>(
+  const [forward, setForward] = useState<{ text?: string; snapshotId?: string; count: number } | null>(
     null
   );
   const [fwdBusy, setFwdBusy] = useState(false);
@@ -201,7 +200,6 @@ export default function ChatSessionPage() {
     userSlot: null,
   });
   const busyRef = useRef(false);
-  const dialogueIdRef = useRef<number | null>(null);
   const titleRef = useRef('');
   const titleDirtyRef = useRef(false); // пользователь правил название сам
   const autoTitleRef = useRef(false);
@@ -209,7 +207,7 @@ export default function ChatSessionPage() {
   const feedRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
   const atBottomRef = useRef(true); // то же, что atBottom: читают колбэки стрима
-  const unreadRef = useRef<Set<number>>(new Set());
+  const unreadRef = useRef<Set<string>>(new Set());
   const visTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hlTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -221,9 +219,9 @@ export default function ChatSessionPage() {
   const upCreepTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const upHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const draftKey = sessionId ? `hr_chat_draft_${sessionId}` : '';
+  const draftKey = dialogueId ? `hr_chat_draft_${dialogueId}` : '';
 
-  // ── Утилиты состояния ─────────────────────────────────────────────────────
+  // Утилиты состояния
 
   const patchMsg = useCallback(
     (id: ChatMsg['id'], patch: Partial<ChatMsg> | ((m: ChatMsg) => Partial<ChatMsg>)) => {
@@ -245,13 +243,13 @@ export default function ChatSessionPage() {
     setAtBottom(v);
   }, []);
 
-  const applyUnread = useCallback((next: Set<number>) => {
+  const applyUnread = useCallback((next: Set<string>) => {
     unreadRef.current = next;
     setUnreadIds(next);
   }, []);
 
   const addUnread = useCallback(
-    (id: number) => {
+    (id: string) => {
       if (unreadRef.current.has(id)) return;
       applyUnread(new Set(unreadRef.current).add(id));
     },
@@ -259,7 +257,7 @@ export default function ChatSessionPage() {
   );
 
   const dropUnread = useCallback(
-    (ids: number[]) => {
+    (ids: string[]) => {
       if (!ids.some((i) => unreadRef.current.has(i))) return;
       const next = new Set(unreadRef.current);
       ids.forEach((i) => next.delete(i));
@@ -282,12 +280,12 @@ export default function ChatSessionPage() {
   useKeyboardInset(composerRef);
   useComposerPadding(feedRef, composerRef);
 
-  // Автоскролл — только если пользователь уже внизу ленты.
+  // Автоскролл - только если пользователь уже внизу ленты.
   useEffect(() => {
     if (atBottom) scrollToBottom();
   }, [messages, atBottom, scrollToBottom]);
 
-  // Свёрнутость сайдбара запоминаем между заходами (порт setCollapsed из chat.js).
+  // Свёрнутость сайдбара запоминаем между заходами.
   useEffect(() => {
     try {
       if (localStorage.getItem('chatSidebarCollapsed') === '1') setCollapsed(true);
@@ -316,7 +314,7 @@ export default function ChatSessionPage() {
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
   }, [input]);
 
-  // ── Название диалога ──────────────────────────────────────────────────────
+  // Название диалога
 
   const applyTitle = useCallback((value: string) => {
     if (titleDirtyRef.current) return; // не затираем то, что печатает пользователь
@@ -333,10 +331,9 @@ export default function ChatSessionPage() {
     setTitleStatus('набираю…');
     if (titleTimer.current) clearTimeout(titleTimer.current);
     titleTimer.current = setTimeout(async () => {
-      const dlg = dialogueIdRef.current;
-      if (!dlg) return;
+      if (!dialogueId) return;
       try {
-        await apiPatch(`/api/dialogues/${dlg}`, { title: value.trim() });
+        await apiPatch(`/api/dialogues/${dialogueId}`, { title: value.trim() });
         setTitleStatus('сохранено');
         setTimeout(() => setTitleStatus(''), 1500);
       } catch {
@@ -345,16 +342,15 @@ export default function ChatSessionPage() {
     }, 600);
   };
 
-  // Название от ИИ запрашиваем один раз — после первого ответа, если своего нет.
+  // Название от ИИ запрашиваем один раз - после первого ответа, если своего нет.
   const requestAutoTitle = useCallback(() => {
     if (autoTitleRef.current) return;
-    const dlg = dialogueIdRef.current;
-    if (!dlg || titleRef.current.trim()) return;
+    if (!dialogueId || titleRef.current.trim()) return;
     autoTitleRef.current = true;
-    apiPost(`/api/dialogues/${dlg}/auto-title`).catch(() => {});
-  }, []);
+    apiPost(`/api/dialogues/${dialogueId}/auto-title`).catch(() => {});
+  }, [dialogueId]);
 
-  // ── Черновик: localStorage + серверный draft (диалог не «пустой») ──────────
+  // Черновик: localStorage + серверный draft (диалог не "пустой")
 
   const clearDraft = useCallback(() => {
     if (draftTimer.current) clearTimeout(draftTimer.current);
@@ -366,9 +362,8 @@ export default function ChatSessionPage() {
         /* приватный режим */
       }
     }
-    const dlg = dialogueIdRef.current;
-    if (dlg) apiPatch(`/api/dialogues/${dlg}`, { draft: '' }).catch(() => {});
-  }, [draftKey]);
+    if (dialogueId) apiPatch(`/api/dialogues/${dialogueId}`, { draft: '' }).catch(() => {});
+  }, [draftKey, dialogueId]);
 
   const onInputChange = (value: string) => {
     setInput(value);
@@ -384,12 +379,11 @@ export default function ChatSessionPage() {
     }, 200);
     if (draftSrvTimer.current) clearTimeout(draftSrvTimer.current);
     draftSrvTimer.current = setTimeout(() => {
-      const dlg = dialogueIdRef.current;
-      if (dlg) apiPatch(`/api/dialogues/${dlg}`, { draft: value.trim() }).catch(() => {});
+      if (dialogueId) apiPatch(`/api/dialogues/${dialogueId}`, { draft: value.trim() }).catch(() => {});
     }, 700);
   };
 
-  // ── Список диалогов (сайдбар) + поиск текущего диалога по session_id ───────
+  // Список диалогов (сайдбар) + название текущего диалога
 
   const loadSidebar = useCallback(async () => {
     try {
@@ -408,29 +402,27 @@ export default function ChatSessionPage() {
     }
   }, [sbFilter, sbQuery, sbLimit]);
 
-  // Текущий диалог ищем отдельно: под фильтр/поиск сайдбара он может не попасть.
+  // Название текущего диалога ищем отдельно: под фильтр/поиск сайдбара он может не попасть.
   const resolveCurrent = useCallback(async () => {
-    if (!sessionId) return;
+    if (!dialogueId) return;
     try {
       for (let page = 1; page <= 6; page++) {
         const data = await apiGet<DialoguesResponse>(
           `/api/dialogues?filter=all&page=${page}&page_size=100`
         );
-        const current = (data.items || []).find((d) => d.session_id === sessionId);
+        const current = (data.items || []).find((d) => d.id === dialogueId);
         if (current) {
-          dialogueIdRef.current = current.id;
-          setDialogueId(current.id);
           applyTitle(current.title);
           return;
         }
         if (page >= (data.total_pages || 1)) return;
       }
     } catch {
-      /* название и id подтянутся при следующем обновлении */
+      /* название подтянется при следующем обновлении */
     }
-  }, [sessionId, applyTitle]);
+  }, [dialogueId, applyTitle]);
 
-  // Поиск/смена фильтра — с общим debounce, как в легаси (250 мс).
+  // Поиск/смена фильтра - с общим debounce (250 мс).
   useEffect(() => {
     const t = setTimeout(() => void loadSidebar(), 250);
     return () => clearTimeout(t);
@@ -440,12 +432,12 @@ export default function ChatSessionPage() {
     void resolveCurrent();
   }, [resolveCurrent]);
 
-  // Push-события: авто-название приходит как dialogue_title, остальное — обновление списка.
+  // Push-события: авто-название приходит как dialogue_title, остальное - обновление списка.
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
     const onChanged = (e: Event) => {
-      const d = (e as CustomEvent<{ type?: string; dialogue_id?: number; title?: string }>).detail;
-      if (d?.type === 'dialogue_title' && String(d.dialogue_id) === String(dialogueIdRef.current)) {
+      const d = (e as CustomEvent<{ type?: string; dialogue_id?: string; title?: string }>).detail;
+      if (d?.type === 'dialogue_title' && d.dialogue_id === dialogueId) {
         applyTitle(d.title || '');
       }
       if (timer) clearTimeout(timer);
@@ -462,23 +454,23 @@ export default function ChatSessionPage() {
       window.removeEventListener('hr:dialogues-changed', onChanged);
       window.removeEventListener('hr:unread-changed', onChanged);
     };
-  }, [loadSidebar, applyTitle]);
+  }, [loadSidebar, applyTitle, dialogueId]);
 
-  // ── Вложения сессии ───────────────────────────────────────────────────────
+  // Вложения диалога
 
   const loadFiles = useCallback(async () => {
-    if (!sessionId) return;
+    if (!dialogueId) return;
     try {
       const data = await apiGet<{ items: SessionFile[] }>(
-        `/api/chat/session-files?session_id=${encodeURIComponent(sessionId)}`
+        `/api/chat/session-files?dialogue_id=${encodeURIComponent(dialogueId)}`
       );
       setFiles(data.items || []);
     } catch {
       /* не критично для работы чата */
     }
-  }, [sessionId]);
+  }, [dialogueId]);
 
-  /** Останавливает «ползущий» прогресс и таймер автоскрытия строки статуса. */
+  /** Останавливает "ползущий" прогресс и таймер автоскрытия строки статуса. */
   const stopUploadTimers = useCallback(() => {
     if (upCreepTimer.current) clearInterval(upCreepTimer.current);
     if (upHideTimer.current) clearTimeout(upHideTimer.current);
@@ -486,13 +478,13 @@ export default function ChatSessionPage() {
     upHideTimer.current = null;
   }, []);
 
-  // Порт uploadDocument/uploadFilesSeq из chat.js: строка статуса + полоса прогресса.
-  // fetch не отдаёт событий отправки тела, поэтому полосу двигаем по этапам, как в
-  // легаси (15% → ожидание → 100%), а во время ожидания ответа она плавно ползёт.
+  // Строка статуса + полоса прогресса.
+  // fetch не отдаёт событий отправки тела, поэтому полосу двигаем по этапам
+  // (15% -> ожидание -> 100%), а во время ожидания ответа она плавно ползёт.
   const uploadFiles = useCallback(
     async (list: FileList | File[]) => {
       const arr = Array.from(list);
-      if (!arr.length || !sessionId) return;
+      if (!arr.length || !dialogueId) return;
       stopUploadTimers();
       setUploading(true);
       let failed = false;
@@ -502,7 +494,7 @@ export default function ChatSessionPage() {
         const step = arr.length > 1 ? `(${i + 1}/${arr.length}) ` : '';
         setUpload({ text: `${step}Парсинг «${file.name}»…`, percent: 15, tone: 'busy' });
 
-        // Ползём к 85 %, пока ждём ответ; после 1.2 с меняем подпись на «Обработка…».
+        // Ползём к 85 %, пока ждём ответ; после 1.2 с меняем подпись на "Обработка...".
         let waited = 0;
         upCreepTimer.current = setInterval(() => {
           waited += 400;
@@ -518,7 +510,7 @@ export default function ChatSessionPage() {
         }, 400);
 
         const fd = new FormData();
-        fd.append('session_id', sessionId);
+        fd.append('dialogue_id', dialogueId);
         fd.append('file', file);
         try {
           const data = await apiUpload<{ file?: { chars?: number } }>(
@@ -546,16 +538,16 @@ export default function ChatSessionPage() {
 
       setUploading(false);
       await loadFiles();
-      // Успех прячем через 3 с, ошибку — через 5 с (как в легаси).
+      // Успех прячем через 3 с, ошибку - через 5 с.
       if (upHideTimer.current) clearTimeout(upHideTimer.current);
       upHideTimer.current = setTimeout(() => setUpload(null), failed ? 5000 : 3000);
     },
-    [sessionId, loadFiles, stopUploadTimers]
+    [dialogueId, loadFiles, stopUploadTimers]
   );
 
   useEffect(() => stopUploadTimers, [stopUploadTimers]);
 
-  const removeFile = async (fileId: number) => {
+  const removeFile = async (fileId: string) => {
     const prev = files;
     setFiles((list) => list.filter((f) => f.id !== fileId));
     try {
@@ -566,41 +558,41 @@ export default function ChatSessionPage() {
     }
   };
 
-  // ── История сообщений ─────────────────────────────────────────────────────
+  // История сообщений
 
   const loadMessages = useCallback(async () => {
-    if (!sessionId) return;
+    if (!dialogueId) return;
     const data = await apiGet<MessagesResponse>(
-      `/api/chat/messages?session_id=${encodeURIComponent(sessionId)}&mark_as_read=true`
+      `/api/chat/messages?dialogue_id=${encodeURIComponent(dialogueId)}&mark_as_read=true`
     );
     const list = data.messages || [];
     setMessages(list);
-    // Сервер уже пометил их прочитанными в БД, но в выдаче отдал прежний is_read —
+    // Сервер уже пометил их прочитанными в БД, но в выдаче отдал прежний is_read -
     // по нему и восстанавливаем локальный счётчик.
     applyUnread(unreadOf(list));
-  }, [sessionId, applyUnread]);
+  }, [dialogueId, applyUnread]);
 
   const markRead = useCallback(
-    (ids: number[]) => {
-      if (!ids.length || !sessionId) return;
-      apiPost('/api/chat/mark-as-read', { session_id: sessionId, message_ids: ids }).catch(() => {});
+    (ids: string[]) => {
+      if (!ids.length || !dialogueId) return;
+      apiPost('/api/chat/mark-as-read', { dialogue_id: dialogueId, message_ids: ids }).catch(() => {});
     },
-    [sessionId]
+    [dialogueId]
   );
 
-  // ── Непрочитанные: автопометка по видимости (порт checkVisibleMessages) ────
+  // Непрочитанные: автопометка по видимости
 
   /** Помечаем прочитанными непрочитанные ответы, попавшие в видимую часть ленты. */
   const checkVisible = useCallback(() => {
     const el = feedRef.current;
     if (!el || document.hidden || !unreadRef.current.size) return;
     const box = el.getBoundingClientRect();
-    const seen: number[] = [];
+    const seen: string[] = [];
     el.querySelectorAll<HTMLElement>('[data-role="assistant"][data-message-id]').forEach((node) => {
-      const id = Number(node.dataset.messageId);
-      if (!Number.isFinite(id) || !unreadRef.current.has(id)) return;
+      const id = node.dataset.messageId;
+      if (!id || !unreadRef.current.has(id)) return;
       const r = node.getBoundingClientRect();
-      // Целиком в контейнере — либо (длинный ответ) сам закрывает его собой.
+      // Целиком в контейнере - либо (длинный ответ) сам закрывает его собой.
       const fits = r.top >= box.top - 4 && r.bottom <= box.bottom + 4;
       const fills = r.height > box.height && r.top <= box.top && r.bottom >= box.bottom;
       if (fits || fills) seen.push(id);
@@ -621,12 +613,12 @@ export default function ChatSessionPage() {
     [checkVisible]
   );
 
-  // Состав ленты (без учёта дописываемого текста) — по нему пересоздаём observer,
+  // Состав ленты (без учёта дописываемого текста) - по нему пересоздаём observer,
   // иначе он перезапускался бы на каждом чанке стрима.
   const feedKey = useMemo(() => messages.map((m) => m.id).join(','), [messages]);
 
   // Автопометка прочитанного по видимости: IntersectionObserver вместо
-  // поллинга/пересчёта прямоугольников на каждый скролл (порт checkVisibleMessages).
+  // поллинга/пересчёта прямоугольников на каждый скролл.
   useEffect(() => {
     const root = feedRef.current;
     if (!root || typeof IntersectionObserver === 'undefined') {
@@ -636,12 +628,12 @@ export default function ChatSessionPage() {
     const io = new IntersectionObserver(
       (entries) => {
         if (document.hidden) return;
-        const seen: number[] = [];
+        const seen: string[] = [];
         for (const entry of entries) {
-          const id = Number((entry.target as HTMLElement).dataset.messageId);
-          if (!entry.isIntersecting || !Number.isFinite(id) || !unreadRef.current.has(id)) continue;
+          const id = (entry.target as HTMLElement).dataset.messageId;
+          if (!entry.isIntersecting || !id || !unreadRef.current.has(id)) continue;
           const rootHeight = entry.rootBounds?.height ?? 0;
-          // Виден целиком — либо (длинный ответ) сам закрывает собой всю ленту.
+          // Виден целиком - либо (длинный ответ) сам закрывает собой всю ленту.
           const fits = entry.intersectionRatio >= 0.95;
           const fills = rootHeight > 0 && entry.intersectionRect.height >= rootHeight - 8;
           if (fits || fills) seen.push(id);
@@ -676,19 +668,19 @@ export default function ChatSessionPage() {
     []
   );
 
-  /** Прокрутка к первому непрочитанному с короткой подсветкой (порт scrollToFirstUnread). */
+  /** Прокрутка к первому непрочитанному с короткой подсветкой. */
   const scrollToFirstUnread = useCallback(() => {
     const el = feedRef.current;
     if (!el) return;
     const node = Array.from(
       el.querySelectorAll<HTMLElement>('[data-role="assistant"][data-message-id]')
-    ).find((n) => unreadRef.current.has(Number(n.dataset.messageId)));
+    ).find((n) => unreadRef.current.has(n.dataset.messageId || ''));
     if (!node) {
       goBottom();
       return;
     }
     node.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    // Мягкая янтарная подсветка на 2 секунды (в легаси — rgba(255,215,0,.2)).
+    // Мягкая янтарная подсветка на 2 секунды.
     node.style.transition = 'background-color .25s ease';
     node.style.borderRadius = '12px';
     node.style.backgroundColor = 'rgba(253, 230, 138, 0.45)';
@@ -698,10 +690,10 @@ export default function ChatSessionPage() {
       node.style.borderRadius = '';
       node.style.transition = '';
     }, 2000);
-    scheduleVisible(700); // после плавной прокрутки — пометить прочитанным
+    scheduleVisible(700); // после плавной прокрутки - пометить прочитанным
   }, [goBottom, scheduleVisible]);
 
-  // ── Стриминг ответа ───────────────────────────────────────────────────────
+  // Стриминг ответа
 
   const endStream = useCallback(() => {
     streamRef.current.handle = null;
@@ -716,21 +708,21 @@ export default function ChatSessionPage() {
       st.slot = slot;
       st.userSlot = userSlot;
       st.lastSeq = typeof body.last_seq === 'number' ? body.last_seq : 0;
-      st.assistantId = typeof body.assistant_message_id === 'number' ? body.assistant_message_id : null;
+      st.assistantId = isUuid(body.assistant_message_id) ? body.assistant_message_id : null;
       setStreaming(true);
 
       const onFrame = (raw: Record<string, unknown>) => {
         const f = raw as StreamFrame;
 
         // Временный id пузыря заменяем на настоящий, как только сервер его прислал.
-        if (typeof f.message_id === 'number' && st.assistantId !== f.message_id) {
+        if (isUuid(f.message_id) && st.assistantId !== f.message_id) {
           const real = f.message_id;
           const old = st.slot;
           st.assistantId = real;
           st.slot = real;
           setMessages((prev) => prev.map((m) => (m.id === old ? { ...m, id: real } : m)));
         }
-        if (typeof f.user_message_id === 'number' && st.userSlot != null) {
+        if (isUuid(f.user_message_id) && st.userSlot != null) {
           const old = st.userSlot;
           const real = f.user_message_id;
           st.userSlot = null;
@@ -747,7 +739,7 @@ export default function ChatSessionPage() {
         }
         if (f.sources) patchMsg(st.slot, { sources: f.sources });
 
-        // Снимок для возобновления/поздней подписки — заменяет текст, а не дополняет.
+        // Снимок для возобновления/поздней подписки - заменяет текст, а не дополняет.
         if (f.initial) {
           const text = f.initial_chunk || '';
           patchMsg(st.slot, (m) => (text || !m.content ? { content: text } : {}));
@@ -792,13 +784,13 @@ export default function ChatSessionPage() {
             else addUnread(finishedId);
           }
           requestAutoTitle();
-          // Пользователь на странице — глобальный тост «Ответ готов» не нужен.
-          if (sessionId) clearPendingGen(sessionId);
+          // Пользователь на странице - глобальный тост "Ответ готов" не нужен.
+          if (dialogueId) clearPendingGen(dialogueId);
         }
       };
 
-      // Если уйдём со страницы — тост о завершении покажет глобальный поллер.
-      if (sessionId) recordPendingGen(sessionId, dialogueIdRef.current, titleRef.current);
+      // Если уйдём со страницы - тост о завершении покажет глобальный поллер.
+      if (dialogueId) recordPendingGen(dialogueId, titleRef.current);
 
       const handle = postSSE('/api/chat/stream', body, onFrame, (err) => {
         setError(err.message);
@@ -811,14 +803,14 @@ export default function ChatSessionPage() {
       });
       st.handle = handle;
 
-      // Поток закрылся без кадра done (обрыв соединения) — снимаем индикатор.
+      // Поток закрылся без кадра done (обрыв соединения) - снимаем индикатор.
       handle.done.then(() => {
         if (streamRef.current.handle !== handle) return;
         patchMsg(streamRef.current.slot, { streaming: false });
         endStream();
       });
     },
-    [patchMsg, setStreaming, endStream, markRead, addUnread, requestAutoTitle, sessionId]
+    [patchMsg, setStreaming, endStream, markRead, addUnread, requestAutoTitle, dialogueId]
   );
 
   const stopStream = useCallback(async () => {
@@ -827,7 +819,7 @@ export default function ChatSessionPage() {
       // Сервер прервёт генерацию и пришлёт done с уже написанной частью.
       try {
         await apiPost('/api/chat/stream/abort', {
-          session_id: sessionId,
+          dialogue_id: dialogueId,
           assistant_message_id: st.assistantId,
         });
       } catch (e) {
@@ -838,15 +830,15 @@ export default function ChatSessionPage() {
       patchMsg(st.slot, { streaming: false, is_finished: true });
       endStream();
     }
-  }, [sessionId, patchMsg, endStream]);
+  }, [dialogueId, patchMsg, endStream]);
 
-  // ── Загрузка сессии: история + возобновление активной генерации ────────────
+  // Загрузка диалога: история + возобновление активной генерации
 
   useEffect(() => {
-    if (!sessionId) return;
+    if (!dialogueId) return;
     let cancelled = false;
 
-    // Сброс состояния при переходе в другую сессию.
+    // Сброс состояния при переходе в другой диалог.
     streamRef.current.handle?.abort();
     streamRef.current = { handle: null, slot: '', assistantId: null, lastSeq: 0, userSlot: null };
     busyRef.current = false;
@@ -864,7 +856,7 @@ export default function ChatSessionPage() {
     titleRef.current = '';
     setTitle('');
     try {
-      setInput(localStorage.getItem(`hr_chat_draft_${sessionId}`) || '');
+      setInput(localStorage.getItem(`hr_chat_draft_${dialogueId}`) || '');
     } catch {
       setInput('');
     }
@@ -872,7 +864,7 @@ export default function ChatSessionPage() {
     (async () => {
       try {
         const data = await apiGet<MessagesResponse>(
-          `/api/chat/messages?session_id=${encodeURIComponent(sessionId)}&mark_as_read=true`
+          `/api/chat/messages?dialogue_id=${encodeURIComponent(dialogueId)}&mark_as_read=true`
         );
         if (cancelled) return;
         const list = data.messages || [];
@@ -882,7 +874,7 @@ export default function ChatSessionPage() {
         requestAnimationFrame(scrollToBottom);
 
         const act = await apiGet<ActiveResponse>(
-          `/api/chat/stream/active?session_id=${encodeURIComponent(sessionId)}`
+          `/api/chat/stream/active?dialogue_id=${encodeURIComponent(dialogueId)}`
         );
         if (cancelled || !act.active?.length) return;
         const latest = [...act.active].sort(
@@ -907,9 +899,9 @@ export default function ChatSessionPage() {
                 },
               ]
         );
-        // last_seq=0 → сервер отдаст весь накопленный буфер в initial_chunk.
+        // last_seq=0 -> сервер отдаст весь накопленный буфер в initial_chunk.
         runStream(
-          { session_id: sessionId, assistant_message_id: latest.message_id, last_seq: 0 },
+          { dialogue_id: dialogueId, assistant_message_id: latest.message_id, last_seq: 0 },
           latest.message_id,
           null
         );
@@ -925,12 +917,12 @@ export default function ChatSessionPage() {
     return () => {
       cancelled = true;
     };
-  }, [sessionId, runStream, scrollToBottom, loadFiles, markAtBottom, applyUnread, stopUploadTimers]);
+  }, [dialogueId, runStream, scrollToBottom, loadFiles, markAtBottom, applyUnread, stopUploadTimers]);
 
   // Обрываем чтение потока при уходе со страницы (генерация продолжается на сервере).
   useEffect(() => () => streamRef.current.handle?.abort(), []);
 
-  // Возврат фокуса на вкладку — синхронизируем историю (не чаще раза в 15 с).
+  // Возврат фокуса на вкладку - синхронизируем историю (не чаще раза в 15 с).
   useEffect(() => {
     const sync = () => {
       if (document.hidden || busyRef.current) return;
@@ -947,12 +939,12 @@ export default function ChatSessionPage() {
     };
   }, [loadMessages]);
 
-  // ── Отправка ──────────────────────────────────────────────────────────────
+  // Отправка
 
   const send = useCallback(
-    (text: string, faqId?: number) => {
+    (text: string, faqId?: string) => {
       const value = text.trim();
-      if (!value || busyRef.current || !sessionId) return;
+      if (!value || busyRef.current || !dialogueId) return;
       setError(null);
 
       const stamp = Date.now();
@@ -976,26 +968,26 @@ export default function ChatSessionPage() {
 
       setInput('');
       clearDraft();
-      setFiles([]); // вложения «потрачены» на это сообщение
+      setFiles([]); // вложения "потрачены" на это сообщение
       markAtBottom(true);
 
-      const body: Record<string, unknown> = { session_id: sessionId, message: value };
+      const body: Record<string, unknown> = { dialogue_id: dialogueId, message: value };
       if (faqId) body.faq_id = faqId;
       runStream(body, slot, userSlot);
     },
-    [sessionId, files, clearDraft, runStream, markAtBottom]
+    [dialogueId, files, clearDraft, runStream, markAtBottom]
   );
 
-  // ── Вопрос, заданный с главной ────────────────────────────────────────────
+  // Вопрос, заданный с главной
   // Главная создаёт диалог и уходит сюда с `?q=<вопрос>`. Отправляем его один
-  // раз — после загрузки истории, иначе ответ loadMessages затрёт оптимистично
+  // раз - после загрузки истории, иначе ответ loadMessages затрёт оптимистично
   // добавленные пузыри. Параметр сразу убираем из адреса, чтобы вопрос не
-  // ушёл повторно при перезагрузке или возврате «назад».
+  // ушёл повторно при перезагрузке или возврате "назад".
   // location читаем напрямую, а не через useSearchParams: так же сделано в
-  // components/chrome.tsx — иначе страницу пришлось бы оборачивать в Suspense.
+  // components/chrome.tsx - иначе страницу пришлось бы оборачивать в Suspense.
   const askedRef = useRef(false);
   useEffect(() => {
-    if (askedRef.current || loading || !sessionId) return;
+    if (askedRef.current || loading || !dialogueId) return;
     let q = '';
     try {
       q = new URLSearchParams(window.location.search).get('q') || '';
@@ -1004,11 +996,11 @@ export default function ChatSessionPage() {
     }
     if (!q.trim()) return;
     askedRef.current = true;
-    router.replace(`/chat/${sessionId}`);
+    router.replace(`/chat/${dialogueId}`);
     send(q);
-  }, [loading, sessionId, router, send]);
+  }, [loading, dialogueId, router, send]);
 
-  // ── Выделение сообщений и пересылка в мессенджер (порт #chatSelTools) ──────
+  // Выделение сообщений и пересылка в мессенджер
 
   const exitSelect = useCallback(() => {
     setSelMode(false);
@@ -1048,8 +1040,8 @@ export default function ChatSessionPage() {
     toast({ title: 'Скопировано', body: `Сообщений: ${selectedMsgs.length}` });
   };
 
-  // Несколько сообщений уходят одним текстом (как в легаси chat.js),
-  // одиночный ответ ассистента — снимком через forward_message_id.
+  // Несколько сообщений уходят одним текстом,
+  // одиночный ответ ассистента - снимком через forward_message_id.
   const forwardSelected = () => {
     const text = groupedChatText(selectedMsgs);
     if (!text) return;
@@ -1059,7 +1051,7 @@ export default function ChatSessionPage() {
 
   const forwardOne = (m: ChatMsg) => {
     setFwdError('');
-    if (m.role === 'assistant' && typeof m.id === 'number') {
+    if (m.role === 'assistant' && isUuid(m.id)) {
       setForward({ snapshotId: m.id, count: 1 });
       return;
     }
@@ -1093,10 +1085,10 @@ export default function ChatSessionPage() {
     }
   };
 
-  // ── Действия над сообщениями (колбэки MessageBubble) ──────────────────────
+  // Действия над сообщениями (колбэки MessageBubble)
 
   const onFeedback = useCallback(
-    async (id: number, rating: number) => {
+    async (id: string, rating: number) => {
       patchMsg(id, { user_rating: rating });
       try {
         await apiPost('/api/chat/feedback', { message_id: id, rating });
@@ -1108,31 +1100,31 @@ export default function ChatSessionPage() {
   );
 
   const onVariant = useCallback(
-    async (id: number, dir: number) => {
+    async (id: string, dir: number) => {
       try {
-        await apiPost('/api/chat/variant', { session_id: sessionId, message_id: id, direction: dir });
+        await apiPost('/api/chat/variant', { dialogue_id: dialogueId, message_id: id, direction: dir });
         await loadMessages(); // видимая ветка меняется целиком
       } catch (e) {
         setError(errMsg(e));
       }
     },
-    [sessionId, loadMessages]
+    [dialogueId, loadMessages]
   );
 
   const onEdit = useCallback(
-    async (id: number, text: string) => {
+    async (id: string, text: string) => {
       if (busyRef.current) return;
       try {
-        const data = await apiPost<{ success: boolean; assistant_message_id: number }>(
+        const data = await apiPost<{ success: boolean; assistant_message_id: string }>(
           '/api/chat/edit',
-          { session_id: sessionId, message_id: id, text }
+          { dialogue_id: dialogueId, message_id: id, text }
         );
         await loadMessages(); // новая ветка вопроса + заготовка ответа
         if (!data.assistant_message_id) return;
         patchMsg(data.assistant_message_id, { streaming: true, status: 'search' });
         markAtBottom(true);
         runStream(
-          { session_id: sessionId, assistant_message_id: data.assistant_message_id, last_seq: 0 },
+          { dialogue_id: dialogueId, assistant_message_id: data.assistant_message_id, last_seq: 0 },
           data.assistant_message_id,
           null
         );
@@ -1140,13 +1132,13 @@ export default function ChatSessionPage() {
         setError(errMsg(e));
       }
     },
-    [sessionId, loadMessages, patchMsg, runStream, markAtBottom]
+    [dialogueId, loadMessages, patchMsg, runStream, markAtBottom]
   );
 
   const onRetry = useCallback(
-    (id: number) => {
-      if (busyRef.current || !sessionId) return;
-      // Всё ниже перегенерируемого ответа принадлежит старой ветке — прячем сразу.
+    (id: string) => {
+      if (busyRef.current || !dialogueId) return;
+      // Всё ниже перегенерируемого ответа принадлежит старой ветке - прячем сразу.
       setMessages((prev) => {
         const i = prev.findIndex((m) => m.id === id);
         if (i < 0) return prev;
@@ -1166,32 +1158,32 @@ export default function ChatSessionPage() {
         ];
       });
       markAtBottom(true);
-      runStream({ session_id: sessionId, retry_of: id, use_rag: true }, id, null);
+      runStream({ dialogue_id: dialogueId, retry_of: id, use_rag: true }, id, null);
     },
-    [sessionId, runStream, markAtBottom]
+    [dialogueId, runStream, markAtBottom]
   );
 
-  // ── Новый диалог из сайдбара ──────────────────────────────────────────────
+  // Новый диалог из сайдбара
 
   const newDialogue = async () => {
     try {
-      const data = await apiPost<{ success: boolean; session_id: string }>('/api/dialogues', {});
-      if (data.session_id) router.push(`/chat/${data.session_id}`);
+      const data = await apiPost<{ success: boolean; dialogue_id: string }>('/api/dialogues', {});
+      if (data.dialogue_id) router.push(`/chat/${data.dialogue_id}`);
     } catch (e) {
       setError(errMsg(e));
     }
   };
 
-  // ── Drag-and-drop файлов на панель чата ───────────────────────────────────
+  // Drag-and-drop файлов на панель чата
 
   const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer?.types || []).includes('Files');
 
-  const current = dialogues.find((d) => d.session_id === sessionId);
+  const current = dialogues.find((d) => d.id === dialogueId);
   const unreadCount = unreadIds.size;
 
-  // Плавающий индикатор (порт updateFloatingIndicator): во время генерации внизу —
-  // скрыт, отскроллили вверх — «Вернуться к ответу»; иначе счётчик непрочитанных
-  // либо обычная кнопка «вниз».
+  // Плавающий индикатор: во время генерации внизу -
+  // скрыт, отскроллили вверх - "Вернуться к ответу"; иначе счётчик непрочитанных
+  // либо обычная кнопка "вниз".
   const fab: 'none' | 'return' | 'unread' | 'down' = busy
     ? atBottom
       ? 'none'
@@ -1204,7 +1196,7 @@ export default function ChatSessionPage() {
 
   return (
     <div className="relative flex-1 max-w-6xl w-full mx-auto px-4 py-6 flex flex-col md:flex-row gap-4 md:gap-6 h-[calc(100vh-100px)]">
-      {/* ЛЕВАЯ ПАНЕЛЬ — список диалогов */}
+      {/* Левая панель - список диалогов */}
       <aside
         className={`${
           sidebarOpen ? 'flex' : 'hidden'
@@ -1269,15 +1261,14 @@ export default function ChatSessionPage() {
             </p>
           ) : (
             dialogues.map((d) => {
-              const active = d.session_id === sessionId;
+              const active = d.id === dialogueId;
               return (
                 <button
                   key={d.id}
                   type="button"
-                  disabled={!d.session_id}
                   onClick={() => {
                     setSidebarOpen(false);
-                    if (d.session_id) router.push(`/chat/${d.session_id}`);
+                    router.push(`/chat/${d.id}`);
                   }}
                   className={`w-full text-left px-3 py-2.5 rounded-xl transition flex flex-col gap-0.5 border ${
                     active
@@ -1320,7 +1311,7 @@ export default function ChatSessionPage() {
         </div>
       </aside>
 
-      {/* Язычок сворачивания панели (порт .chat-sidebar-toggle, chat.js:2394-2401).
+      {/* Язычок сворачивания панели.
           Единообразно с мессенджером: едет вместе с краем панели. */}
       <button
         type="button"
@@ -1334,7 +1325,7 @@ export default function ChatSessionPage() {
         {collapsed ? <PanelLeftOpen size={15} /> : <PanelLeftClose size={15} />}
       </button>
 
-      {/* ПРАВАЯ ПАНЕЛЬ — чат */}
+      {/* Правая панель - чат */}
       <section
         className="flex-1 min-w-0 bg-white border border-gray-100 rounded-2xl shadow-sm flex flex-col overflow-hidden relative"
         onDragEnter={(e) => {
@@ -1386,7 +1377,7 @@ export default function ChatSessionPage() {
               aria-label="Название диалога"
               className="w-full bg-transparent font-bold text-sm text-[#0f1c3f] placeholder-gray-300 focus:outline-none border-b border-transparent focus:border-[#2563eb] transition py-0.5"
             />
-            {/* Статус + бейдж непрочитанных (порт updateUnreadIndicator) */}
+            {/* Статус + бейдж непрочитанных */}
             <p className="text-[11px] text-gray-400 mt-0.5 flex items-center gap-1.5 flex-wrap">
               {loading ? (
                 'Загрузка диалога…'
@@ -1413,7 +1404,7 @@ export default function ChatSessionPage() {
           )}
         </div>
 
-        {/* Панель действий над выделенными сообщениями (порт #chatSelTools) */}
+        {/* Панель действий над выделенными сообщениями */}
         {selMode && selected.size > 0 && (
           <div className="h-12 px-3 flex items-center gap-2 bg-gradient-to-r from-[#1e40af]/95 to-[#2563eb]/95 text-white shadow-md shrink-0">
             <span className="text-xs font-semibold">
@@ -1497,12 +1488,12 @@ export default function ChatSessionPage() {
           </div>
         </div>
 
-        {/* Композер (перекрывает низ ленты — отступ держит useComposerPadding) */}
+        {/* Композер (перекрывает низ ленты - отступ держит useComposerPadding) */}
         <div
           ref={composerRef}
           className="absolute inset-x-0 bottom-0 z-10 p-3 md:p-4 bg-white border-t border-gray-50 flex flex-col gap-2"
         >
-          {/* Плавающий индикатор непрочитанных / возврата к ответу — над композером */}
+          {/* Плавающий индикатор непрочитанных / возврата к ответу - над композером */}
           {fab !== 'none' && (
             <button
               type="button"
@@ -1626,7 +1617,7 @@ export default function ChatSessionPage() {
             </button>
           </div>
 
-          {/* Строка статуса загрузки файла (порт .upload-status из chat.html) */}
+          {/* Строка статуса загрузки файла */}
           {upload && (
             <div className="flex flex-col gap-1.5 animate-fade-in" aria-live="polite">
               <span

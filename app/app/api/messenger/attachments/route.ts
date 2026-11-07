@@ -2,13 +2,12 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import { requireUser } from '@/lib/auth';
-import { asDict, asList, boolQuery, pyStr } from '@/lib/kb';
-import { intQuery, serializeFile, threadWhere, type FileRow } from '@/lib/messenger';
+import { asDict, boolQuery, pyStr } from '@/lib/kb';
+import { idQuery, notHiddenFor, serializeFile, threadWhere, type FileRow } from '@/lib/messenger';
 
-// Все вложения диалога: медиа, документы и ссылки — для модалки «Вложения».
-// Порт GET /api/messenger/attachments из backend/routes/messenger.py.
+// Все вложения диалога: медиа, документы и ссылки - для модалки "Вложения".
 //
-// Собеседник не проверяется — как и в Python: при некорректном peer_id выборка
+// Собеседник не проверяется: при некорректном peer_id выборка
 // просто окажется пустой.
 
 const LINK_RE = /https?:\/\/[^\s<>"']+/g;
@@ -19,14 +18,15 @@ export async function GET(request: NextRequest) {
   const me = gate.user.id;
 
   const query = request.nextUrl.searchParams;
-  const peer = intQuery(query.get('peer_id'), 'peer_id');
+  const peer = idQuery(query.get('peer_id'), 'peer_id');
   if ('response' in peer) return peer.response;
   const general = boolQuery(query.get('general'), 'general');
   if ('response' in general) return general.response;
 
-  const where = threadWhere(me, peer.value, general.value);
-  const rows = await prisma.user_messages.findMany({ where, orderBy: { id: 'desc' } });
-  const msgs = rows.filter((m) => !asList(m.hidden_for).includes(me));
+  const msgs = await prisma.user_messages.findMany({
+    where: { AND: [threadWhere(me, peer.value, general.value), notHiddenFor(me)] },
+    orderBy: { id: 'desc' },
+  });
 
   const ids = msgs.map((m) => m.id);
   const files: FileRow[] = ids.length
@@ -36,7 +36,7 @@ export async function GET(request: NextRequest) {
       })
     : [];
 
-  const links: { url: string; message_id: number }[] = [];
+  const links: { url: string; message_id: string }[] = [];
   const seen = new Set<string>();
   for (const m of msgs) {
     let text = m.content || '';

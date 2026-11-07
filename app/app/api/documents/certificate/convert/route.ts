@@ -13,15 +13,15 @@ import {
   uploadSuffix,
 } from '@/lib/docs/common';
 import { createCertificate } from '@/lib/docs/employee-certificate';
+import { extractWorkbookPhoto } from '@/lib/docs/workbook-image';
 
-// Б3: выгрузка «Справка на сотрудника» из 1С:ЗиК → читабельный docx.
-// Порт POST /api/documents/certificate/convert из backend/routes/documents.py.
+// Б3: выгрузка "Справка на сотрудника" из 1С:ЗиК -> читабельный docx.
 //
 // Старый .xls читает сам SheetJS, поэтому конвертация через LibreOffice
-// (services/parsers/office_convert.py) здесь не нужна.
+// здесь не нужна.
 
 const XL_EXT = new Set(['.xls', '.xlsx', '.xlsm']);
-/** Текст ошибки формата собирается так же, как в _save_upload_tmp. */
+/** Текст ошибки формата - как у остальных загрузок. */
 const XL_LIST = '.xls/.xlsm/.xlsx';
 
 export async function POST(request: NextRequest) {
@@ -42,19 +42,23 @@ export async function POST(request: NextRequest) {
 
   try {
     const rows = sheetRows(activeSheet(readWorkbook(data)));
-    const { rec, fields } = await createCertificate(gate.user.id, rows);
+    // Фото сотрудника из книги (для .xls - через LibreOffice); нет - пустая рамка.
+    const photo = await extractWorkbookPhoto(data, suffix);
+    const { rec, fields, warnings, photoUsed } = await createCertificate(gate.user.id, rows, photo);
 
     const preview: string[] = [];
     for (const name of ['Повышение квалификации', 'Работа по окончании ВУЗа']) {
       const val = fields[name];
       if (Array.isArray(val)) preview.push(`${name}: ${val.length} записей`);
     }
+    preview.push(photoUsed ? 'фото из выгрузки добавлено' : 'фото в выгрузке не найдено — оставлена рамка под фото');
     return NextResponse.json({
       success: true,
       document_id: rec.id,
       title: rec.title,
       ...docLinks(rec.id),
       summary: preview.join('; ') || 'справка сформирована',
+      warnings,
     });
   } catch (e) {
     if (e instanceof DocValueError) return badRequest(e.message);

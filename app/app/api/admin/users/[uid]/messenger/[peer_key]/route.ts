@@ -1,34 +1,15 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { isoUtc, prisma } from '@/lib/db';
+import { asUuid } from '@/lib/ids';
+import { parsePathId } from '@/lib/kb';
 import { badRequest, notFound, requireAdmin, shortName } from '@/lib/auth';
 
 // Переписка пользователя с конкретным собеседником (или общий чат).
-// Порт GET /api/admin/users/{uid}/messenger/{peer_key} (backend/routes/admin.py).
-
-function parseIntParam(raw: string): number | null {
-  return /^\s*[+-]?\d+\s*$/.test(raw) ? Number(raw) : null;
-}
-
-function invalidIntPath(name: string, input: string) {
-  return NextResponse.json(
-    {
-      detail: [
-        {
-          type: 'int_parsing',
-          loc: ['path', name],
-          msg: 'Input should be a valid integer, unable to parse string as an integer',
-          input,
-        },
-      ],
-    },
-    { status: 422 }
-  );
-}
 
 /**
- * forwarded_meta как объект. Пустой dict в Python ложен (`bool({}) is False`),
- * поэтому пустую мету считаем отсутствующей — от этого зависит флаг forwarded.
+ * forwarded_meta как объект. Пустую мету считаем отсутствующей - от этого
+ * зависит флаг forwarded.
  */
 function metaObj(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -44,18 +25,19 @@ export async function GET(
   if ('response' in gate) return gate.response;
 
   const { uid, peer_key: peerKey } = await params;
-  const userId = parseIntParam(uid);
-  if (userId === null) return invalidIntPath('uid', uid);
+  const parsed = parsePathId(uid, 'uid');
+  if ('response' in parsed) return parsed.response;
+  const userId = parsed.value;
 
   const owner = await prisma.users.findUnique({ where: { id: userId }, select: { id: true } });
   if (!owner) return notFound('Пользователь не найден');
 
-  // peer_key — либо числовой id собеседника, либо «general» (общий чат).
-  let where: { is_general: boolean; OR?: { sender_id: number; recipient_id: number }[] };
+  // peer_key - либо id собеседника (UUID), либо "general" (общий чат).
+  let where: { is_general: boolean; OR?: { sender_id: string; recipient_id: string }[] };
   if (peerKey === 'general') {
     where = { is_general: true };
   } else {
-    const peer = parseIntParam(peerKey);
+    const peer = asUuid(peerKey);
     if (peer === null) return badRequest('Некорректный собеседник');
     where = {
       is_general: false,
@@ -78,9 +60,9 @@ export async function GET(
     : [];
   const senderMap = new Map(senders.map((u) => [u.id, u]));
 
-  // Вложения: имена файлов по id сообщения (порядок — как вернёт БД).
+  // Вложения: имена файлов по id сообщения (порядок - как вернёт БД).
   const msgIds = rows.map((m) => m.id);
-  const fileMap = new Map<number, string[]>();
+  const fileMap = new Map<string, string[]>();
   if (msgIds.length) {
     const files = await prisma.user_message_files.findMany({
       where: { message_id: { in: msgIds } },
@@ -95,8 +77,8 @@ export async function GET(
   }
 
   const items: {
-    id: number;
-    sender_id: number;
+    id: string;
+    sender_id: string;
     sender_name: string;
     is_target: boolean;
     content: string;
@@ -105,8 +87,8 @@ export async function GET(
     created_at: string | null;
   }[] = [];
   for (const m of rows) {
-    // Служебные строки («закрепил(а)/открепил(а) сообщение») не показываем —
-    // это не часть переписки (иначе выглядят как «диалог с собой»).
+    // Служебные строки ("закрепил(а)/открепил(а) сообщение") не показываем -
+    // это не часть переписки (иначе выглядят как "диалог с собой").
     const meta = metaObj(m.forwarded_meta);
     if (meta?.system) continue;
     const u = senderMap.get(m.sender_id);

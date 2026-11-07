@@ -2,10 +2,11 @@ import 'server-only';
 import crypto from 'node:crypto';
 import { access, unlink } from 'node:fs/promises';
 import { Prisma } from '@prisma/client';
+import type { notification_kind } from '@prisma/client';
 import { prisma } from './db';
 import { broadcast, publish } from './events';
 import { asDict, pyBool } from './kb';
-import { baseName, cut, fromDocsPath, resolveInsideDocs, suffixOf } from './news';
+import { baseName, cut, resolveInsideDocs, suffixOf } from './news';
 import { peerKeyOf, recipientsOf, resolveInsideUpload } from './messenger';
 import { isNativelyParsable } from './parsers';
 import { deleteKbDocument, indexPendingFile, reindexContent } from './ml/indexer';
@@ -13,18 +14,15 @@ import { COLLECTION, qdrant } from './ml/qdrant';
 import { notifyUser, notifyUsers } from './push';
 
 // Фоновые подсистемы, у которых нет собственных HTTP-эндпоинтов.
-// Порт backend/services/tasks/scheduler.py + pii_cleanup.py + возобновление
-// зависших индексаций из lifespan (backend/app.py).
 //
-// АРХИТЕКТУРА. В Next.js нет процесса-демона: маршруты поднимаются лениво, а
-// модульный код исполняется только когда в него пришёл запрос. Поэтому джобы
-// живут здесь как обычные функции, а «таймер» вынесен наружу —
-// scripts/worker.mjs дёргает POST /api/cron/<job>. Это принципиально: джобы
-// исполняются ВНУТРИ процесса Next, а значит им доступны та же шина событий
-// (SSE-подписчики живут в памяти процесса — из отдельного процесса publish()
-// был бы пустышкой), тот же пул Prisma и та же очередь индексации.
+// В Next.js нет процесса-демона: маршруты поднимаются лениво, а модульный код
+// исполняется, только когда в него пришёл запрос. Поэтому джобы живут здесь
+// как обычные функции, а таймер вынесен наружу - scripts/worker.mjs дёргает
+// POST /api/cron/<job>. Джобы исполняются внутри процесса Next, поэтому им
+// доступны та же шина событий (SSE-подписчики живут в памяти процесса), тот
+// же пул Prisma и та же очередь индексации.
 
-// ── Логи ───────────────────────────────────────────────────────────────────
+// Логи
 
 function log(job: string, message: string): void {
   console.log(`[${new Date().toISOString()}] [SCHED:${job}] ${message}`);
@@ -47,25 +45,25 @@ async function exists(file: string): Promise<boolean> {
   }
 }
 
-// ── Системные уведомления ──────────────────────────────────────────────────
+// Системные уведомления
 
 /**
  * Создаёт запись уведомления, шлёт SSE и Web Push.
  *
- * Кому уходит push: адресное уведомление (`userId`) — своему пользователю;
- * широковещательное (события базы знаний) — редакторам БЗ и администраторам:
+ * Кому уходит push: адресное уведомление (`userId`) - своему пользователю;
+ * широковещательное (события базы знаний) - редакторам БЗ и администраторам:
  * только они могут что-то сделать с устаревшим документом, остальным это был
  * бы шум. В центре уведомлений такие записи по-прежнему видят все.
  */
 async function systemNotification(opts: {
-  kind: string;
+  kind: notification_kind;
   title: string;
   body: string;
-  userId?: number | null;
-  documentId?: number | null;
+  userId?: string | null;
+  documentId?: string | null;
   extra?: Prisma.InputJsonValue;
   url?: string;
-}): Promise<number> {
+}): Promise<string> {
   const note = await prisma.notifications.create({
     data: {
       kind: opts.kind,
@@ -91,7 +89,7 @@ async function systemNotification(opts: {
     notifyUser(opts.userId, payload);
   } else {
     // Та же роль, что пускает в редактор БЗ (см. requireKbEditor): редактор
-    // ИЛИ администратор — иначе на стенде без выделенных редакторов push
+    // или администратор - иначе на стенде без выделенных редакторов push
     // не ушёл бы никому.
     const editors = await prisma.users.findMany({
       where: { is_active: true, OR: [{ is_kb_editor: true }, { is_admin: true }] },
@@ -105,12 +103,10 @@ async function systemNotification(opts: {
   return note.id;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // Джоб 1: обновление веб-источников (каждые 30 минут)
-// ═══════════════════════════════════════════════════════════════════════════
 
-// Большинство сайтов блокирует «ботовые» UA, но часть справочных баз (Wikimedia
-// и др.) наоборот требует представиться роботом — пробуем оба, как в Python.
+// Большинство сайтов блокирует "ботовые" UA, но часть справочных баз (Wikimedia
+// и др.) наоборот требует представиться роботом - пробуем оба.
 const BROWSER_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
   '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
@@ -120,8 +116,8 @@ const WEB_TIMEOUT_MS = 30_000;
 
 /**
  * Декодирование ответа. fetch().text() всегда читает как UTF-8, а часть
- * ведомственных сайтов до сих пор отдаёт windows-1251 — без учёта charset
- * такой документ попал бы в базу знаний «кракозябрами».
+ * ведомственных сайтов до сих пор отдаёт windows-1251 - без учёта charset
+ * такой документ попал бы в базу знаний "кракозябрами".
  */
 function decodeHtml(buf: ArrayBuffer, contentType: string | null): string {
   const bytes = Buffer.from(buf);
@@ -138,7 +134,7 @@ function decodeHtml(buf: ArrayBuffer, contentType: string | null): string {
   }
 }
 
-/** Порт fetch_url: браузерный UA, при блокировке — повтор с бот-UA. */
+/** Браузерный UA, при блокировке - повтор с бот-UA. */
 async function fetchUrl(url: string): Promise<string> {
   const agents = [BROWSER_UA, BOT_UA];
   let lastError: Error | null = null;
@@ -191,7 +187,7 @@ function decodeEntities(s: string): string {
 const NAV_ROW_RE = /\|.*(?:<<|>>)|(?:<<|>>).*\|/;
 const PIPE_ONLY_RE = /^[\s|]+$/;
 
-/** Порт _clean_text: убирает навигационный мусор и лишние пустые строки. */
+/** Убирает навигационный мусор и лишние пустые строки. */
 function cleanText(text: string): string {
   if (!text) return '';
   const out: string[] = [];
@@ -208,15 +204,12 @@ function cleanText(text: string): string {
 }
 
 /**
- * HTML → текст. Аналог запасного экстрактора _bs4_extract: берём <article>/
- * <main> (иначе <body>), выбрасываем служебные блоки, закрывающие блочные теги
- * превращаем в переводы строк.
+ * HTML -> текст: берём <article>/<main> (иначе <body>), выбрасываем служебные
+ * блоки, закрывающие блочные теги превращаем в переводы строк.
  *
- * ОГРАНИЧЕНИЕ: в Python основной путь — trafilatura (отсеивает сайдбары, ленты
- * новостей, «читайте также»); в Node аналога нет, поэтому текст получается
- * «шумнее». На качество ответа влияет умеренно — чанки с меню коротки и почти
- * не набирают релевантность, — но для сложных порталов лучше оставить парсинг
- * источников за FastAPI.
+ * Сайдбары, ленты новостей и "читайте также" не отсеиваются, поэтому текст
+ * получается "шумнее". На качество ответа это влияет умеренно: чанки с меню
+ * коротки и почти не набирают релевантность.
  */
 function htmlToText(html: string): string {
   const cleaned = html.replace(/<!--[\s\S]*?-->/g, ' ').replace(DROP_RE, ' ');
@@ -233,7 +226,7 @@ function htmlToText(html: string): string {
   return cleanText(decodeEntities(withBreaks));
 }
 
-/** Порт _extract_title: <title> → <h1> → сам URL. */
+/** <title> -> <h1> -> сам URL. */
 function extractTitle(html: string, fallback: string): string {
   const raw =
     /<title[^>]*>([\s\S]*?)<\/title\s*>/i.exec(html)?.[1] ??
@@ -250,7 +243,7 @@ function sha256Text(text: string): string {
 }
 
 /**
- * Порт RAGIndexer.index_url: скачивает страницу, сравнивает хеш текста с уже
+ * Скачивает страницу, сравнивает хеш текста с уже
  * проиндексированным и при изменении полностью переиндексирует URL.
  * Возвращает true, если документ действительно переиндексирован.
  */
@@ -270,7 +263,7 @@ async function indexWebSource(job: string, url: string): Promise<boolean> {
 
   // Содержимое изменилось (или прошлая попытка не завершилась): старые версии
   // URL удаляем, иначе в базе знаний копятся дубли одной страницы. Прежний
-  // текст запоминаем — он нужен для diff в уведомлении об обновлении.
+  // текст запоминаем - он нужен для diff в уведомлении об обновлении.
   const stale = await prisma.kb_documents.findMany({
     where: { source_uri: url, source_type: 'web' },
     orderBy: { id: 'asc' },
@@ -295,14 +288,10 @@ async function indexWebSource(job: string, url: string): Promise<boolean> {
       file_hash: textHash,
       mime_type: 'text/html',
       status: 'pending',
-      // Значений по умолчанию в схеме нет — повторяем default'ы модели KBDocument.
-      priority: 2,
-      is_archived: false,
-      chunks_count: 0,
     },
   });
 
-  // reindexContent — единственная переносимая точка входа «текст → индекс»:
+  // reindexContent - единственная переносимая точка входа "текст -> индекс":
   // она держит общий с загрузкой файлов замок индексации (эмбеддинги грузят
   // все ядра) и сама выставляет статусы/чанки/BM25.
   await reindexContent(doc.id, text);
@@ -312,17 +301,17 @@ async function indexWebSource(job: string, url: string): Promise<boolean> {
     throw new Error(fresh?.error || 'индексация не завершилась');
   }
 
-  // reindexContent помечает документ как отредактированный вручную — для
+  // reindexContent помечает документ как отредактированный вручную - для
   // краулера это неверно: снимаем метку и фиксируем момент обхода.
   const extra = asDict(fresh.extra);
   delete extra.edited_at;
-  extra.crawled_at = new Date().toISOString();
+  extra.crawled_at = new Date().toISOString().slice(0, 19);
   await prisma.kb_documents.update({
     where: { id: doc.id },
     data: { extra: extra as Prisma.InputJsonValue },
   });
 
-  // Настоящее ОБНОВЛЕНИЕ (была проиндексированная версия с другим текстом) —
+  // Настоящее обновление (была проиндексированная версия с другим текстом) -
   // системное уведомление со ссылкой на diff.
   if (oldContent !== null && oldContent.trim() !== (fresh.content || '').trim()) {
     try {
@@ -362,39 +351,36 @@ async function refreshWebSourcesJob(job: string): Promise<string> {
       continue;
     }
 
-    let status: string;
+    // Итог обхода: статус - ok/error, текст ошибки - в отдельной колонке.
+    let result: { last_status: 'ok' | 'error'; last_error: string | null };
     try {
       const changed = await indexWebSource(job, s.url);
       if (changed) refreshed += 1;
-      status = 'ok';
+      result = { last_status: 'ok', last_error: null };
     } catch (e) {
       warn(job, `источник ${s.url} упал: ${errText(e)}`);
       failed += 1;
-      // last_status — VARCHAR(32): длинную ошибку БД просто не примет
-      // (в Python на этом падает сам джоб), поэтому режем.
-      status = cut(`error: ${errText(e)}`, 32);
+      result = { last_status: 'error', last_error: errText(e) || 'неизвестная ошибка' };
     }
 
     await prisma.kb_sources.update({
       where: { id: s.id },
-      data: { last_status: status, last_crawled_at: new Date() },
+      data: { ...result, last_crawled_at: new Date() },
     });
   }
 
   return `источников ${sources.length}, обновлено ${refreshed}, ошибок ${failed}, не по расписанию ${skipped}`;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Джоб 2: контроль актуальности документов (раз в сутки, первый — через 5 мин)
-// ═══════════════════════════════════════════════════════════════════════════
+// Джоб 2: контроль актуальности документов (раз в сутки, первый - через 5 мин)
 
-// Документы «живут 3–5 лет, обновление ≥1 раз/год» (протокол): старше N лет —
-// напоминание о проверке актуальности, повторно — не чаще раза в год.
+// Документы "живут 3-5 лет, обновление >=1 раз/год" (протокол): старше N лет -
+// напоминание о проверке актуальности, повторно - не чаще раза в год.
 const STALE_YEARS = 3;
 const RENOTIFY_DAYS = 365;
 const DAY_MS = 86_400_000;
 
-/** Дата без времени в UTC — аналог datetime.utcnow().date(). */
+/** Дата без времени в UTC - аналог datetime.utcnow().date(). */
 function utcToday(): Date {
   const now = new Date();
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
@@ -407,7 +393,7 @@ function ruDate(d: Date): string {
 }
 
 /** Проставляет is_archived=true на чанках документа в Qdrant (вне поиска). */
-async function syncArchivedPayload(docId: number): Promise<void> {
+async function syncArchivedPayload(docId: string): Promise<void> {
   await qdrant().setPayload(COLLECTION, {
     payload: { is_archived: true },
     filter: { must: [{ key: 'document_id', match: { value: docId } }] },
@@ -415,12 +401,12 @@ async function syncArchivedPayload(docId: number): Promise<void> {
   });
 }
 
-/**
- * Было ли по документу уведомление такого рода за последние `days` дней.
- * Нужно из-за одновременной работы Python-планировщика: пометка в extra
- * страхует от повтора внутри одного бэкенда, а эта проверка — между ними.
- */
-async function notifiedRecently(kind: string, docId: number, days: number): Promise<boolean> {
+/** Было ли по документу уведомление такого рода за последние `days` дней. */
+async function notifiedRecently(
+  kind: notification_kind,
+  docId: string,
+  days: number
+): Promise<boolean> {
   const since = new Date(Date.now() - days * DAY_MS);
   const found = await prisma.notifications.findFirst({
     where: { kind, document_id: docId, created_at: { gte: since } },
@@ -441,7 +427,7 @@ async function documentsFreshnessJob(job: string): Promise<string> {
 
   for (const doc of docs) {
     try {
-      // 1) Истёк срок действия → автоархив + уведомление
+      // 1) Истёк срок действия -> автоархив + уведомление
       if (doc.effective_to && doc.effective_to < today) {
         await prisma.kb_documents.update({
           where: { id: doc.id },
@@ -452,7 +438,7 @@ async function documentsFreshnessJob(job: string): Promise<string> {
         } catch (e) {
           warn(job, `Qdrant archive sync (doc ${doc.id}): ${errText(e)}`);
         }
-        // Уведомление могло уже уйти из Python — второй раз не шлём.
+        // Уведомление уже отправлено - второй раз не шлём.
         if (!(await notifiedRecently('doc_expired', doc.id, RENOTIFY_DAYS))) {
           await systemNotification({
             kind: 'doc_expired',
@@ -469,7 +455,7 @@ async function documentsFreshnessJob(job: string): Promise<string> {
         continue;
       }
 
-      // 2) Документ старше STALE_YEARS лет → напоминание о проверке
+      // 2) Документ старше STALE_YEARS лет -> напоминание о проверке
       const base = doc.effective_from ?? doc.created_at ?? null;
       if (!base) continue;
       const baseDay = Date.UTC(base.getUTCFullYear(), base.getUTCMonth(), base.getUTCDate());
@@ -494,8 +480,7 @@ async function documentsFreshnessJob(job: string): Promise<string> {
           'и загрузите свежую редакцию, либо укажите «действует до» в метаданных.',
         documentId: doc.id,
       });
-      // Пометка в том же поле и формате, что пишет Python, — иначе после
-      // отключения одного из бэкендов напоминание пришло бы повторно.
+      // Пометка о напоминании, чтобы оно не пришло повторно.
       extra.stale_notified_at = today.toISOString().slice(0, 10);
       await prisma.kb_documents.update({
         where: { id: doc.id },
@@ -511,14 +496,10 @@ async function documentsFreshnessJob(job: string): Promise<string> {
   return `проверено ${docs.length}, архивировано ${expired}, напоминаний ${stale}`;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Джоб 3: автоудаление ПДн (каждые 10 минут, первый — через 2 мин)
-// ═══════════════════════════════════════════════════════════════════════════
+// Джоб 3: автоудаление ПДн (каждые 10 минут, первый - через 2 мин)
 //
-// Требование ТЗ «персональные данные не храним». TTL — окно, за которое
-// пользователь успевает скачать нужный файл из сообщения (PII_TTL_MINUTES в
-// backend/services/documents/pii_policy.py). Значение обязано совпадать с
-// Python, поэтому по умолчанию берём то же самое.
+// Требование ТЗ "персональные данные не храним". TTL (PII_TTL_MINUTES) - окно,
+// за которое пользователь успевает скачать нужный файл из сообщения.
 
 const PII_TTL_MINUTES = Math.max(1, Number(process.env.PII_TTL_MINUTES || 60));
 
@@ -529,7 +510,7 @@ interface DeletedCounters {
   dialogues: string[];
 }
 
-function counterFor(map: Map<number, DeletedCounters>, userId: number): DeletedCounters {
+function counterFor(map: Map<string, DeletedCounters>, userId: string): DeletedCounters {
   let c = map.get(userId);
   if (!c) {
     c = { messages: 0, docs: 0, messenger: 0, dialogues: [] };
@@ -550,7 +531,7 @@ async function unlinkGenerated(filePath: string | null | undefined): Promise<voi
 async function cleanupChat(
   job: string,
   cutoff: Date,
-  deleted: Map<number, DeletedCounters>
+  deleted: Map<string, DeletedCounters>
 ): Promise<void> {
   const candidates = await prisma.chat_messages.findMany({
     where: { created_at: { lt: cutoff }, meta: { not: Prisma.DbNull } },
@@ -559,19 +540,19 @@ async function cleanupChat(
   const piiMsgs = candidates.filter((m) => pyBool(asDict(m.meta).pii_doc));
   if (!piiMsgs.length) return;
 
-  // Владелец сообщения = владелец диалога. Тянем цепочку session → dialogue
-  // одним запросом вместо db.get() на каждое сообщение.
-  const sessionIds = [...new Set(piiMsgs.map((m) => m.session_id))];
-  const sessions = await prisma.chat_sessions.findMany({
-    where: { id: { in: sessionIds } },
-    select: { id: true, dialogues: { select: { id: true, user_id: true } } },
+  // Владелец сообщения = владелец диалога - одним запросом вместо db.get()
+  // на каждое сообщение.
+  const dialogueIds = [...new Set(piiMsgs.map((m) => m.dialogue_id))];
+  const dialogues = await prisma.dialogues.findMany({
+    where: { id: { in: dialogueIds } },
+    select: { id: true, user_id: true },
   });
-  const ownerOf = new Map(sessions.map((s) => [s.id, s.dialogues]));
+  const ownerOf = new Map(dialogues.map((d) => [d.id, d]));
 
-  const affectedDialogues = new Set<number>();
+  const affectedDialogues = new Set<string>();
 
   for (const m of piiMsgs) {
-    const dlg = ownerOf.get(m.session_id) ?? null;
+    const dlg = ownerOf.get(m.dialogue_id) ?? null;
     const ownerId = dlg?.user_id ?? null;
     if (dlg) affectedDialogues.add(dlg.id);
 
@@ -587,27 +568,27 @@ async function cleanupChat(
       }
     }
 
-    // Вложения-выгрузки пользователя (исходники с ПДн) — файл и строка.
+    // Вложения-выгрузки пользователя (исходники с ПДн) - файл и строка.
     // FK стоит на CASCADE, но файлы с диска каскад не удалит.
-    const attachments = await prisma.session_documents.findMany({
+    const attachments = await prisma.chat_attachments.findMany({
       where: { message_id: m.id },
       select: { id: true, stored_path: true },
     });
     for (const sd of attachments) await unlinkGenerated(sd.stored_path);
     if (attachments.length) {
-      await prisma.session_documents.deleteMany({ where: { message_id: m.id } });
+      await prisma.chat_attachments.deleteMany({ where: { message_id: m.id } });
     }
 
     await prisma.chat_messages.delete({ where: { id: m.id } }).catch(() => undefined);
     if (ownerId) counterFor(deleted, ownerId).messages += 1;
   }
 
-  // Пустые диалоги (нет ни одного сообщения и нет черновика) — удаляем целиком
+  // Пустые диалоги (нет ни одного сообщения и нет черновика) - удаляем целиком
   for (const dlgId of affectedDialogues) {
     const dlg = await prisma.dialogues.findUnique({ where: { id: dlgId } });
     if (!dlg) continue;
     const hasMsg = await prisma.chat_messages.findFirst({
-      where: { chat_sessions: { dialogue_id: dlgId } },
+      where: { dialogue_id: dlgId },
       select: { id: true },
     });
     if (hasMsg === null && !(dlg.draft || '').trim()) {
@@ -622,7 +603,7 @@ async function cleanupChat(
 async function cleanupOrphanDocs(
   job: string,
   cutoff: Date,
-  deleted: Map<number, DeletedCounters>
+  deleted: Map<string, DeletedCounters>
 ): Promise<void> {
   const docs = await prisma.my_documents.findMany({
     where: { is_pii: true, created_at: { lt: cutoff } },
@@ -647,7 +628,7 @@ async function cleanupOrphanDocs(
 async function cleanupMessenger(
   job: string,
   cutoff: Date,
-  deleted: Map<number, DeletedCounters>
+  deleted: Map<string, DeletedCounters>
 ): Promise<void> {
   const candidates = await prisma.user_messages.findMany({
     where: { created_at: { lt: cutoff }, forwarded_meta: { not: Prisma.DbNull } },
@@ -657,8 +638,8 @@ async function cleanupMessenger(
   if (!piiMsgs.length) return;
 
   for (const m of piiMsgs) {
-    // peer_key считаем ДО удаления: получателей общего чата берём из БД.
-    const peerKeys = new Map<number, string>();
+    // peer_key считаем до удаления: получателей общего чата берём из БД.
+    const peerKeys = new Map<string, string>();
     for (const uid of await recipientsOf(m)) peerKeys.set(uid, peerKeyOf(m, uid));
 
     const files = await prisma.user_message_files.findMany({
@@ -680,7 +661,7 @@ async function cleanupMessenger(
 }
 
 /** Адресные системные уведомления затронутым пользователям. */
-async function notifyDeleted(deleted: Map<number, DeletedCounters>): Promise<void> {
+async function notifyDeleted(deleted: Map<string, DeletedCounters>): Promise<void> {
   for (const [userId, d] of deleted) {
     if (!userId) continue;
     const parts: string[] = [];
@@ -710,14 +691,14 @@ async function notifyDeleted(deleted: Map<number, DeletedCounters>): Promise<voi
 
 async function piiAutodeleteJob(job: string): Promise<string> {
   const cutoff = new Date(Date.now() - PII_TTL_MINUTES * 60_000);
-  const deleted = new Map<number, DeletedCounters>();
+  const deleted = new Map<string, DeletedCounters>();
 
   try {
     await cleanupChat(job, cutoff, deleted);
     await cleanupOrphanDocs(job, cutoff, deleted);
     await cleanupMessenger(job, cutoff, deleted);
   } catch (e) {
-    // Порт «except → warning»: частично удалённое всё равно надо разослать.
+    // Частично удалённое всё равно надо разослать.
     warn(job, `ошибка: ${errText(e)}`);
   }
 
@@ -739,16 +720,14 @@ async function piiAutodeleteJob(job: string): Promise<string> {
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Джоб 4: прогрев — возобновление зависших индексаций (при старте воркера)
-// ═══════════════════════════════════════════════════════════════════════════
+// Джоб 4: прогрев - возобновление зависших индексаций (при старте воркера)
 //
-// Порт куска lifespan из backend/app.py. BM25 в Next строится лениво (при
+// BM25 в Next строится лениво (при
 // первом поиске, см. lib/ml/bm25-index), а вот документы в статусе
-// pending/parsing после перезапуска не подхватывает никто — они висят вечно.
+// pending/parsing после перезапуска не подхватывает никто - они висят вечно.
 
 // Документ мог начать индексироваться прямо сейчас (загрузка в соседней
-// вкладке или на стороне Python). Трогаем только «остывшие» записи.
+// вкладке). Трогаем только "остывшие" записи.
 const STUCK_GRACE_MS = 15 * 60_000;
 
 async function resumeIndexingJob(job: string): Promise<string> {
@@ -761,7 +740,7 @@ async function resumeIndexingJob(job: string): Promise<string> {
   let failed = 0;
 
   for (const d of stuck) {
-    const file = d.source_type === 'local' && d.source_uri ? fromDocsPath(d.source_uri) : null;
+    const file = d.source_type === 'local' && d.source_uri ? d.source_uri : null;
     if (file && (await exists(file))) {
       if (isNativelyParsable(suffixOf(baseName(file)))) {
         log(job, `возобновляю индексацию документа ${d.id} (${d.title})`);
@@ -769,8 +748,8 @@ async function resumeIndexingJob(job: string): Promise<string> {
         resumed += 1;
         continue;
       }
-      // PDF/скан/старый Office разбирает только FastAPI-парсер: молча оставить
-      // документ в pending нельзя — редактор должен увидеть причину.
+      // Формат без встроенного парсера: молча оставить документ в pending нельзя -
+      // редактор должен увидеть причину.
       await prisma.kb_documents.update({
         where: { id: d.id },
         data: {
@@ -791,9 +770,7 @@ async function resumeIndexingJob(job: string): Promise<string> {
   return `зависших ${stuck.length}, возобновлено ${resumed}, помечено failed ${failed}`;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // Реестр джобов и защита от повторного запуска
-// ═══════════════════════════════════════════════════════════════════════════
 
 const JOBS = {
   'web-sources': refreshWebSourcesJob,
@@ -810,7 +787,7 @@ export function isJobName(value: string): value is JobName {
   return Object.prototype.hasOwnProperty.call(JOBS, value);
 }
 
-// Реестр запущенного — в globalThis: в dev Next перезагружает модули на каждое
+// Реестр запущенного - в globalThis: в dev Next перезагружает модули на каждое
 // изменение файла, и модульная переменная обнулилась бы вместе с флагом
 // (тот же приём, что у PrismaClient и шины событий).
 const globalForJobs = globalThis as unknown as { hrRunningJobs?: Set<string> };
@@ -818,7 +795,7 @@ const running: Set<string> = (globalForJobs.hrRunningJobs ??= new Set());
 
 export interface JobResult {
   ok: boolean;
-  /** true — джоб уже выполнялся, повторный запуск пропущен. */
+  /** true - джоб уже выполнялся, повторный запуск пропущен. */
   skipped?: boolean;
   detail: string;
   ms: number;
@@ -829,12 +806,10 @@ export interface JobResult {
  * эмбеддингами) легко переживает свой интервал, а два параллельных прохода
  * дали бы дубли документов и двойные уведомления.
  *
- * Защита действует в пределах ПРОЦЕССА — и этого достаточно: и воркер, и
- * внешний планировщик ходят в один и тот же инстанс Next через HTTP.
- * Межпроцессный лок в БД сделать нельзя (advisory-локи Postgres привязаны к
- * соединению, а Prisma отдаёт соединения из пула), поэтому от одновременной
- * работы Python-планировщика страхуют идемпотентные проверки на уровне записей:
- * пометка extra.stale_notified_at, флаг is_archived и поиск уже созданного
+ * Защита действует в пределах процесса, и этого достаточно: и воркер, и
+ * внешний планировщик ходят в один и тот же инстанс Next через HTTP. От
+ * повторов дополнительно страхуют проверки на уровне записей: пометка
+ * extra.stale_notified_at, флаг is_archived и поиск уже созданного
  * уведомления по (kind, document_id).
  */
 export async function runJob(name: JobName): Promise<JobResult> {

@@ -7,7 +7,7 @@ import { useAuth } from '@/components/auth-context';
 import { ErrorCallout, PageHeader, PageShell } from '@/components/ui';
 
 // Настройки учётной записи: то, чем пользователь действительно может управлять.
-// Данные профиля правит администратор — сюда вынесены push-уведомления и
+// Данные профиля правит администратор - сюда вынесены push-уведомления и
 // раскладка интерфейса, которая хранится в localStorage.
 
 type PushState = 'loading' | 'unsupported' | 'unavailable' | 'denied' | 'off' | 'on';
@@ -90,7 +90,7 @@ export default function SettingsPage() {
       const reg = await navigator.serviceWorker.ready;
       let sub = await reg.pushManager.getSubscription();
       if (!sub) {
-        // base64url → Uint8Array: applicationServerKey принимает только байты.
+        // base64url -> Uint8Array: applicationServerKey принимает только байты.
         const rawKey = atob(key.replace(/-/g, '+').replace(/_/g, '/'));
         const appKey = new Uint8Array([...rawKey].map((c) => c.charCodeAt(0)));
         sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: appKey });
@@ -131,7 +131,7 @@ export default function SettingsPage() {
       try {
         localStorage.removeItem(k);
       } catch {
-        /* приватный режим — молча пропускаем */
+        /* приватный режим - молча пропускаем */
       }
     });
     setLayoutReset(true);

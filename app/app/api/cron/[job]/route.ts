@@ -3,12 +3,11 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { isJobName, JOB_NAMES, runJob } from '@/lib/scheduler';
 
-// Внешняя точка запуска фоновых джобов (планировщик из
-// backend/services/tasks/scheduler.py). Своего демона в Next.js нет, поэтому
-// «тикает» кто-то снаружи: scripts/worker.mjs рядом с `next start` либо
+// Внешняя точка запуска фоновых джобов. Своего демона в Next.js нет, поэтому
+// "тикает" кто-то снаружи: scripts/worker.mjs рядом с `next start` либо
 // Планировщик заданий Windows / cron.
 //
-// Джоб выполняется ВНУТРИ процесса Next — это и есть смысл HTTP-точки: только
+// Джоб выполняется внутри процесса Next - это и есть смысл HTTP-точки: только
 // здесь доступны шина SSE (подписчики живут в памяти процесса), общий пул
 // Prisma и общий замок индексации.
 
@@ -24,7 +23,7 @@ function secretMatches(given: string, expected: string): boolean {
 export async function POST(request: NextRequest, { params }: Ctx) {
   const expected = (process.env.CRON_SECRET || '').trim();
   // Без секрета эндпоинт был бы открытым спусковым крючком для удаления данных
-  // (джоб ПДн), поэтому не «пропускаем проверку», а выключаем маршрут целиком.
+  // (джоб ПДн), поэтому не "пропускаем проверку", а выключаем маршрут целиком.
   if (!expected) {
     return NextResponse.json(
       { success: false, error: 'CRON_SECRET не задан — запуск джобов отключён' },

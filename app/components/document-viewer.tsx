@@ -12,9 +12,8 @@ import {
 import { apiGet, apiPatch, ApiError } from '@/lib/api';
 import { InfoCallout } from '@/components/ui';
 
-// Универсальный просмотрщик документов — порт templates/document_view.html.
-// Контекст берётся из app/api/view/* (те же поля, что отдавал FastAPI при
-// ?format=json). Отдельный адрес нужен потому, что путь самой страницы
+// Универсальный просмотрщик документов. Контекст берётся из app/api/view/*:
+// отдельный адрес нужен потому, что путь самой страницы
 // (/kb/documents/[id]/view и т.п.) уже занят Next-страницей.
 
 type ViewMode =
@@ -40,14 +39,14 @@ interface ViewCtx {
   original_url?: string;
   text_url?: string;
   source_url?: string;
-  kb_doc_id?: number;
+  kb_doc_id?: string;
   can_edit?: boolean;
   original_pdf?: boolean;
   original_image?: boolean;
 }
 
 // Глобальные стили просмотрщика: оформление markdown-HTML (Tailwind preflight
-// сбрасывает всё), diff-классы (совпадают с легаси), docx-preview и таблицы xlsx.
+// сбрасывает всё), diff-классы, docx-preview и таблицы xlsx.
 const VIEWER_CSS = `
 .dv-md h1,.dv-md h2,.dv-md h3,.dv-md h4,.dv-md h5,.dv-md h6{color:#0f1c3f;line-height:1.3;margin:1.3em 0 .5em;font-weight:700}
 .dv-md :first-child{margin-top:0}
@@ -66,11 +65,11 @@ const VIEWER_CSS = `
 .dv-md table{border-collapse:collapse;width:100%;margin:1em 0;font-size:.95em}
 .dv-md th,.dv-md td{border:1px solid #e5e7eb;padding:7px 10px;text-align:left;vertical-align:top}
 .dv-md th{background:#f8fafc;font-weight:700}
-/* Diff (классы как в легаси document_view.html) */
+/* Diff */
 .dvd-line{white-space:pre-wrap;word-break:break-word;min-height:1.2em;padding:1px 6px;border-radius:3px}
 .dvd-add{background:#fef2f2;color:#b91c1c}
 .dvd-del{background:#f8fafc;color:#94a3b8;text-decoration:line-through}
-/* docx-preview: фон-обёртка + «листы»; битые EMF/WMF-картинки прячем */
+/* docx-preview: фон-обёртка + "листы"; битые EMF/WMF-картинки прячем */
 .docx-wrapper{background:#f4f7fc;padding:32px 16px 48px}
 .docx-wrapper>section.docx{background:#fff;box-shadow:0 4px 24px rgba(15,23,42,.12);margin-bottom:28px}
 .docx-wrapper img[src^="data:image/x-emf"],.docx-wrapper img[src^="data:image/x-wmf"]{display:none}
@@ -84,8 +83,8 @@ const VIEWER_CSS = `
 .dv-sheet tr:first-child td{background:#f9fafb;font-weight:600}
 `;
 
-// Страница-обёртка → эндпоинт контекста. Пять пар, ровно как пять view-роутов
-// в backend/routes/pages.py; basePath приходит из app/**/view/page.tsx.
+// Страница-обёртка -> эндпоинт контекста. Пять пар, по одной на view-роут;
+// basePath приходит из app/**/view/page.tsx.
 const VIEW_ENDPOINTS: Record<string, string> = {
   'kb/documents': 'kb-document',
   'kb/templates': 'kb-template',
@@ -130,7 +129,7 @@ function StateBox({
   );
 }
 
-/** Кнопка-ссылка «Скачать файл» для empty-состояний. */
+/** Кнопка-ссылка "Скачать файл" для empty-состояний. */
 function DownloadLink({ href, label = 'Скачать файл' }: { href: string; label?: string }) {
   return (
     <a
@@ -146,7 +145,7 @@ function DownloadLink({ href, label = 'Скачать файл' }: { href: strin
 // Модалка правки извлечённого текста (kb-документы, can_edit)
 // ---------------------------------------------------------------------------
 
-function EditModal({ docId, onClose }: { docId: number; onClose: () => void }) {
+function EditModal({ docId, onClose }: { docId: string; onClose: () => void }) {
   const [text, setText] = useState('');
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -309,7 +308,7 @@ export default function DocumentViewer({ basePath }: { basePath: string }) {
         const data = (await res.json()) as ViewCtx;
         if (cancelled) return;
         if (data.mode === 'pdf') {
-          // Нативный просмотрщик PDF браузера — без обёртки приложения
+          // Нативный просмотрщик PDF браузера - без обёртки приложения
           window.location.replace(data.inline_url || data.download_url);
         }
         setCtx(data);
@@ -322,7 +321,7 @@ export default function DocumentViewer({ basePath }: { basePath: string }) {
     };
   }, [basePath, attempt]);
 
-  // 2. Рендер docx через docx-preview (с вотчдогом 20 с, как в легаси)
+  // 2. Рендер docx через docx-preview (с вотчдогом 20 с)
   useEffect(() => {
     if (!ctx || ctx.mode !== 'docx' || !ctx.inline_url) return;
     const root = docxRootRef.current;
@@ -331,7 +330,7 @@ export default function DocumentViewer({ basePath }: { basePath: string }) {
     let finished = false;
     setDocxState('loading');
     setDocxError('');
-    // Вотчдог: сложный документ может рендериться бесконечно — через 20 с
+    // Вотчдог: сложный документ может рендериться бесконечно - через 20 с
     // предлагаем текстовую версию. Успешное завершение позже снимает фолбэк.
     const watchdog = setTimeout(() => {
       if (!finished && !cancelled) {
@@ -361,7 +360,7 @@ export default function DocumentViewer({ basePath }: { basePath: string }) {
       });
       finished = true;
       if (cancelled) return;
-      // EMF/WMF браузер не отображает — прячем битые картинки, чтобы не
+      // EMF/WMF браузер не отображает - прячем битые картинки, чтобы не
       // оставались огромные пустые области (data-EMF скрыт ещё и через CSS).
       root.querySelectorAll('img').forEach((img) => {
         const drop = () => {
@@ -537,7 +536,7 @@ export default function DocumentViewer({ basePath }: { basePath: string }) {
               </StateBox>
             )}
             {/* Контейнер рендера остаётся в DOM: если вотчдог сработал, а рендер
-                всё же завершился — состояние станет done и документ появится */}
+                всё же завершился - состояние станет done и документ появится */}
             <div ref={docxRootRef} className={docxState === 'failed' ? 'hidden' : ''} />
           </div>
         );
@@ -634,7 +633,7 @@ export default function DocumentViewer({ basePath }: { basePath: string }) {
     <div className="flex-1 w-full pb-10">
       <style>{VIEWER_CSS}</style>
 
-      {/* Плавающая «пилюля»: название + скачать + править текст */}
+      {/* Плавающая "пилюля": название + скачать + править текст */}
       {showPill && (
         <div className="sticky top-3 z-40 flex justify-center px-4 pt-3">
           <div className="flex items-center gap-2.5 bg-white/95 backdrop-blur border border-gray-100 shadow-md rounded-full pl-5 pr-2 py-1.5 max-w-full">

@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
 import { currentUser, userJson } from '@/lib/auth';
 
-// Текущий пользователь. Порт GET /api/auth/me из backend/routes/auth.py.
-// Без сессии отвечает 401 и {"user": null} — фронтенд на это опирается.
+// Текущий пользователь.
+// Без сессии отвечает 401 и {"user": null} - фронтенд на это опирается.
 
 export async function GET() {
   const user = await currentUser();

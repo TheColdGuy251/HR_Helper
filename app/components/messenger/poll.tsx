@@ -5,14 +5,13 @@ import type { PollData, PollVoter, PollPayload } from './types';
 import { plural } from './types';
 
 // Голосования мессенджера: карточка в сообщении + модалки результатов и создания.
-// Формы данных — по HR Helper/routes/messenger.py (/poll, /poll/vote, _poll_of).
 
-/** «N голос/голоса/голосов». */
+/** "N голос/голоса/голосов". */
 function votesLabel(n: number): string {
   return `${n} ${plural(n, 'голос', 'голоса', 'голосов')}`;
 }
 
-/** Аватар проголосовавшего — инициалы в кружке (порт voterAvatar). */
+/** Аватар проголосовавшего - инициалы в кружке. */
 function VoterAvatar({
   voter,
   onDark = false,
@@ -40,7 +39,7 @@ function VoterAvatar({
   );
 }
 
-/** Модалка результатов: кто за что проголосовал (порт pollResultsModal). */
+/** Модалка результатов: кто за что проголосовал. */
 export function PollResultsModal({ poll, onClose }: { poll: PollData; onClose: () => void }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -56,7 +55,7 @@ export function PollResultsModal({ poll, onClose }: { poll: PollData; onClose: (
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
-      // Модалка живёт внутри пузыря сообщения — гасим всплытие, чтобы клики
+      // Модалка живёт внутри пузыря сообщения - гасим всплытие, чтобы клики
       // не запускали долгое нажатие/контекстное меню сообщения.
       onPointerDown={(e) => e.stopPropagation()}
       onContextMenu={(e) => e.stopPropagation()}
@@ -130,7 +129,7 @@ export function PollResultsModal({ poll, onClose }: { poll: PollData; onClose: (
   );
 }
 
-/** Карточка голосования внутри пузыря. onDark — внутри тёмного «своего» пузыря. */
+/** Карточка голосования внутри пузыря. onDark - внутри тёмного "своего" пузыря. */
 export function PollView({
   poll,
   onDark,
@@ -138,7 +137,7 @@ export function PollView({
 }: {
   poll: PollData;
   onDark: boolean;
-  onVote: (optionId: number) => void;
+  onVote: (optionId: string) => void;
 }) {
   const [showResults, setShowResults] = useState(false);
   const sub = [votesLabel(poll.total_votes)];

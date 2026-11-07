@@ -6,34 +6,32 @@ import { after } from 'next/server';
 import { prisma } from './db';
 import { DOCS_DIR } from './news';
 
-// Web Push — системные уведомления браузера/ОС, когда вкладка закрыта (SSE
-// работает только при открытом соединении). Порт backend/services/push.py.
+// Web Push - системные уведомления браузера/ОС, когда вкладка закрыта (SSE
+// работает только при открытом соединении).
 //
-// ОТЛИЧИЕ ОТ PYTHON: ключи здесь только ЧИТАЮТСЯ, но не генерируются. Пара
-// VAPID должна быть ОДНА на оба бэкенда — иначе подписки, выданные под ключом
-// Python, перестанут приниматься при отправке из Next (браузер шифрует
-// сообщение под тот applicationServerKey, с которым подписался). Генерация в
-// двух процессах неизбежно привела бы к гонке за файл db/vapid.json.
+// Ключи VAPID здесь только читаются, но не генерируются: подписки браузеров
+// выданы под существующим ключом (браузер шифрует сообщение под тот
+// applicationServerKey, с которым подписался), и новый ключ их бы обнулил.
 
-// backend/db/vapid.json. DOCS_DIR — это backend/docs, поэтому поднимаемся на
-// уровень выше: отдельной константы BACKEND_DIR из lib/news не экспортируется.
+// Ключи лежат в backend/db/vapid.json. DOCS_DIR - это backend/docs, поэтому
+// поднимаемся на уровень выше.
 const VAPID_FILE = path.resolve(DOCS_DIR, '..', 'db', 'vapid.json');
 
 interface Vapid {
   /** applicationServerKey: base64url несжатой точки (65 байт). */
   publicKey: string;
-  /** Приватный ключ в виде base64url-скаляра (32 байта) — формат web-push. */
+  /** Приватный ключ в виде base64url-скаляра (32 байта) - формат web-push. */
   privateKey: string;
   subject: string;
 }
 
-// undefined — ещё не читали, null — ключей нет (push отключён).
+// undefined - ещё не читали, null - ключей нет (push отключён).
 let cached: Vapid | null | undefined;
 
 /**
- * PKCS8-PEM (его пишет Python через cryptography) → пара base64url-строк,
- * которые ждёт web-push. Библиотека принимает ТОЛЬКО «сырые» ключи, поэтому
- * PEM разбираем через node:crypto и берём из JWK скаляр d и точку x/y.
+ * PKCS8-PEM -> пара base64url-строк, которые ждёт web-push. Библиотека
+ * принимает только "сырые" ключи, поэтому PEM разбираем через node:crypto и
+ * берём из JWK скаляр d и точку x/y.
  */
 function fromPem(pem: string): { publicKey: string; privateKey: string } | null {
   try {
@@ -44,7 +42,7 @@ function fromPem(pem: string): { publicKey: string; privateKey: string } | null 
     };
     if (!jwk.d || !jwk.x || !jwk.y) return null;
     const point = Buffer.concat([
-      Buffer.from([4]), // 0x04 — несжатая форма, как X962 UncompressedPoint в Python
+      Buffer.from([4]), // 0x04 - несжатая форма точки
       Buffer.from(jwk.x, 'base64url'),
       Buffer.from(jwk.y, 'base64url'),
     ]);
@@ -54,7 +52,7 @@ function fromPem(pem: string): { publicKey: string; privateKey: string } | null 
   }
 }
 
-/** Аналог _load(): сначала переменные окружения, затем файл, созданный Python. */
+/** Ключи: сначала переменные окружения, затем файл vapid.json. */
 function load(): Vapid | null {
   if (cached !== undefined) return cached;
 
@@ -63,8 +61,7 @@ function load(): Vapid | null {
   const envPrivate = (process.env.VAPID_PRIVATE_KEY || '').trim();
 
   if (envPublic && envPrivate) {
-    // В backend/.env приватный ключ лежит в PEM (его понимает pywebpush).
-    // Тот же .env могут переиспользовать здесь — принимаем оба формата.
+    // Приватный ключ в .env бывает и в PEM - принимаем оба формата.
     const converted = envPrivate.includes('BEGIN') ? fromPem(envPrivate) : null;
     cached = { publicKey: envPublic, privateKey: converted?.privateKey ?? envPrivate, subject };
     return cached;
@@ -83,15 +80,15 @@ function load(): Vapid | null {
       subject,
     };
   } catch (e) {
-    // Файла нет (Python ни разу не стартовал) или он испорчен — push просто
-    // недоступен: клиент увидит available=false и не станет подписываться.
+    // Файла нет или он испорчен - push просто недоступен: клиент увидит
+    // available=false и не станет подписываться.
     console.warn(`[PUSH] VAPID init не удался (${VAPID_FILE}): ${String(e)}`);
     cached = null;
   }
   return cached;
 }
 
-// Тип минимально описывает то, что реально вызывается: web-push — CommonJS,
+// Тип минимально описывает то, что реально вызывается: web-push - CommonJS,
 // и форма namespace-объекта различается между сборками (default vs корень).
 interface WebPushLike {
   sendNotification(
@@ -108,9 +105,8 @@ interface WebPushLike {
 let webpushModule: Promise<WebPushLike | null> | undefined;
 
 /**
- * Ленивая загрузка web-push. Как и pywebpush в Python, пакет считается
- * ОПЦИОНАЛЬНЫМ: если его нет в node_modules, всё тихо деградирует до тоста в
- * открытой вкладке, а не роняет маршрут динамическим импортом.
+ * Ленивая загрузка web-push. Пакет опциональный: если его нет в node_modules,
+ * всё тихо деградирует до тоста в открытой вкладке, а не роняет маршрут.
  */
 function loadWebpush(): Promise<WebPushLike | null> {
   if (!webpushModule) {
@@ -129,7 +125,7 @@ export function publicKey(): string | null {
   return load()?.publicKey || null;
 }
 
-/** Порт is_available(): ключ есть И библиотека отправки доступна. */
+/** Ключ есть И библиотека отправки доступна. */
 export async function isAvailable(): Promise<boolean> {
   if (!publicKey()) return false;
   return (await loadWebpush()) !== null;
@@ -139,12 +135,12 @@ export interface PushPayload {
   title: string;
   body: string;
   url?: string;
-  /** tag схлопывает повторные уведомления одного диалога (см. public/sw.js). */
+  /** tag схлопывает повторные уведомления одного диалога. */
   tag?: string;
 }
 
-/** Собственно отправка по всем подпискам пользователя. Порт _send(). */
-async function send(userId: number, payload: PushPayload): Promise<void> {
+/** Собственно отправка по всем подпискам пользователя. */
+async function send(userId: string, payload: PushPayload): Promise<void> {
   const vapid = load();
   if (!vapid?.privateKey) return;
   const webpush = await loadWebpush();
@@ -154,10 +150,10 @@ async function send(userId: number, payload: PushPayload): Promise<void> {
   if (!subs.length) return;
 
   const body = JSON.stringify(payload);
-  const dead: number[] = [];
+  const dead: string[] = [];
 
-  // Python шлёт последовательно в отдельном потоке; здесь параллельно — все
-  // вызовы сетевые, а пользователю обычно принадлежит 1–3 подписки.
+  // Отправляем параллельно: все вызовы сетевые, а у пользователя обычно 1-3
+  // подписки.
   await Promise.all(
     subs.map(async (sub) => {
       try {
@@ -170,13 +166,13 @@ async function send(userId: number, payload: PushPayload): Promise<void> {
               publicKey: vapid.publicKey,
               privateKey: vapid.privateKey,
             },
-            timeout: 10_000, // timeout=10 в pywebpush — секунды, здесь миллисекунды
+            timeout: 10_000, // тайм-аут в миллисекундах
           }
         );
       } catch (e) {
         const status = (e as { statusCode?: number } | null)?.statusCode;
         if (status === 404 || status === 410) {
-          // Подписка мертва (вкладку удалили / браузер переустановили) — иначе
+          // Подписка мертва (вкладку удалили / браузер переустановили) - иначе
           // такие endpoint'ы копятся и каждая отправка тратит на них таймаут.
           dead.push(sub.id);
         } else {
@@ -192,13 +188,12 @@ async function send(userId: number, payload: PushPayload): Promise<void> {
 }
 
 /**
- * Аналог notify_user: шлёт push всем подпискам пользователя, НЕ блокируя
- * вызывающего. В Python это daemon-поток; в Next для этого есть after() —
- * он продлевает жизнь запроса до завершения задачи. Вне контекста запроса
- * (крон-джобы планировщика) after() бросает исключение — тогда работаем
- * обычным «висящим» промисом: процесс воркера всё равно живёт дальше.
+ * Шлёт push всем подпискам пользователя, не блокируя вызывающего: after()
+ * продлевает жизнь запроса до завершения задачи. Вне контекста запроса
+ * (крон-джобы планировщика) after() бросает исключение - тогда работаем
+ * обычным "висящим" промисом: процесс воркера всё равно живёт дальше.
  */
-export function notifyUser(userId: number | null | undefined, payload: PushPayload): void {
+export function notifyUser(userId: string | null | undefined, payload: PushPayload): void {
   if (!userId) return;
   const task = () =>
     send(userId, payload).catch((e) => {
@@ -212,6 +207,6 @@ export function notifyUser(userId: number | null | undefined, payload: PushPaylo
 }
 
 /** Тот же push нескольким получателям (системные уведомления планировщика). */
-export function notifyUsers(userIds: Iterable<number>, payload: PushPayload): void {
+export function notifyUsers(userIds: Iterable<string>, payload: PushPayload): void {
   for (const id of new Set(userIds)) notifyUser(id, payload);
 }

@@ -6,18 +6,16 @@ import { embed, embedOne } from './embeddings';
 import type { ChatMessage } from './llm';
 
 // Матчинг свободного текста по курируемым FAQ отдела кадров (А2/А3).
-// Порт матчинг-части services/rag/faq.py; импорт docx-таблиц остаётся в
-// FastAPI (POST /api/kb/faq/import), Next только читает faq_entries.
 //
 // Матчинг двухступенчатый и полностью локальный (эмбеддинги, без LLM):
-//   1) запрос → лучшая группа по вариантам формулировок;
-//   2) если группа ветвится — сразу под-ветка (когда запрос её уже называет),
+//   1) запрос -> лучшая группа по вариантам формулировок;
+//   2) если группа ветвится - сразу под-ветка (когда запрос её уже называет),
 //      иначе сводный контекст из всех под-ответов.
 
-// Порог «запрос совпал с FAQ-блоком»: варианты — короткие фразы, поэтому
+// Порог "запрос совпал с FAQ-блоком": варианты - короткие фразы, поэтому
 // требуем заметно большей близости, чем у intent-прототипов (0.50).
 const GROUP_HIT = 0.7;
-// Порог выбора под-ветки по метке (метки ещё короче — чуть мягче + substring).
+// Порог выбора под-ветки по метке (метки ещё короче - чуть мягче + substring).
 const OPTION_HIT = 0.55;
 // Буст при полном вхождении лемм варианта в запрос.
 const LEMMA_BOOST = 0.88;
@@ -30,9 +28,9 @@ function norm(s: string | null | undefined): string {
 }
 
 /**
- * Леммы содержательных слов (≥4 букв) — тот же нормализатор, что у BM25.
- * Если ВСЕ леммы варианта есть в запросе, концепт назван явно и матч бустится
- * («поехать в командировку» ⊇ «командировка», хотя эмбеддинги дают <0.7).
+ * Леммы содержательных слов (>=4 букв) - тот же нормализатор, что у BM25.
+ * Если все леммы варианта есть в запросе, концепт назван явно и матч бустится
+ * ("поехать в командировку" содержит "командировка", хотя эмбеддинги дают <0.7).
  */
 function lemmas(text: string): Set<string> {
   const out = new Set<string>();
@@ -51,9 +49,9 @@ function optionFirst(label: string | null | undefined): string {
   return norm((label || '').split(' / ')[0]);
 }
 
-/** Запрос совпал с конкретной FAQ-записью — её ответ идёт в контекст LLM. */
+/** Запрос совпал с конкретной FAQ-записью - её ответ идёт в контекст LLM. */
 export interface FaqHit {
-  entry_id: number;
+  entry_id: string;
   block: string;
   answer: string;
   doc_refs: string[];
@@ -64,7 +62,7 @@ export interface FaqHit {
 }
 
 interface EntryView {
-  id: number;
+  id: string;
   block: string;
   answer: string;
   doc_refs: string[];
@@ -81,7 +79,7 @@ interface Phrase {
 }
 
 interface OptionPhrase extends Phrase {
-  entryId: number;
+  entryId: string;
 }
 
 interface Group {
@@ -103,30 +101,32 @@ async function load(): Promise<Map<string, Group>> {
   await initStemmer(); // леммы вариантов должны считаться той же морфологией
   const rows = await prisma.faq_entries.findMany({
     where: { is_active: true },
-    orderBy: [{ group_key: 'asc' }, { position: 'asc' }],
+    include: { group: true },
+    orderBy: [{ group: { key: 'asc' } }, { position: 'asc' }],
   });
 
   const byGroup = new Map<string, typeof rows>();
   for (const e of rows) {
-    const list = byGroup.get(e.group_key);
+    const list = byGroup.get(e.group_id);
     if (list) list.push(e);
-    else byGroup.set(e.group_key, [e]);
+    else byGroup.set(e.group_id, [e]);
   }
 
+  // block и clarify_question - атрибуты группы (faq_groups), остальное - записи.
   const view = (e: (typeof rows)[number]): EntryView => ({
     id: e.id,
-    block: e.block,
+    block: e.group.block,
     answer: e.answer || '',
     doc_refs: asStringList(e.doc_refs),
     contact: e.contact,
-    clarify_question: e.clarify_question,
+    clarify_question: e.group.clarify_question,
     option_label: e.option_label,
     position: e.position,
   });
 
   const groups = new Map<string, Group>();
-  // Собираем все фразы одним планом — эмбеддинги считаются батчами.
-  const plan: { gk: string; kind: 'variant' | 'option'; entryId: number; text: string }[] = [];
+  // Собираем все фразы одним планом - эмбеддинги считаются батчами.
+  const plan: { gk: string; kind: 'variant' | 'option'; entryId: string; text: string }[] = [];
 
   for (const [gk, entries] of byGroup) {
     const head = entries.find((x) => x.position === 0) ?? entries[0];
@@ -144,7 +144,7 @@ async function load(): Promise<Map<string, Group>> {
   }
 
   // Нижний регистр перед эмбеддингом: энкодер регистро-зависим, иначе
-  // «Как дела?»/«как дела?» дают разные векторы и разный вердикт FAQ.
+  // "Как дела?"/"как дела?" дают разные векторы и разный вердикт FAQ.
   const vecs = plan.length ? await embed(plan.map((p) => p.text.toLowerCase()), true) : [];
   plan.forEach((p, i) => {
     const grp = groups.get(p.gk);
@@ -185,7 +185,7 @@ function matchOption(
 ): FaqHit | null {
   if (!grp.subs.length) return null;
   const ql = q.toLowerCase();
-  let bestId: number | null = null;
+  let bestId: string | null = null;
   let bestScore = 0;
 
   for (const opt of grp.optVecs) {
@@ -205,8 +205,8 @@ function matchOption(
 
   let rew: string | null = null;
   if (rewritten) {
-    // Исходный вопрос (до уточнения) + выбранная ветка → нормальный поисковый
-    // запрос для KB вместо односложного «увольнение».
+    // Исходный вопрос (до уточнения) + выбранная ветка -> нормальный поисковый
+    // запрос для KB вместо односложного "увольнение".
     let prevUser: string | null = null;
     for (let i = (history?.length ?? 0) - 1; i >= 0; i--) {
       const m = (history as ChatMessage[])[i];
@@ -255,7 +255,7 @@ export async function matchFaq(
     for (const p of grp.phrases) {
       let score = cosine(qv, p.vec);
       const tl = p.text.toLowerCase();
-      // Точное вхождение формулировки — сильный сигнал независимо от эмбеддинга
+      // Точное вхождение формулировки - сильный сигнал независимо от эмбеддинга
       if (tl.length >= 6 && (ql.includes(tl) || tl.includes(ql))) score = Math.max(score, 0.9);
       // Все содержательные леммы варианта названы в запросе
       else if (p.lems.size && isSubset(p.lems, qLems)) score = Math.max(score, LEMMA_BOOST);
@@ -287,7 +287,7 @@ export async function matchFaq(
     return direct;
   }
 
-  // Иначе — сводный контекст из всех под-ответов (уточняющий выбор делают
+  // Иначе - сводный контекст из всех под-ответов (уточняющий выбор делают
   // кнопки быстрого набора на /chat; бот не перехватывает диалог вопросом,
   // LLM сама раскроет подходящие ветки в ответе).
   const parts: string[] = [];

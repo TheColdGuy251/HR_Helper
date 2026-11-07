@@ -3,10 +3,9 @@ import { parsePathId } from '@/lib/kb';
 import { messengerFileView, viewResponse } from '@/lib/file-view';
 
 /**
- * Контекст просмотра файла из мессенджера (pdf/docx/xlsx/текст — как в /kb).
- * Порт GET /messenger/files/{file_id}/view?format=json из backend/routes/pages.py.
+ * Контекст просмотра файла из мессенджера (pdf/docx/xlsx/текст - как в /kb).
  *
- * Прав доступа к конкретному файлу здесь нет — как и в Python: страница
+ * Прав доступа к конкретному файлу здесь нет: страница
  * требует только авторизации, а участие в диалоге проверяет уже отдача байтов
  * (/api/messenger/files/{id}). Расхождение сохранено сознательно, чтобы
  * поведение совпадало 1-в-1; см. отчёт по переносу.

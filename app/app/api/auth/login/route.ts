@@ -5,7 +5,6 @@ import { badRequest, userJson, verifyPassword, withSession } from '@/lib/auth';
 import type { CurrentUser } from '@/lib/auth';
 
 // Вход по логину или корпоративной почте.
-// Порт POST /api/auth/login из backend/routes/auth.py (api_login).
 
 export async function POST(request: NextRequest) {
   let body: { username?: unknown; password?: unknown };
@@ -21,8 +20,8 @@ export async function POST(request: NextRequest) {
     return badRequest('Укажите логин и пароль');
   }
 
-  // Ищем по логину или почте; если ввели «ivanov@tyuiu.ru», а в БД логин
-  // «ivanov» — пробуем локальную часть адреса (как в бэкенде).
+  // Ищем по логину или почте; если ввели "ivanov@tyuiu.ru", а в БД логин
+  // "ivanov" - пробуем локальную часть адреса (как в бэкенде).
   let user = await prisma.users.findFirst({
     where: { OR: [{ username }, { email: username }] },
   });

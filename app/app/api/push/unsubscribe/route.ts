@@ -5,8 +5,7 @@ import { requireUser } from '@/lib/auth';
 import { validationError } from '@/lib/news';
 
 // Удаление Web Push-подписки.
-// Порт POST /api/push/unsubscribe из backend/routes/push.py.
-// Тело объявлено как Body(..., embed=True) → ждём {"endpoint": "..."}.
+// Тело объявлено как Body(..., embed=True) -> ждём {"endpoint": "..."}.
 
 export async function POST(request: NextRequest) {
   const gate = await requireUser();
@@ -26,7 +25,7 @@ export async function POST(request: NextRequest) {
       : validationError(['body', 'endpoint'], 'string_type', 'Input should be a valid string', value);
   }
 
-  // Чужие подписки не трогаем — фильтр по user_id, как в Python.
+  // Чужие подписки не трогаем - фильтр по user_id.
   if (value) {
     await prisma.push_subscriptions.deleteMany({
       where: { endpoint: value, user_id: gate.user.id },

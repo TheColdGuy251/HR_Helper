@@ -6,9 +6,8 @@ import { errText, readForm, requireFile, uploadSuffix, withTempFile } from '@/li
 import { parsePetition } from '@/lib/docs/characteristic';
 
 // Б1, шаг 1: парсинг ходатайства о награждении и извлечение полей для проверки.
-// Порт POST /api/documents/characteristic/analyze из backend/routes/documents.py.
 //
-// Файл эфемерный: он НЕ сохраняется и НЕ попадает в базу знаний — там
+// Файл эфемерный: он не сохраняется и не попадает в базу знаний - там
 // персональные данные.
 
 const PETITION_EXT = new Set(['.docx', '.doc', '.rtf', '.pdf', '.txt', '.odt']);

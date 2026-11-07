@@ -3,30 +3,29 @@ import PizZip from 'pizzip';
 import { escapeXml } from './docx';
 
 /**
- * Минимальный конструктор .xlsx со стилями — подмножество openpyxl, нужное
- * описи уволенных (dismissed_inventory.py) и отчёту по дубликатам ОТ
- * (ot_dedup.py).
+ * Минимальный конструктор .xlsx со стилями - ровно то, что нужно
+ * описи уволенных и отчёту по дубликатам ОТ
  *
  * Почему не SheetJS: в открытой версии `xlsx` запись стилей ячеек не
  * поддерживается (только чтение), а в описи важны рамки, жирная шапка,
- * объединённые ячейки и заливка «дубликатов». Поэтому пакет собирается вручную.
+ * объединённые ячейки и заливка "дубликатов". Поэтому пакет собирается вручную.
  */
 
 export interface CellStyle {
   bold?: boolean;
-  /** Кегль в пунктах (Font(size=…)). */
+  /** Кегль в пунктах (Font(size=...)). */
   size?: number;
   align?: 'center' | 'left' | 'right';
   vAlign?: 'center' | 'top' | 'bottom';
   wrap?: boolean;
-  /** Тонкая рамка по всем сторонам (Border(Side('thin')) ×4). */
+  /** Тонкая рамка по всем сторонам (Border(Side('thin')) x4). */
   border?: boolean;
   /** Сплошная заливка, RGB без альфы: 'FDE8E8'. */
   fill?: string;
 }
 
 export interface XlsxCell {
-  /** 1-based, как в openpyxl. */
+  /** Нумерация с 1. */
   row: number;
   col: number;
   value: string | number;
@@ -37,13 +36,13 @@ export interface XlsxSheet {
   name: string;
   cells: XlsxCell[];
   merges?: { r1: number; c1: number; r2: number; c2: number }[];
-  /** Ширина колонки в «символах» (ws.column_dimensions[…].width). */
+  /** Ширина колонки в "символах" (ws.column_dimensions[...].width). */
   cols?: { col: number; width: number }[];
-  /** Высота строки в пунктах (ws.row_dimensions[…].height). */
+  /** Высота строки в пунктах (ws.row_dimensions[...].height). */
   rows?: { row: number; height: number }[];
 }
 
-/** 1 → A, 27 → AA (аналог openpyxl.utils.get_column_letter). */
+/** 1 -> A, 27 -> AA. */
 export function colLetter(n: number): string {
   let s = '';
   let x = n;
@@ -71,7 +70,7 @@ class StyleTable {
   private xfXml: string[] = [];
 
   constructor() {
-    // Индексы 0 у шрифта/рамки и 0–1 у заливки зарезервированы форматом:
+    // Индексы 0 у шрифта/рамки и 0-1 у заливки зарезервированы форматом:
     // Excel считает файл повреждённым, если fills[0] != none, fills[1] != gray125.
     this.font('<font><sz val="11"/><name val="Calibri"/><family val="2"/></font>');
     this.fill('<fill><patternFill patternType="none"/></fill>');
@@ -146,7 +145,7 @@ class StyleTable {
 }
 
 function sheetXml(sheet: XlsxSheet, styles: StyleTable): string {
-  // Ячейки по строкам: openpyxl пишет их в порядке возрастания координат.
+  // Ячейки по строкам: в порядке возрастания координат.
   const byRow = new Map<number, XlsxCell[]>();
   for (const c of sheet.cells) {
     const list = byRow.get(c.row);
@@ -167,7 +166,7 @@ function sheetXml(sheet: XlsxSheet, styles: StyleTable): string {
           if (typeof c.value === 'number') {
             return `<c r="${ref}"${sAttr}><v>${c.value}</v></c>`;
           }
-          // Инлайновые строки вместо sharedStrings — читаются всеми клиентами
+          // Инлайновые строки вместо sharedStrings - читаются всеми клиентами
           // и не требуют отдельной части пакета.
           return c.value === ''
             ? `<c r="${ref}"${sAttr}/>`

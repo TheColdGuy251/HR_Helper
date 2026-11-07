@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { isoUtc, prisma } from '@/lib/db';
 import { fullName, initials, requireUser, shortName } from '@/lib/auth';
+import { compareIds } from '@/lib/ids';
 import { asDict, pyBool } from '@/lib/kb';
 import {
   GENERAL_KEY,
@@ -10,15 +11,14 @@ import {
   type MessageRow,
 } from '@/lib/messenger';
 
-// Список диалогов: все активные пользователи + общий чат + «Заметки».
-// Порт GET /api/messenger/conversations из backend/routes/messenger.py.
+// Список диалогов: все активные пользователи + общий чат + "Заметки".
 //
-// Python на каждого собеседника делает 3 запроса (последнее сообщение, отметка
-// прочтения, непрочитанные). Здесь всё считается пакетно — ответ идентичен.
+// Последнее сообщение, отметка прочтения и непрочитанные считаются пакетно,
+// а не запросами на каждого собеседника.
 
 interface ConvItem {
   key: string;
-  peer_id: number | null;
+  peer_id: string | null;
   name: string;
   short_name: string;
   initials: string;
@@ -47,7 +47,7 @@ export async function GET(request: NextRequest) {
       )
     : users;
 
-  // ── лёгкий снимок сообщений: только id/автор/собеседник ──────────────────
+  // лёгкий снимок сообщений: только id/автор/собеседник
   const [directRows, generalRows, readRows] = await Promise.all([
     prisma.user_messages.findMany({
       where: { is_general: false, OR: [{ sender_id: me }, { recipient_id: me }] },
@@ -59,23 +59,25 @@ export async function GET(request: NextRequest) {
       select: { id: true, sender_id: true },
       orderBy: { id: 'desc' },
     }),
-    prisma.messenger_reads.findMany({ where: { user_id: me }, orderBy: { id: 'asc' } }),
+    prisma.messenger_reads.findMany({ where: { user_id: me } }),
   ]);
 
-  // Отметка прочтения по ключу диалога (Python берёт .first()).
-  const lastReadBy = new Map<string, number>();
+  // Отметка прочтения по ключу диалога: одна на собеседника, NULL - общий чат.
+  const lastReadBy = new Map<string, string>();
   for (const r of readRows) {
-    if (!lastReadBy.has(r.peer_key)) lastReadBy.set(r.peer_key, r.last_read_id);
+    if (r.last_read_id) lastReadBy.set(r.peer_user_id ?? GENERAL_KEY, r.last_read_id);
   }
 
-  // Последнее сообщение и непрочитанные — за один проход по снимку (он уже
+  // Последнее сообщение и непрочитанные - за один проход по снимку (он уже
   // отсортирован по убыванию id, поэтому первое попадание и есть последнее).
-  const lastIdBy = new Map<string, number>();
-  const unreadCandidates = new Map<string, number[]>();
-  const remember = (key: string, msgId: number, senderId: number) => {
+  // UUIDv7 растут со временем: "новее отметки" - это id больше неё.
+  const lastIdBy = new Map<string, string>();
+  const unreadCandidates = new Map<string, string[]>();
+  const remember = (key: string, msgId: string, senderId: string) => {
     if (!lastIdBy.has(key)) lastIdBy.set(key, msgId);
     if (senderId === me) return;
-    if (msgId <= (lastReadBy.get(key) ?? 0)) return;
+    const lastRead = lastReadBy.get(key);
+    if (lastRead && compareIds(msgId, lastRead) <= 0) return;
     const bucket = unreadCandidates.get(key);
     if (bucket) bucket.push(msgId);
     else unreadCandidates.set(key, [msgId]);
@@ -83,14 +85,14 @@ export async function GET(request: NextRequest) {
   for (const m of directRows) {
     const peer = m.sender_id === me ? m.recipient_id : m.sender_id;
     if (peer === null) continue;
-    remember(String(peer), m.id, m.sender_id);
+    remember(peer, m.id, m.sender_id);
   }
   for (const m of generalRows) remember(GENERAL_KEY, m.id, m.sender_id);
 
-  // Системные строки («закрепил(а) сообщение») непрочитанными не считаются —
+  // Системные строки ("закрепил(а) сообщение") непрочитанными не считаются -
   // мету тянем только по кандидатам, их всегда немного.
   const candidateIds = [...unreadCandidates.values()].flat();
-  const systemIds = new Set<number>();
+  const systemIds = new Set<string>();
   if (candidateIds.length) {
     const rows = await prisma.user_messages.findMany({
       where: { id: { in: candidateIds } },
@@ -103,10 +105,10 @@ export async function GET(request: NextRequest) {
   const unreadOf = (key: string): number =>
     (unreadCandidates.get(key) ?? []).filter((id) => !systemIds.has(id)).length;
 
-  // ── последние сообщения целиком (для превью) ─────────────────────────────
+  // последние сообщения целиком (для превью)
   const lastIds = [...new Set(lastIdBy.values())];
-  const lastById = new Map<number, MessageRow>();
-  const filesByMessage = new Map<number, FileRow[]>();
+  const lastById = new Map<string, MessageRow>();
+  const filesByMessage = new Map<string, FileRow[]>();
   if (lastIds.length) {
     const [rows, files] = await Promise.all([
       prisma.user_messages.findMany({ where: { id: { in: lastIds } } }),
@@ -133,21 +135,21 @@ export async function GET(request: NextRequest) {
       : { text: '', at: null };
 
   const items: ConvItem[] = peers.map((u) => {
-    const last = previewFor(lastOf(String(u.id)));
+    const last = previewFor(lastOf(u.id));
     return {
-      key: String(u.id),
+      key: u.id,
       peer_id: u.id,
       name: fullName(u),
       short_name: shortName(u),
       initials: initials(u),
       position: u.position || '',
-      unread: unreadOf(String(u.id)),
+      unread: unreadOf(u.id),
       last_text: last.text,
       last_at: last.at,
     };
   });
 
-  // Общий чат — показываем всегда первым, если поиск пуст или совпадает.
+  // Общий чат - показываем всегда первым, если поиск пуст или совпадает.
   let general: ConvItem | null = null;
   if (!term || 'общий чат общий'.includes(term)) {
     const last = previewFor(lastOf(GENERAL_KEY));
@@ -164,12 +166,12 @@ export async function GET(request: NextRequest) {
     };
   }
 
-  // «Заметки» — личный self-чат (sender == recipient == user.id).
+  // "Заметки" - личный self-чат (sender == recipient == user.id).
   let notes: ConvItem | null = null;
   if (!term || 'заметки notes мои заметки'.includes(term)) {
-    const last = previewFor(lastOf(String(me)));
+    const last = previewFor(lastOf(me));
     notes = {
-      key: String(me),
+      key: me,
       peer_id: me,
       name: 'Заметки',
       short_name: 'Заметки',

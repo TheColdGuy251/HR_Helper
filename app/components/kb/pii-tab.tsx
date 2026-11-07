@@ -22,11 +22,11 @@ import { apiGet, apiJson, apiPost, ApiError, formatBytes } from '@/lib/api';
 import { useAuth } from '@/components/auth-context';
 import { Card, EmptyState, ErrorCallout, InfoCallout, PrimaryButton, SearchInput, SecondaryButton } from '@/components/ui';
 
-// Вкладка «Персональные данные» — порт PII-контура из kb.js + routes/pii.py.
+// Вкладка "Персональные данные".
 // Доступ: can_access_pii + повторный ввод пароля (сессия 15 минут, cookie pii_token).
 
 interface PiiPerson {
-  id: number;
+  id: string;
   surname: string;
   name: string;
   patronymic: string | null;
@@ -38,7 +38,7 @@ interface PiiPerson {
 }
 
 interface PiiDoc {
-  id: number;
+  id: string;
   filename: string;
   mime_type: string | null;
   size_bytes: number | null;
@@ -65,8 +65,7 @@ interface QuickData {
   restored?: boolean;
 }
 
-// ── Черновик карточки при истечении сессии (kb.js:1062 saveDraftOnTimeout /
-//    :1078 restoreDraftIfAny). Ключ и формат — те же, что в легаси. ──
+// Черновик карточки: сохраняется при истечении сессии и восстанавливается при входе.
 
 const PII_DRAFT_KEY = 'hr_pii_draft_v1';
 
@@ -108,7 +107,7 @@ function dropQuickDraft() {
   try {
     localStorage.removeItem(PII_DRAFT_KEY);
   } catch {
-    /* приватный режим — ничего страшного */
+    /* приватный режим - ничего страшного */
   }
 }
 
@@ -196,7 +195,7 @@ export default function PiiTab() {
   const [persons, setPersons] = useState<PiiPerson[]>([]);
   const [listLoading, setListLoading] = useState(false);
   const [search, setSearch] = useState('');
-  const [openId, setOpenId] = useState<number | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
   const [detail, setDetail] = useState<PersonDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [status, setStatus] = useState<{ kind: 'ok' | 'error' | 'progress'; text: string } | null>(null);
@@ -212,14 +211,14 @@ export default function PiiTab() {
   const pendingQuickFile = useRef<File | null>(null);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const statusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Живое содержимое модалки быстрой загрузки — чтобы успеть сохранить его до сброса.
+  // Живое содержимое модалки быстрой загрузки - чтобы успеть сохранить его до сброса.
   const quickDraftRef = useRef<PiiQuickDraft | null>(null);
 
   const onQuickFields = useCallback((d: PiiQuickDraft | null) => {
     quickDraftRef.current = d;
   }, []);
 
-  /** Сохранить заполненную карточку в localStorage. true — если было что сохранять. */
+  /** Сохранить заполненную карточку в localStorage. true - если было что сохранять. */
   const saveQuickDraft = useCallback((): boolean => {
     const d = quickDraftRef.current;
     if (!d) return false;
@@ -232,7 +231,7 @@ export default function PiiTab() {
     }
   }, []);
 
-  /** Блокировка раздела. Истечение сессии сохраняет черновик, ручная — нет. */
+  /** Блокировка раздела. Истечение сессии сохраняет черновик, ручная - нет. */
   const lock = useCallback(
     (msg = '', opts?: { saveDraft?: boolean }) => {
       const saved = opts?.saveDraft === false ? false : saveQuickDraft();
@@ -253,7 +252,7 @@ export default function PiiTab() {
     [saveQuickDraft]
   );
 
-  /** Оборачивает вызов API: 401/403 → блокируем раздел. */
+  /** Оборачивает вызов API: 401/403 -> блокируем раздел. */
   const guard = useCallback(
     async <T,>(fn: () => Promise<T>): Promise<T | null> => {
       try {
@@ -313,7 +312,7 @@ export default function PiiTab() {
     };
   }, [authLoading, user]);
 
-  // При активации — загружаем карточки и проверяем черновик (restoreDraftIfAny).
+  // При активации - загружаем карточки и проверяем черновик (restoreDraftIfAny).
   useEffect(() => {
     if (phase === 'active') {
       loadPersons('');
@@ -361,7 +360,7 @@ export default function PiiTab() {
     } catch {
       /* блокируем в любом случае */
     }
-    lock('', { saveDraft: false }); // ручная блокировка — черновик не копим
+    lock('', { saveDraft: false }); // ручная блокировка - черновик не копим
   };
 
   /** Открыть модалку с восстановленным черновиком (файл выбирается заново). */
@@ -390,7 +389,7 @@ export default function PiiTab() {
     searchTimer.current = setTimeout(() => loadPersons(v), 250);
   };
 
-  const openPerson = async (id: number) => {
+  const openPerson = async (id: string) => {
     if (openId === id) {
       setOpenId(null);
       setDetail(null);
@@ -409,7 +408,7 @@ export default function PiiTab() {
     }
   };
 
-  const refreshDetail = async (id: number) => {
+  const refreshDetail = async (id: string) => {
     const data = await guard(() => apiGet<{ person: PersonDetail }>(`/api/pii/persons/${id}`, { skipAuthRedirect: true }));
     if (data) setDetail(data.person);
     loadPersons(search);
@@ -444,7 +443,7 @@ export default function PiiTab() {
     }
   };
 
-  const uploadDirect = async (personId: number, file: File, note: string) => {
+  const uploadDirect = async (personId: string, file: File, note: string) => {
     const form = new FormData();
     form.append('file', file);
     if (note.trim()) form.append('note', note.trim());
@@ -456,7 +455,7 @@ export default function PiiTab() {
     }
   };
 
-  const deleteDoc = async (docId: number, personId: number) => {
+  const deleteDoc = async (docId: string, personId: string) => {
     if (!window.confirm('Удалить документ?')) return;
     try {
       const res = await guard(() => apiJson('DELETE', `/api/pii/documents/${docId}`, undefined, { skipAuthRedirect: true }));
@@ -480,7 +479,7 @@ export default function PiiTab() {
 
   if (phase === 'checking') return <EmptyState>Проверка доступа…</EmptyState>;
 
-  // ФИО из черновика — для подписи в плашке восстановления.
+  // ФИО из черновика - для подписи в плашке восстановления.
   const draftFio = draft ? [draft.surname, draft.name, draft.patronymic].filter(Boolean).join(' ').trim() : '';
 
   if (phase === 'locked') {
@@ -761,7 +760,7 @@ function PersonBody({
 }: {
   person: PersonDetail;
   onUpload: (file: File, note: string) => void;
-  onDeleteDoc: (docId: number) => void;
+  onDeleteDoc: (docId: string) => void;
   onDeletePerson: () => void;
 }) {
   const [note, setNote] = useState('');
@@ -838,7 +837,7 @@ function PersonBody({
   );
 }
 
-/** Модалка «Новая карточка сотрудника» (POST /api/pii/persons). */
+/** Модалка "Новая карточка сотрудника" (POST /api/pii/persons). */
 function NewPersonModal({
   onClose,
   onCreate,
@@ -923,9 +922,9 @@ function QuickConfirmModal({
   onClose: () => void;
   onSubmit: (
     fields: { surname: string; name: string; patronymic: string; birth_date: string; note: string },
-    personId: number | null
+    personId: string | null
   ) => Promise<void>;
-  /** Сообщает наверх текущее содержимое — оно уйдёт в черновик при истечении сессии. */
+  /** Сообщает наверх текущее содержимое - оно уйдёт в черновик при истечении сессии. */
   onFieldsChange: (draft: PiiQuickDraft | null) => void;
   /** Файл, выбранный заново после восстановления черновика. */
   onPickFile: (file: File) => void;
@@ -936,7 +935,7 @@ function QuickConfirmModal({
   const [patronymic, setPatronymic] = useState(r.patronymic || '');
   const [birthDate, setBirthDate] = useState(() => {
     if (!r.birth_date) return '';
-    // В черновике дата уже в виде ДД.ММ.ГГГГ — повторно не форматируем.
+    // В черновике дата уже в виде ДД.ММ.ГГГГ - повторно не форматируем.
     return data.restored ? r.birth_date : new Date(r.birth_date).toLocaleDateString('ru-RU');
   });
   const [note, setNote] = useState(data.note || '');
@@ -962,7 +961,7 @@ function QuickConfirmModal({
 
   useEffect(() => () => onFieldsChange(null), [onFieldsChange]);
 
-  const submit = async (personId: number | null) => {
+  const submit = async (personId: string | null) => {
     if (needsFile) {
       setErr('Выберите файл документа — в браузере он не сохраняется.');
       return;

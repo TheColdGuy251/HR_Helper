@@ -8,16 +8,16 @@ import { fileResponse, isFile } from './kb';
 import { convertToPdf } from './parsers/office-convert';
 
 /**
- * Предпросмотр «слайдовых» форматов (pptx/ppt/odp) в браузере: конвертируем в PDF
+ * Предпросмотр "слайдовых" форматов (pptx/ppt/odp) в браузере: конвертируем в PDF
  * через LibreOffice и кэшируем результат, чтобы не конвертировать при каждом
- * открытии. Порт backend/utils/file_preview.py.
+ * открытии.
  *
- * Кэш живёт в docs/.preview_cache, ключ — путь+размер+mtime исходника (изменился
- * файл → пересобираем PDF). Используется всеми страницами просмотра через
+ * Кэш живёт в docs/.preview_cache, ключ - путь+размер+mtime исходника (изменился
+ * файл -> пересобираем PDF). Используется всеми страницами просмотра через
  * параметр ?as=pdf у эндпоинтов скачивания.
  */
 
-// Форматы, для которых нет нативного браузерного просмотрщика — показываем как PDF.
+// Форматы, для которых нет нативного браузерного просмотрщика - показываем как PDF.
 export const SLIDE_EXTS = new Set(['.pptx', '.ppt', '.odp']);
 
 export function canPreviewAsPdf(file: string): boolean {
@@ -31,7 +31,7 @@ async function cacheDir(): Promise<string> {
 }
 
 /**
- * Путь к PDF-версии презентации (с кэшированием). null — если формат не
+ * Путь к PDF-версии презентации (с кэшированием). null - если формат не
  * поддерживается, файла нет или LibreOffice недоступен/упал.
  */
 export async function previewPdfPath(src: string): Promise<string | null> {
@@ -39,7 +39,7 @@ export async function previewPdfPath(src: string): Promise<string | null> {
   const info = await stat(src).catch(() => null);
   if (!info?.isFile()) return null;
 
-  // Ключ кэша повторяет Python: абсолютный путь + размер + mtime в секундах.
+  // Ключ кэша: абсолютный путь + размер + mtime в секундах.
   const key = `${path.resolve(src)}|${info.size}|${Math.trunc(info.mtimeMs / 1000)}`;
   const cached = path.join(
     await cacheDir(),
@@ -68,8 +68,8 @@ export async function previewPdfPath(src: string): Promise<string | null> {
 }
 
 /**
- * Ответ с PDF-превью (inline) или null, если превью недоступно — тогда
- * вызывающий отдаёт исходный файл, ровно как preview_pdf_response в Python.
+ * Ответ с PDF-превью (inline) или null, если превью недоступно - тогда
+ * вызывающий отдаёт исходный файл.
  */
 export async function previewPdfResponse(src: string): Promise<NextResponse | null> {
   const pdf = await previewPdfPath(src);

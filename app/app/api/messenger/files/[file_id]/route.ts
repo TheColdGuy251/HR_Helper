@@ -4,10 +4,9 @@ import { prisma } from '@/lib/db';
 import { notFound, requireUser } from '@/lib/auth';
 import { baseName, boolQuery, fileResponse, isFile, parsePathId, suffixOf } from '@/lib/kb';
 import { previewPdfResponse } from '@/lib/file-preview';
-import { MIME, fromUploadPath, messageById } from '@/lib/messenger';
+import { MIME, messageById } from '@/lib/messenger';
 
 // Отдача вложения мессенджера.
-// Порт GET /api/messenger/files/{file_id} из backend/routes/messenger.py.
 
 type Ctx = { params: Promise<{ file_id: string }> };
 
@@ -22,12 +21,8 @@ export async function GET(request: NextRequest, { params }: Ctx) {
   if ('response' in download) return download.response;
   const asFormat = request.nextUrl.searchParams.get('as');
 
-  const rec =
-    parsed.value === null
-      ? null
-      : await prisma.user_message_files.findUnique({ where: { id: parsed.value } });
-  const file = rec ? fromUploadPath(rec.stored_path) : null;
-  if (!rec || !file || !(await isFile(file))) return notFound('Файл не найден');
+  const rec = await prisma.user_message_files.findUnique({ where: { id: parsed.value } });
+  if (!rec || !(await isFile(rec.stored_path))) return notFound('Файл не найден');
 
   // Доступ: владелец файла или участник диалога сообщения. Именно 404, чтобы не
   // раскрывать существование чужих файлов перебором id.
@@ -41,13 +36,13 @@ export async function GET(request: NextRequest, { params }: Ctx) {
   // Презентации показываем как PDF (LibreOffice + кэш); для прочих форматов
   // превью нет и ниже уходит исходный файл.
   if (asFormat === 'pdf') {
-    const preview = await previewPdfResponse(file);
+    const preview = await previewPdfResponse(rec.stored_path);
     if (preview) return preview;
   }
 
-  const ext = suffixOf(baseName(file)).toLowerCase();
+  const ext = suffixOf(baseName(rec.stored_path)).toLowerCase();
 
-  const resp = await fileResponse(file, {
+  const resp = await fileResponse(rec.stored_path, {
     filename: rec.original_name,
     mediaType: MIME[ext] || 'application/octet-stream',
     inline: !download.value,

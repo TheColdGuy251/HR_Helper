@@ -26,26 +26,25 @@ import { formatMessageContent } from '@/lib/msgfmt';
 import { FilePreviewModal, fileViewUrl, shouldPreview } from './file-preview';
 import { PollView } from './poll';
 import type { Msg, MsgAttachment } from './types';
-import { REACTION_EMOJIS, copyText, fmtTime, messageText } from './types';
+import { REACTION_EMOJIS, copyText, fmtTime, isSavedId, messageText } from './types';
 
 // Пузырь сообщения: текст, вложения, цитата ответа, реакции, голосование,
 // ответ ИИ (в т.ч. стриминговый) и контекстное меню действий.
-// Действия соответствуют HR Helper/routes/messenger.py.
 
 export interface MessageActions {
   onReply: (m: Msg) => void;
-  onEdit: (id: number, content: string) => void;
+  onEdit: (id: string, content: string) => void;
   onDelete: (m: Msg, forAll: boolean) => void;
   onPin: (m: Msg) => void;
-  onReact: (id: number, emoji: string) => void;
-  onVote: (m: Msg, optionId: number) => void;
-  /** «Переслать» — открывает выбор получателя (в т.ч. ассистента), как в легаси. */
+  onReact: (id: string, emoji: string) => void;
+  onVote: (m: Msg, optionId: string) => void;
+  /** "Переслать" - открывает выбор получателя (в т.ч. ассистента). */
   onForward: (m: Msg) => void;
-  onJump: (id: number) => void;
+  onJump: (id: string) => void;
   /** Включить режим выделения с этого сообщения (долгое нажатие / меню). */
   onStartSelect: (m: Msg) => void;
   /** Переключить сообщение в наборе выделенных. */
-  onToggleSelect: (id: number) => void;
+  onToggleSelect: (id: string) => void;
 }
 
 /** Состояние выделения для конкретного пузыря. */
@@ -54,13 +53,12 @@ export interface MessageSelection {
   checked: boolean;
 }
 
-const LONG_PRESS_MS = 500; // порог долгого нажатия (как в легаси attachThreadInteractions)
+const LONG_PRESS_MS = 500; // порог долгого нажатия
 const LONG_PRESS_SLOP = 10; // допустимый сдвиг пальца до отмены долгого нажатия
-// Не более 4 реакций в видимом ряду, 5-я ячейка — стрелка раскрытия
-// (messenger_common.js:409, `const MAX = 4`).
+// Не более 4 реакций в видимом ряду, 5-я ячейка - стрелка раскрытия
 const REACTION_ROW_MAX = 4;
 
-// ── Лайтбокс для картинок сообщения ─────────────────────────────────────────
+// Лайтбокс для картинок сообщения
 
 function Lightbox({
   items,
@@ -143,7 +141,7 @@ function Lightbox({
   );
 }
 
-// ── Вложения ────────────────────────────────────────────────────────────────
+// Вложения
 
 function Attachments({
   atts,
@@ -198,7 +196,7 @@ function Attachments({
             rel="noopener"
             title="Открыть предпросмотр"
             onClick={(e) => {
-              // Формат с предпросмотром — модалка; остальное уходит по ссылке
+              // Формат с предпросмотром - модалка; остальное уходит по ссылке
               // на страницу-просмотрщик в новой вкладке (как было).
               if (!shouldPreview(e, a)) return;
               e.preventDefault();
@@ -229,7 +227,7 @@ function Attachments({
   );
 }
 
-// ── Контекстное меню ────────────────────────────────────────────────────────
+// Контекстное меню
 
 function MenuItem({
   icon: Icon,
@@ -255,9 +253,9 @@ function MenuItem({
   );
 }
 
-// ── Ряд реакций внутри контекстного меню ────────────────────────────────────
-// Легаси (messenger_common.js:407-451): первые 4 эмодзи видны сразу, пятой
-// ячейкой стоит стрелка-переключатель, которая раскрывает/сворачивает остальные.
+// Ряд реакций внутри контекстного меню
+// Первые 4 эмодзи видны сразу, пятой ячейкой стоит стрелка-переключатель,
+// которая раскрывает/сворачивает остальные.
 
 function ReactionRow({
   active,
@@ -266,7 +264,7 @@ function ReactionRow({
 }: {
   active: string[];
   onPick: (emoji: string) => void;
-  /** Меню могло уехать за нижний край — даём родителю поправить позицию. */
+  /** Меню могло уехать за нижний край - даём родителю поправить позицию. */
   onToggle: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -323,10 +321,10 @@ function ReactionRow({
   );
 }
 
-// ── Подтверждение удаления ──────────────────────────────────────────────────
-// Порт U.confirmDelete (messenger_common.js:857-883): один пункт «Удалить»
-// открывает окно с выбором — «у меня» либо, если все сообщения свои, галочка
-// «Удалить для всех».
+// Подтверждение удаления
+// Один пункт "Удалить"
+// открывает окно с выбором - "у меня" либо, если все сообщения свои, галочка
+// "Удалить для всех".
 
 export function ConfirmDeleteModal({
   count,
@@ -358,7 +356,7 @@ export function ConfirmDeleteModal({
   return (
     <div
       className="fixed inset-0 z-[110] bg-black/30 flex items-center justify-center p-4"
-      // окно живёт внутри пузыря — клики наружу не пускаем
+      // окно живёт внутри пузыря - клики наружу не пускаем
       onClick={(e) => e.stopPropagation()}
       onMouseDown={(e) => {
         e.stopPropagation();
@@ -403,7 +401,7 @@ export function ConfirmDeleteModal({
   );
 }
 
-// ── Статус доставки своего сообщения ────────────────────────────────────────
+// Статус доставки своего сообщения
 
 function StatusTick({ status }: { status: Msg['status'] }) {
   if (status === 'failed') return <AlertCircle size={12} className="text-red-300" />;
@@ -413,7 +411,7 @@ function StatusTick({ status }: { status: Msg['status'] }) {
   return null;
 }
 
-// ── Пузырь ──────────────────────────────────────────────────────────────────
+// Пузырь
 
 export function Message({
   msg,
@@ -444,7 +442,8 @@ export function Message({
   const menuRef = useRef<HTMLDivElement>(null);
   const pressRef = useRef<{ timer: ReturnType<typeof setTimeout>; x: number; y: number } | null>(null);
 
-  const numId = typeof msg.id === 'number' ? msg.id : null;
+  // id сохранённого сообщения; у оптимистичного ("tmpN") действий ещё нет.
+  const savedId = isSavedId(msg.id) ? msg.id : null;
   const mine = msg.mine;
   const ai = msg.forwarded && !!msg.forwarded_meta;
   const streaming = msg.streaming;
@@ -461,7 +460,7 @@ export function Message({
     if (editing) editRef.current?.focus();
   }, [editing]);
 
-  // ── системная строка («закрепил(а) сообщение») ────────────────────────────
+  // системная строка ("закрепил(а) сообщение")
   if (msg.system) {
     return (
       <div data-mid={msg.id} className="flex justify-center my-2">
@@ -474,7 +473,7 @@ export function Message({
         >
           {msg.sender_name} {msg.content}
         </span>
-        {menu && numId != null && (
+        {menu && savedId != null && (
           <>
             <div className="fixed inset-0 z-[89]" onMouseDown={() => setMenu(null)} />
             <div
@@ -511,16 +510,16 @@ export function Message({
   }
 
   const openMenu = (x: number, y: number) => {
-    if (numId == null) return;
+    if (savedId == null) return;
     const w = 230;
-    const h = 340; // ряд реакций свёрнут — меню ниже, чем раньше
+    const h = 340; // ряд реакций свёрнут - меню ниже, чем раньше
     setMenu({
       x: Math.max(8, Math.min(x, window.innerWidth - w - 8)),
       y: Math.max(8, Math.min(y, window.innerHeight - h - 8)),
     });
   };
 
-  const canEdit = mine && !ai && !msg.forwarded_from && !msg.poll && numId != null;
+  const canEdit = mine && !ai && !msg.forwarded_from && !msg.poll && savedId != null;
 
   const bubbleCls = ai
     ? 'bg-white border border-gray-100 border-l-4 border-l-[#2563eb] text-slate-700 rounded-2xl'
@@ -537,12 +536,12 @@ export function Message({
   const submitEdit = () => {
     const t = editText.trim();
     setEditing(false);
-    if (!t || numId == null || t === msg.content) return;
-    actions.onEdit(numId, t);
+    if (!t || savedId == null || t === msg.content) return;
+    actions.onEdit(savedId, t);
   };
 
-  // ── выделение ─────────────────────────────────────────────────────────────
-  const selectable = numId != null;
+  // выделение
+  const selectable = savedId != null;
   const selMode = selection.mode;
 
   const cancelPress = () => {
@@ -550,7 +549,7 @@ export function Message({
     pressRef.current = null;
   };
 
-  // Долгое нажатие (тач) включает режим выделения — как в легаси.
+  // Долгое нажатие (тач) включает режим выделения.
   const onPointerDown = (e: React.PointerEvent) => {
     if (selMode || !selectable || e.pointerType === 'mouse') return;
     const { clientX: x, clientY: y } = e;
@@ -576,7 +575,7 @@ export function Message({
     <div
       data-mid={msg.id}
       data-selectable={selectable ? '1' : undefined}
-      onClick={selMode && numId != null ? () => actions.onToggleSelect(numId) : undefined}
+      onClick={selMode && savedId != null ? () => actions.onToggleSelect(savedId) : undefined}
       className={`flex gap-2 px-1 rounded-xl transition-colors ${
         mine ? 'justify-end' : 'justify-start'
       } ${gap ? 'mt-5' : grouped ? 'mt-0.5' : 'mt-3'} ${
@@ -632,14 +631,14 @@ export function Message({
           onContextMenu={(e) => {
             e.preventDefault();
             if (selMode) {
-              if (numId != null) actions.onToggleSelect(numId);
+              if (savedId != null) actions.onToggleSelect(savedId);
               return;
             }
             openMenu(e.clientX, e.clientY);
           }}
         >
           {/* кнопка меню (десктоп: по наведению) */}
-          {numId != null && !selMode && (
+          {savedId != null && !selMode && (
             <button
               onClick={(e) => {
                 const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -771,12 +770,12 @@ export function Message({
           </div>
         </div>
 
-        {msg.reactions && msg.reactions.length > 0 && numId != null && (
+        {msg.reactions && msg.reactions.length > 0 && savedId != null && (
           <div className={`flex flex-wrap gap-1 mt-1 px-1 ${selMode ? 'pointer-events-none' : ''}`}>
             {msg.reactions.map((r) => (
               <button
                 key={r.emoji}
-                onClick={() => actions.onReact(numId, r.emoji)}
+                onClick={() => actions.onReact(savedId, r.emoji)}
                 className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full border text-[11px] font-semibold transition ${
                   r.mine
                     ? 'bg-blue-50 border-[#2563eb] text-[#2563eb]'
@@ -808,12 +807,12 @@ export function Message({
         <FilePreviewModal att={docPreview} onClose={() => setDocPreview(null)} />
       )}
 
-      {menu && numId != null && (
+      {menu && savedId != null && (
         <>
           <div className="fixed inset-0 z-[89]" onMouseDown={() => setMenu(null)} />
-          {/* Порядок пунктов — как в легаси menuItems (messenger_page.js:513-526):
-              Ответить · Изменить · Закрепить · Копировать · Переслать · —
-              Выделить · Удалить. Отдельного пункта для ассистента нет: он
+          {/* Порядок пунктов menuItems:
+              Ответить, Изменить, Закрепить, Копировать, Переслать, разделитель,
+              Выделить, Удалить. Отдельного пункта для ассистента нет: он
               выбирается получателем внутри окна пересылки (ForwardModal). */}
           <div
             ref={menuRef}
@@ -824,11 +823,11 @@ export function Message({
               active={(msg.reactions || []).filter((r) => r.mine).map((r) => r.emoji)}
               onPick={(e) => {
                 setMenu(null);
-                actions.onReact(numId, e);
+                actions.onReact(savedId, e);
               }}
               onToggle={() => {
-                // Раскрытый ряд мог утопить меню за нижний край окна —
-                // подтягиваем его вверх (messenger_common.js:440-443).
+                // Раскрытый ряд мог утопить меню за нижний край окна -
+                // подтягиваем его вверх.
                 requestAnimationFrame(() => {
                   const el = menuRef.current;
                   if (!el) return;
@@ -904,7 +903,7 @@ export function Message({
         </>
       )}
 
-      {/* «Удалить для всех» доступно, только если сообщение своё (legacy allMine) */}
+      {/* "Удалить для всех" доступно, только если сообщение своё (legacy allMine) */}
       {confirmDel && (
         <ConfirmDeleteModal
           count={1}

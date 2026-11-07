@@ -13,15 +13,13 @@ import {
   MAX_UPLOAD_BYTES,
   UPLOAD_DIR,
   imageSize,
-  toUploadPath,
   serializeFile,
 } from '@/lib/messenger';
 
 // Загрузка вложения (по одному файлу за запрос).
-// Порт POST /api/messenger/upload из backend/routes/messenger.py.
 //
-// Каталог и правила именования те же, что в Python: backend/docs/messenger,
-// имя — uuid4().hex + исходное расширение (оригинальное имя хранится в БД).
+// Файлы лежат в backend/docs/messenger, имя - случайный hex + исходное
+// расширение (оригинальное имя хранится в БД).
 
 export async function POST(request: NextRequest) {
   const gate = await requireUser();
@@ -41,9 +39,8 @@ export async function POST(request: NextRequest) {
   const ext = suffixOf(baseName(file.name || '')).toLowerCase();
   if (!ALLOWED_EXT.has(ext)) return badRequest(`Неподдерживаемый формат: ${ext || '—'}`);
 
-  // Python проверяет лимит по мере записи, чтобы на диск не лёг файл любого
-  // размера; здесь тело уже разобрано в память, поэтому проверяем до записи —
-  // ответ и содержимое каталога получаются те же.
+  // Тело уже разобрано в память, поэтому лимит размера проверяем до записи на
+  // диск.
   const bytes = Buffer.from(await file.arrayBuffer());
   if (bytes.length > MAX_UPLOAD_BYTES) return badRequest('Файл больше 20 МБ');
 
@@ -58,7 +55,7 @@ export async function POST(request: NextRequest) {
     data: {
       owner_id: gate.user.id,
       original_name: file.name || path.basename(stored),
-      stored_path: toUploadPath(stored),
+      stored_path: stored,
       content_type: file.type || null,
       size_bytes: bytes.length,
       is_image: isImage,

@@ -3,8 +3,8 @@ import { useEffect } from 'react';
 import { Download, ExternalLink, X } from 'lucide-react';
 import type { MsgAttachment } from './types';
 
-// Предпросмотр вложения (порт filePreview из messenger_common.js:833).
-// Картинки — <img>, pdf/txt/md/csv — встроенный <iframe>, прочие форматы
+// Предпросмотр вложения.
+// Картинки - <img>, pdf/txt/md/csv - встроенный <iframe>, прочие форматы
 // предпросмотра не имеют и открываются в новой вкладке вызывающим кодом.
 
 const IMAGE_EXT = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'];
@@ -12,13 +12,13 @@ const FRAME_EXT = ['pdf', 'txt', 'md', 'csv'];
 
 export type PreviewKind = 'image' | 'frame';
 
-/** Страница-просмотрщик (docx/xlsx/презентации) — запасной путь и Ctrl+клик. */
+/** Страница-просмотрщик (docx/xlsx/презентации) - запасной путь и Ctrl+клик. */
 export function fileViewUrl(att: MsgAttachment): string {
   return `/messenger/files/${att.id}/view`;
 }
 
 /**
- * Способ показа вложения или null — формат без предпросмотра.
+ * Способ показа вложения или null - формат без предпросмотра.
  * Расширение берём из имени файла: url вида /api/messenger/files/12 его не несёт.
  */
 export function previewKind(att: MsgAttachment): PreviewKind | null {
@@ -30,7 +30,7 @@ export function previewKind(att: MsgAttachment): PreviewKind | null {
   return null;
 }
 
-/** Клик по вложению открыл бы модалку? (иначе — обычный переход по ссылке) */
+/** Клик по вложению открыл бы модалку? (иначе - обычный переход по ссылке) */
 export function shouldPreview(e: React.MouseEvent, att: MsgAttachment): boolean {
   if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return false;
   return previewKind(att) !== null;

@@ -3,22 +3,21 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { buildXlsx, type CellStyle, type XlsxCell } from './xlsx';
 import { DocValueError, cellToString, mostCommon, ru, saveGenerated, timestamp } from './common';
-import { toDocsPath } from '@/lib/news';
 
 /**
- * Б4: опись личных дел уволенных из отчёта 1С:ЗиК «Принято уволено».
- * Порт services/documents/dismissed_inventory.py. Без LLM.
+ * Б4: опись личных дел уволенных из отчёта 1С:ЗиК "Принято уволено".
+ * Без LLM.
  *
- * Правила брифа УРП: в опись попадают только уволенные БЕЗ повторного приёма;
- * дата увольнения = «дата записи» − 1 день; по умолчанию — категории
+ * Правила брифа УРП: в опись попадают только уволенные без повторного приёма;
+ * дата увольнения = "дата записи" - 1 день; по умолчанию - категории
  * административного блока (АУП/АХП/УВП).
  *
- * Отличия от Python-порта (исправления по отзыву УРП от 21.07):
- * — приём/увольнение сопоставляются по человеку (ФИО без «(вн. совм.)»);
- * — один человек — одна строка описи, должности перечисляются списком.
+ * Исправления по отзыву УРП от 21.07:
+ * - приём/увольнение сопоставляются по человеку (ФИО без "(вн. совм.)");
+ * - один человек - одна строка описи, должности перечисляются списком.
  */
 
-/** Триггер чат-команды «опись личных дел уволенных». */
+/** Триггер чат-команды "опись личных дел уволенных". */
 export const INVENTORY_REQUEST_RE = ru(
   'опис\\w*\\s+(?:личн\\w+\\s+дел|увол)|уволенн\\w+\\s+в\\s+архив',
   'i'
@@ -28,8 +27,8 @@ const ADMIN_CATEGORIES = new Set(['АУП', 'АУПН', 'АХП', 'АХПН', '�
 const DT_RE = /(\d{2})\.(\d{2})\.(\d{4})/;
 const DAY_MS = 86_400_000;
 
-// «Иванов Иван Иванович (вн. совм.)» → ключ человека без суффикса занятости.
-// После скобок остаётся пунктуация («(осн).» — точка снаружи), поэтому ключ —
+// "Иванов Иван Иванович (вн. совм.)" -> ключ человека без суффикса занятости.
+// После скобок остаётся пунктуация ("(осн)." - точка снаружи), поэтому ключ -
 // только буквы, дефисы и пробелы.
 const FIO_PAREN_RE = /\s*\([^)]*\)/g;
 function normFio(fio: string): string {
@@ -55,9 +54,11 @@ export interface InventoryResult {
   fired_total: number;
   skipped_rehired: number;
   items: InventoryItem[];
+  /** Предупреждения валидации: формирование не блокируют, HR перепроверяет. */
+  warnings: string[];
 }
 
-/** Дата ячейки как UTC-полночь (Date из SheetJS либо «дд.мм.гггг» в тексте). */
+/** Дата ячейки как UTC-полночь (Date из SheetJS либо "дд.мм.гггг" в тексте). */
 function cellDate(v: unknown): number | null {
   if (v instanceof Date) return Date.UTC(v.getFullYear(), v.getMonth(), v.getDate());
   const m = DT_RE.exec(cellToString(v));
@@ -84,7 +85,7 @@ interface DismissRecord {
   record_date: number | null;
 }
 
-/** Разбирает отчёт «Принято уволено» и строит список для описи. */
+/** Разбирает отчёт "Принято уволено" и строит список для описи. */
 export function analyzeDismissedRows(rows: unknown[][], allCategories = false): InventoryResult {
   let headerRow: number | null = null;
   const col: Record<string, number> = {};
@@ -138,13 +139,13 @@ export function analyzeDismissedRows(rows: unknown[][], allCategories = false): 
     throw new DocValueError('В отчёте не нашлось строк с событиями «Прием»/«Увольнение»');
   }
 
-  // Повторный приём: у сотрудника есть «Прием» с датой ПОЗЖЕ увольнения
-  // (или без даты — консервативно тоже считаем повторным приёмом).
+  // Повторный приём: у сотрудника есть "Прием" с датой позже увольнения
+  // (или без даты - консервативно тоже считаем повторным приёмом).
   //
-  // ФИО в выгрузке 1С идёт с суффиксом занятости — «(вн. совм.)», «(осн.)» и
-  // ещё полдюжины написаний. Сопоставлять приём с увольнением нужно ПО ЧЕЛОВЕКУ,
-  // иначе уволенный «Иванов (совм.)» не найдёт свой приём «Иванов (осн.)» и
-  // ошибочно попадёт в опись (на реальном отчёте — 9 лишних человек).
+  // ФИО в выгрузке 1С идёт с суффиксом занятости - "(вн. совм.)", "(осн.)" и
+  // ещё полдюжины написаний. Сопоставлять приём с увольнением нужно по человеку,
+  // иначе уволенный "Иванов (совм.)" не найдёт свой приём "Иванов (осн.)" и
+  // ошибочно попадёт в опись (на реальном отчёте - 9 лишних человек).
   const byFio = new Map<string, DismissRecord[]>();
   for (const r of records) {
     if (!r.fio) continue;
@@ -178,15 +179,15 @@ export function analyzeDismissedRows(rows: unknown[][], allCategories = false): 
       unit: r.unit,
       dismissed_at: dismiss === null ? '' : ddmmyyyy(dismiss),
       _fio: normFio(r.fio) || '—',
-      // date.min в Python — минимальная возможная дата, сортирует записи без даты вперёд.
+      // Записи без даты сортируются вперёд.
       _date: dismiss ?? Number.NEGATIVE_INFINITY,
     });
   }
 
-  // Личное дело одно на человека, а записей об увольнении — по числу ставок
-  // (совместительства). Схлопываем строки одного человека: дата — самая
-  // поздняя, должности — списком, ФИО — вариант без суффикса занятости,
-  // если он есть (у HR в образце три строки «Аминова…» на одно дело).
+  // Личное дело одно на человека, а записей об увольнении - по числу ставок
+  // (совместительства). Схлопываем строки одного человека: дата - самая
+  // поздняя, должности - списком, ФИО - вариант без суффикса занятости,
+  // если он есть (у HR в образце три строки "Аминова..." на одно дело).
   const byPerson = new Map<string, typeof sortable>();
   for (const it of sortable) {
     const list = byPerson.get(it._fio);
@@ -219,16 +220,42 @@ export function analyzeDismissedRows(rows: unknown[][], allCategories = false): 
     .map((r) => new Date(r.record_date as number).getUTCFullYear());
   const year = mostCommon(years) ?? new Date().getFullYear();
 
+  // Валидация - только предупреждения, в опись всё уже попало.
+  const warnings: string[] = [];
+  const noDate = records.filter((r) => r.event === 'fire' && r.record_date === null);
+  if (noDate.length) {
+    warnings.push(
+      `У ${noDate.length} записей об увольнении не разобралась «дата записи» — ` +
+        `в описи у них пустая дата (например: ${noDate[0].fio || 'без ФИО'})`
+    );
+  }
+  const noFio = records.filter((r) => r.event === 'fire' && !r.fio).length;
+  if (noFio) warnings.push(`${noFio} записей об увольнении без ФИО — проверьте выгрузку`);
+  const badYear = new Set(
+    records
+      .filter((r) => r.record_date !== null)
+      .map((r) => new Date(r.record_date as number).getUTCFullYear())
+      .filter((y) => y < 1990 || y > new Date().getFullYear() + 1)
+  );
+  if (badYear.size) {
+    warnings.push(`В выгрузке встречаются неправдоподобные годы: ${[...badYear].join(', ')}`);
+  }
+  const itemsNoDate = items.filter((it) => !it.dismissed_at).length;
+  if (itemsNoDate && !noDate.length) {
+    warnings.push(`${itemsNoDate} строк описи остались без даты увольнения`);
+  }
+
   return {
     year,
     total_records: records.length,
     fired_total: records.filter((r) => r.event === 'fire').length,
     skipped_rehired: skippedRehired,
     items,
+    warnings,
   };
 }
 
-// ── число прописью ─────────────────────────────────────────────────────────
+// число прописью
 
 const UNITS = ['', 'одно', 'два', 'три', 'четыре', 'пять', 'шесть', 'семь', 'восемь', 'девять'];
 const TEENS = [
@@ -238,7 +265,7 @@ const TEENS = [
 const TENS = ['', '', 'двадцать', 'тридцать', 'сорок', 'пятьдесят', 'шестьдесят', 'семьдесят', 'восемьдесят', 'девяносто'];
 const HUNDREDS = ['', 'сто', 'двести', 'триста', 'четыреста', 'пятьсот', 'шестьсот', 'семьсот', 'восемьсот', 'девятьсот'];
 
-/** 0–999 прописью (для «157 (сто пятьдесят семь) личных дел»). */
+/** 0-999 прописью (для "157 (сто пятьдесят семь) личных дел"). */
 export function numWords(n: number): string {
   if (n === 0) return 'ноль';
   const parts = [HUNDREDS[Math.floor(n / 100)]];
@@ -251,7 +278,7 @@ export function numWords(n: number): string {
   return parts.filter((p) => p).join(' ');
 }
 
-// ── xlsx-опись по образцу УРП ──────────────────────────────────────────────
+// xlsx-опись по образцу УРП
 
 const CENTER: CellStyle = { align: 'center', vAlign: 'center', wrap: true };
 const LEFT: CellStyle = { align: 'left', vAlign: 'top', wrap: true };
@@ -317,7 +344,7 @@ export function buildInventoryXlsx(result: InventoryResult): Buffer {
   ]);
 }
 
-export async function createInventory(userId: number, rows: unknown[][], allCategories: boolean) {
+export async function createInventory(userId: string, rows: unknown[][], allCategories: boolean) {
   const result = analyzeDismissedRows(rows, allCategories);
   const filePath = await saveGenerated(
     `inventory_${result.year}_${timestamp()}.xlsx`,
@@ -327,12 +354,12 @@ export async function createInventory(userId: number, rows: unknown[][], allCate
     data: {
       user_id: userId,
       title: `Опись личных дел уволенных в ${result.year} году (${result.items.length} чел.)`,
-      template_key: 'dismissed_inventory',
-      file_path: toDocsPath(filePath),
+      generator: 'dismissed_inventory',
+      file_path: filePath,
       progress: 100,
       status: 'ready',
       fields: { year: result.year, count: result.items.length } as Prisma.InputJsonValue,
-      is_pii: true, // ФИО уволенных работников — документ не хранится
+      is_pii: true, // ФИО уволенных работников - документ не хранится
     },
   });
   return { rec, result };

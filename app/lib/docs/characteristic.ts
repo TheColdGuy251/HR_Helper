@@ -1,7 +1,7 @@
 import 'server-only';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
-import { cut, toDocsPath } from '@/lib/news';
+import { cut } from '@/lib/news';
 import { generateText } from '@/lib/ml/llm';
 import { generateJsonOrMock } from '@/lib/ml/llm-json';
 import { SYSTEM_PROMPT_CHARACTERISTIC, SYSTEM_PROMPT_PETITION_EXTRACT } from '@/lib/ml/prompts';
@@ -9,16 +9,16 @@ import { buildDocx, emptyPara, type DocxPara } from './docx';
 import { ru, saveGenerated, timestamp } from './common';
 
 /**
- * Б1: характеристика для представления работника к внешней награде — из
- * ходатайства 1С:Документооборот. Порт services/documents/characteristic.py.
+ * Б1: характеристика для представления работника к внешней награде - из
+ * ходатайства 1С:Документооборот.
  *
- * ПДн: текст ходатайства обрабатывается эфемерно и НЕ попадает в базу знаний.
+ * ПДн: текст ходатайства обрабатывается эфемерно и не попадает в базу знаний.
  */
 
-/** Триггер чат-команды «сделай характеристику» (при вложенном ходатайстве). */
+/** Триггер чат-команды "сделай характеристику" (при вложенном ходатайстве). */
 export const CHARACTERISTIC_REQUEST_RE = ru('характеристик\\w*', 'i');
 
-// Роли ППС — для них свой стиль характеристики (наука/преподавание).
+// Роли ППС - для них свой стиль характеристики (наука/преподавание).
 const PPS_RE = ru(
   'профессор|доцент|преподават|ассистент|заведующ\\w*\\s+кафедр|научн\\w*\\s+сотрудник',
   'i'
@@ -37,12 +37,12 @@ const BASIS_RE = /Основание\s*[:：]?\s*(.+)/i;
 const FIO_ROW_RE =
   /Фамилия,?\s*имя,?\s*отчество\s*[:：|]?\s*([А-ЯЁ][а-яё]+(?:\s+[А-ЯЁ][а-яё]+){1,2})/;
 
-/** 'pps' — преподавательские должности, 'aup' — административные/специалисты. */
+/** 'pps' - преподавательские должности, 'aup' - административные/специалисты. */
 export function detectCategory(position: unknown): string {
   return typeof position === 'string' && position && PPS_RE.test(position) ? 'pps' : 'aup';
 }
 
-/** str.strip(chars) — снимает символы набора с обоих концов. */
+/** Снимает символы набора с обоих концов. */
 function stripChars(s: string, chars: string): string {
   let a = 0;
   let b = s.length;
@@ -62,9 +62,9 @@ function quickParse(text: string): Record<string, string> {
 
 /**
  * Извлекает поля ходатайства: LLM (основной путь) + regex-подстраховка.
- * Любое поле может быть null/[] — UI даёт пользователю поправить руками.
+ * Любое поле может быть null/[] - UI даёт пользователю поправить руками.
  */
-export async function parsePetition(text: string, userId: number | null = null): Promise<PetitionFields> {
+export async function parsePetition(text: string, userId: string | null = null): Promise<PetitionFields> {
   const fields: PetitionFields = {};
   for (const k of FIELD_KEYS) fields[k] = null;
   fields.career = [];
@@ -93,7 +93,7 @@ export async function parsePetition(text: string, userId: number | null = null):
       }
     }
   } catch {
-    /* [CHAR] LLM-извлечение ходатайства не удалось — остаётся regex-подстраховка */
+    /* [CHAR] LLM-извлечение ходатайства не удалось - остаётся regex-подстраховка */
   }
 
   for (const [k, v] of Object.entries(quickParse(sample))) fields[k] = fields[k] || v;
@@ -143,7 +143,7 @@ const STYLE_HINTS: Record<string, string> = {
 export async function generateCharacteristicText(
   fields: PetitionFields,
   category: string | null,
-  userId: number | null
+  userId: string | null
 ): Promise<string> {
   const cat = category || (fields.category as string) || detectCategory(fields.position);
   const userMsg = (STYLE_HINTS[cat] ?? STYLE_HINTS.aup) + '\n\n' + fieldsBlock(fields);
@@ -162,7 +162,7 @@ export async function generateCharacteristicText(
 
 const SLUG_RE = ru('[^\\w]+', 'g');
 
-/** Собирает .docx: шапка «ХАРАКТЕРИСТИКА» + ФИО/должность + абзацы текста. */
+/** Собирает .docx: шапка "ХАРАКТЕРИСТИКА" + ФИО/должность + абзацы текста. */
 async function renderCharacteristicDocx(fields: PetitionFields, bodyText: string): Promise<string> {
   const paras: DocxPara[] = [
     { runs: [{ text: 'ХАРАКТЕРИСТИКА', bold: true, sizePt: 14 }], align: 'center' },
@@ -192,9 +192,9 @@ async function renderCharacteristicDocx(fields: PetitionFields, bodyText: string
   return saveGenerated(`characteristic_${fioSlug}_${timestamp()}.docx`, buildDocx(paras));
 }
 
-/** Полный цикл: текст → docx → запись в «Мои документы». */
+/** Полный цикл: текст -> docx -> запись в "Мои документы". */
 export async function createCharacteristic(
-  userId: number,
+  userId: string,
   fields: PetitionFields,
   category: string | null
 ) {
@@ -210,12 +210,12 @@ export async function createCharacteristic(
     data: {
       user_id: userId,
       title,
-      template_key: 'characteristic',
-      file_path: toDocsPath(filePath),
+      generator: 'characteristic',
+      file_path: filePath,
       progress: 100,
       status: 'ready',
       fields: stored as Prisma.InputJsonValue,
-      is_pii: true, // ПДн работника — документ не хранится (автоудаление)
+      is_pii: true, // ПДн работника - документ не хранится (автоудаление)
     },
   });
   return { rec, text };
@@ -231,7 +231,7 @@ export function petitionFieldsFromJson(raw: unknown): PetitionFields {
       const parsed = JSON.parse(raw || '{}');
       if (parsed && typeof parsed === 'object') data = parsed as Record<string, unknown>;
     } catch {
-      /* json.loads бросил бы — здесь считаем поля пустыми */
+      /* json.loads бросил бы - здесь считаем поля пустыми */
     }
   }
 
@@ -244,7 +244,7 @@ export function petitionFieldsFromJson(raw: unknown): PetitionFields {
     const v = data[k];
     if (k === 'career' || k === 'awards') {
       if (Array.isArray(v)) fields[k] = v.map((x) => String(x).trim()).filter((x) => x);
-      // Модалка шлёт многострочный textarea — режем по строкам.
+      // Модалка шлёт многострочный textarea - режем по строкам.
       else if (typeof v === 'string') fields[k] = v.split(/\r\n|\r|\n/).map((s) => s.trim()).filter((s) => s);
     } else if (typeof v === 'string' && v.trim()) {
       fields[k] = v.trim();

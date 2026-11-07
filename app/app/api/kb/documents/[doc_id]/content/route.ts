@@ -6,7 +6,6 @@ import { jsonBody, parsePathId, pyBool, pyStr } from '@/lib/kb';
 import { reindexContent } from '@/lib/ml/indexer';
 
 // Извлечённый текст документа для редактора (А6) и его правка.
-// Порт GET/PATCH /api/kb/documents/{doc_id}/content из backend/routes/kb.py.
 
 type Ctx = { params: Promise<{ doc_id: string }> };
 
@@ -31,8 +30,8 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
 
 /**
  * Заменяет извлечённый текст документа и переиндексирует его в фоне (статус и
- * прогресс — как при обычной загрузке). Название и метаданные сохраняются;
- * исходный файл на диске НЕ меняется — правка живёт в базе знаний.
+ * прогресс - как при обычной загрузке). Название и метаданные сохраняются;
+ * исходный файл на диске не меняется - правка живёт в базе знаний.
  */
 export async function PATCH(request: NextRequest, { params }: Ctx) {
   const gate = await requireKbEditor();
@@ -44,7 +43,7 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
   const parsedBody = await jsonBody(request);
   if ('response' in parsedBody) return parsedBody.response;
 
-  // str(body.get("content") or "").strip()
+  // content - строка без пробелов по краям; отсутствие - пустая строка
   const rawContent = parsedBody.body.content;
   const text = pyStr(pyBool(rawContent) ? rawContent : '').trim();
   if (text.length < 20) return badRequest('Текст слишком короткий (минимум 20 символов)');
@@ -65,7 +64,7 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
   });
 
   // after() продлевает жизнь запроса: переиндексация (эмбеддинги + Qdrant)
-  // идёт уже после ответа, как поток-демон в Python.
+  // идёт уже после ответа.
   after(async () => {
     await reindexContent(doc.id, text);
   });

@@ -1,25 +1,42 @@
 import 'server-only';
 import path from 'node:path';
+import type { NextResponse } from 'next/server';
 import { Prisma } from '@prisma/client';
-import { prisma } from './db';
-import type { CurrentUser } from './auth';
+import type { chat_role } from '@prisma/client';
+import { isoUtc, prisma } from './db';
+import { notFound } from './auth';
+import { asUuid, compareIds } from './ids';
+import { uuidError, validationError } from './news';
+import { DOCUMENT_KIND_SELECT, documentTemplateKey } from './docs/common';
 
 // Общие помощники чата с ассистентом: сериализация сообщений, ветвление
 // вариантов, история для промпта и реестр активных стримов.
-// Порт вспомогательной части backend/routes/chat.py.
 
 // ---------------------------------------------------------------------------
-// Даты
+// Диалог из запроса
 // ---------------------------------------------------------------------------
 
 /**
- * ISO-8601 в UTC с меткой зоны — браузер показывает время в локальной зоне.
+ * id диалога текущего пользователя из параметра запроса: 422 - параметра нет
+ * или это не UUID, 404 - диалога нет или он чужой (текст один и тот же, чтобы
+ * не подсвечивать существование чужих диалогов).
  */
-export function utcIso(d: Date | null | undefined): string | null {
-  return d ? d.toISOString() : null;
+export async function requireOwnDialogue(
+  raw: unknown,
+  userId: string,
+  loc: ['query' | 'body', string]
+): Promise<{ id: string } | { response: NextResponse }> {
+  if (raw === null || raw === undefined) {
+    return { response: validationError(loc, 'missing', 'Field required', null) };
+  }
+  const id = asUuid(raw);
+  if (!id) return { response: uuidError(loc, raw) };
+  const dialogue = await prisma.dialogues.findUnique({ where: { id }, select: { user_id: true } });
+  if (!dialogue || dialogue.user_id !== userId) return { response: notFound('Диалог не найден') };
+  return { id };
 }
 
-/** Имя файла из сохранённого пути. Пути пишет Windows-бэкенд — режем оба разделителя. */
+/** Имя файла из сохранённого пути. Пути пишет Windows-бэкенд - режем оба разделителя. */
 function baseName(p: string | null | undefined): string | null {
   if (!p) return null;
   const parts = p.split(/[\\/]/);
@@ -43,9 +60,9 @@ export function formatForwardBlock(items: unknown): string {
   const list = Array.isArray(items) ? (items as ForwardItem[]) : [];
   const lines = ['Пользователь переслал сообщения из корпоративного мессенджера:'];
   list.forEach((it, i) => {
-    // Python: fromisoformat(...).strftime("%d.%m.%Y %H:%M") печатает поля метки
-    // КАК ЕСТЬ, без пересчёта зоны. Поэтому разбираем строку регэкспом, а не
-    // через Date: тот привёл бы наивную метку к локальной зоне сервера.
+    // Поля метки печатаем как есть, без пересчёта зоны. Поэтому разбираем строку
+    // регэкспом, а не через Date: тот привёл бы наивную метку к локальной зоне
+    // сервера.
     let when = '';
     const raw = (it?.sent_at || '').replace('Z', '+00:00');
     const m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/.exec(raw);
@@ -65,7 +82,7 @@ export function formatForwardBlock(items: unknown): string {
 
 /**
  * Текст запроса к пайплайну для сообщения с пересланным блоком.
- * Без комментария пользователя RAG отключаем: предмет — сами пересланные
+ * Без комментария пользователя RAG отключаем: предмет - сами пересланные
  * сообщения, а поиск по ним находит случайные документы.
  */
 export function genTextForUserMessage(
@@ -100,23 +117,23 @@ export function genTextForUserMessage(
 
 /** Минимум полей сообщения, нужный для расчёта активной ветки. */
 export interface BranchMsg {
-  id: number;
+  id: string;
   role: string;
-  variant_group: number | null;
+  variant_group: string | null;
   variant_active: boolean;
-  reply_to: number | null;
-  branch_of: number | null;
+  reply_to: string | null;
+  branch_of: string | null;
 }
 
 /**
- * Сообщения, НЕ принадлежащие активной ветке диалога.
+ * Сообщения, не принадлежащие активной ветке диалога.
  *
- * Диалог — дерево: правка вопроса или ретрай ответа создаёт вариант, у каждого
- * сообщения есть «якорь» (ответ ассистента — на свой вопрос через reply_to;
- * вопрос — на ответ, после которого он был задан, через branch_of). Скрываем
- * неактивные варианты и — каскадно — всё, что на них навешано.
+ * Диалог - дерево: правка вопроса или ретрай ответа создаёт вариант, у каждого
+ * сообщения есть "якорь" (ответ ассистента - на свой вопрос через reply_to;
+ * вопрос - на ответ, после которого он был задан, через branch_of). Скрываем
+ * неактивные варианты и - каскадно - всё, что на них навешано.
  */
-export function hiddenMessageIds(msgs: BranchMsg[]): Set<number> {
+export function hiddenMessageIds(msgs: BranchMsg[]): Set<string> {
   const groups = new Map<string, BranchMsg[]>();
   const groupKey = (m: BranchMsg) => `${m.role}:${m.variant_group ?? m.id}`;
   for (const m of msgs) {
@@ -126,7 +143,7 @@ export function hiddenMessageIds(msgs: BranchMsg[]): Set<number> {
     else groups.set(key, [m]);
   }
 
-  const hidden = new Set<number>();
+  const hidden = new Set<string>();
   for (const variants of groups.values()) {
     if (variants.length < 2) continue;
     const act = variants.find((x) => x.variant_active) ?? variants[variants.length - 1];
@@ -135,14 +152,14 @@ export function hiddenMessageIds(msgs: BranchMsg[]): Set<number> {
 
   const assistIds = msgs.filter((m) => m.role === 'assistant').map((m) => m.id);
 
-  const anchor = (m: BranchMsg): number | null => {
+  const anchor = (m: BranchMsg): string | null => {
     if (m.role === 'assistant') return m.reply_to;
     if (m.branch_of) return m.branch_of;
-    // Фолбэк без branch_of: ближайший предыдущий ответ. Позицию берём по ПЕРВОМУ
-    // варианту группы — правка позднее создаёт вариант с большим id, но логически
-    // он стоит на месте исходного вопроса.
+    // Фолбэк без branch_of: ближайший предыдущий ответ. Позицию берём по первому
+    // варианту группы - правка позднее создаёт вариант с большим id, но логически
+    // он стоит на месте исходного вопроса. UUIDv7 растут со временем.
     const pos = (groups.get(groupKey(m)) as BranchMsg[])[0].id;
-    const prev = assistIds.filter((i) => i < pos);
+    const prev = assistIds.filter((i) => compareIds(i, pos) < 0);
     return prev.length ? prev[prev.length - 1] : null;
   };
 
@@ -166,8 +183,8 @@ export function hiddenMessageIds(msgs: BranchMsg[]): Set<number> {
 // ---------------------------------------------------------------------------
 
 type MessageRow = {
-  id: number;
-  role: string;
+  id: string;
+  role: chat_role;
   content: string;
   is_read: boolean;
   is_finished: boolean;
@@ -177,25 +194,21 @@ type MessageRow = {
   meta: unknown;
   fact_check: unknown;
   forwarded_meta: unknown;
-  attachment_document_id: number | null;
-  variant_group: number | null;
+  attachment_document_id: string | null;
+  variant_group: string | null;
   variant_active: boolean;
-  reply_to: number | null;
-  branch_of: number | null;
+  reply_to: string | null;
+  branch_of: string | null;
 };
 
 export type MessageItem = Record<string, unknown>;
 
 /**
- * Сериализация сообщений для клиента (порт `_message_item`).
- * Python делает по 2-3 запроса НА КАЖДОЕ сообщение; здесь связанные данные
- * подтягиваются пачкой — форма ответа при этом идентична.
+ * Сериализация сообщений для клиента. Связанные данные подтягиваются пачкой, а
+ * не запросами на каждое сообщение.
  */
-export async function messageItems(
-  rows: MessageRow[],
-  user: CurrentUser
-): Promise<MessageItem[]> {
-  const docIds = [...new Set(rows.map((m) => m.attachment_document_id).filter((v): v is number => v != null))];
+export async function messageItems(rows: MessageRow[]): Promise<MessageItem[]> {
+  const docIds = [...new Set(rows.map((m) => m.attachment_document_id).filter((v): v is string => v != null))];
   const userIds = rows.filter((m) => m.role === 'user').map((m) => m.id);
   const asstIds = rows.filter((m) => m.role === 'assistant').map((m) => m.id);
 
@@ -203,26 +216,27 @@ export async function messageItems(
     docIds.length
       ? prisma.my_documents.findMany({
           where: { id: { in: docIds } },
-          select: { id: true, title: true, file_path: true, template_key: true },
+          select: { id: true, title: true, file_path: true, ...DOCUMENT_KIND_SELECT },
         })
       : Promise.resolve([]),
     userIds.length
-      ? prisma.session_documents.findMany({
+      ? prisma.chat_attachments.findMany({
           where: { message_id: { in: userIds } },
           orderBy: { id: 'asc' },
           select: { id: true, filename: true, message_id: true },
         })
       : Promise.resolve([]),
+    // Оценку ставит владелец диалога - она одна на сообщение.
     asstIds.length
       ? prisma.chat_feedback.findMany({
-          where: { message_id: { in: asstIds }, user_id: user.id },
+          where: { message_id: { in: asstIds } },
           select: { message_id: true, rating: true },
         })
       : Promise.resolve([]),
   ]);
 
   const docById = new Map(docs.map((d) => [d.id, d]));
-  const uploadsByMsg = new Map<number, { id: number; filename: string }[]>();
+  const uploadsByMsg = new Map<string, { id: string; filename: string }[]>();
   for (const u of uploads) {
     if (u.message_id == null) continue;
     const list = uploadsByMsg.get(u.message_id);
@@ -238,10 +252,10 @@ export async function messageItems(
       content: m.content,
       is_read: m.is_read,
       is_finished: m.is_finished,
-      created_at: utcIso(m.created_at),
-      finished_at: utcIso(m.finished_at),
-      // Время для показа: у ассистента — конец генерации, у пользователя — отправка.
-      ts: m.role === 'assistant' ? utcIso(m.finished_at ?? m.created_at) : utcIso(m.created_at),
+      created_at: isoUtc(m.created_at),
+      finished_at: isoUtc(m.finished_at),
+      // Время для показа: у ассистента - конец генерации, у пользователя - отправка.
+      ts: m.role === 'assistant' ? isoUtc(m.finished_at ?? m.created_at) : isoUtc(m.created_at),
       sources: m.sources ?? null,
       meta: m.role === 'assistant' ? m.meta ?? null : null,
       fact_check: m.role === 'assistant' ? m.fact_check ?? null : null,
@@ -255,7 +269,7 @@ export async function messageItems(
           id: doc.id,
           title: doc.title,
           filename: baseName(doc.file_path),
-          template_key: doc.template_key,
+          template_key: documentTemplateKey(doc),
         };
       }
     }
@@ -270,7 +284,7 @@ export async function messageItems(
   });
 }
 
-/** Поля, которые читает messageItems/hiddenMessageIds — один select на всех. */
+/** Поля, которые читает messageItems/hiddenMessageIds - один select на всех. */
 export const MESSAGE_SELECT = {
   id: true,
   role: true,
@@ -307,24 +321,23 @@ export function historyEntryContent(m: {
   return m.content;
 }
 
-/** Сколько последних пар реплик держать «как есть» (settings.rag_memory_recent_keep). */
+/** Сколько последних пар реплик держать "как есть". */
 export const MEMORY_RECENT_KEEP = Math.max(1, Number(process.env.RAG_MEMORY_RECENT_KEEP || 2));
 
 /**
- * История сообщений ДО указанного. Берём только активные варианты ассистента,
+ * История сообщений до указанного. Берём только активные варианты ассистента,
  * чтобы не смешивать ветки.
  */
 export async function collectHistoryBefore(
-  sessionId: string,
-  beforeId: number,
+  dialogueId: string,
+  beforeId: string,
   limit = MEMORY_RECENT_KEEP
 ): Promise<{ role: 'user' | 'assistant'; content: string }[]> {
   const rows = await prisma.chat_messages.findMany({
     where: {
-      session_id: sessionId,
+      dialogue_id: dialogueId,
       is_finished: true,
       id: { lt: beforeId },
-      role: { in: ['user', 'assistant'] },
     },
     orderBy: { id: 'desc' },
     take: limit * 2,
@@ -335,7 +348,7 @@ export async function collectHistoryBefore(
     .reverse()
     .filter((m) => m.role === 'user' || m.variant_active)
     .map((m) => ({
-      role: m.role as 'user' | 'assistant',
+      role: m.role,
       content: historyEntryContent(m),
     }));
 }
@@ -345,24 +358,24 @@ export async function collectHistoryBefore(
 // ---------------------------------------------------------------------------
 
 /**
- * Порт `_persist_and_finish`: пишет текущий текст в БД, при необходимости
+ * Пишет текущий текст в БД, при необходимости
  * привязывает готовый документ и будит SSE.
  *
  * Живёт здесь (а не в lib/chat-generate.ts), потому что этим финишем
  * пользуются и ветки инструментов/докгена (lib/docs/chat-tools.ts,
- * lib/docs/docgen.ts) — иначе получился бы цикл импортов.
+ * lib/docs/docgen.ts) - иначе получился бы цикл импортов.
  */
 export async function persistAndFinish(
-  assistantMessageId: number,
+  assistantMessageId: string,
   state: StreamState,
   meta: Record<string, unknown> | null = null,
-  attachDocId: number | null = null
+  attachDocId: string | null = null
 ): Promise<void> {
   try {
     let finalMeta = meta;
     if (attachDocId !== null) {
       // ПДн-документ: помечаем ответ И запросное сообщение пользователя
-      // (вместе с его вложениями-выгрузками) для автоудаления по TTL —
+      // (вместе с его вложениями-выгрузками) для автоудаления по TTL -
       // по ТЗ содержимое с персональными данными не хранится.
       const doc = await prisma.my_documents.findUnique({
         where: { id: attachDocId },
@@ -372,11 +385,11 @@ export async function persistAndFinish(
         finalMeta = { ...(meta || {}), pii_doc: true };
         const msg = await prisma.chat_messages.findUnique({
           where: { id: assistantMessageId },
-          select: { session_id: true },
+          select: { dialogue_id: true },
         });
         const req = msg
           ? await prisma.chat_messages.findFirst({
-              where: { session_id: msg.session_id, role: 'user', id: { lt: assistantMessageId } },
+              where: { dialogue_id: msg.dialogue_id, role: 'user', id: { lt: assistantMessageId } },
               orderBy: { id: 'desc' },
               select: { id: true, meta: true },
             })
@@ -406,7 +419,7 @@ export async function persistAndFinish(
       },
     });
   } catch {
-    /* сообщение могли удалить — стрим всё равно закрываем */
+    /* сообщение могли удалить - стрим всё равно закрываем */
   }
   state.finished = true;
   state.event.set();
@@ -414,10 +427,10 @@ export async function persistAndFinish(
 
 /** Общий финиш инструментальных веток: текст + (опционально) вложение. */
 export async function finishTool(
-  assistantMessageId: number,
+  assistantMessageId: string,
   state: StreamState,
   text: string,
-  attachDocId: number | null = null
+  attachDocId: string | null = null
 ): Promise<true> {
   state.append(text);
   state.event.set();
@@ -429,7 +442,7 @@ export async function finishTool(
 // Реестр активных стримов (в памяти процесса)
 // ---------------------------------------------------------------------------
 
-/** Аналог asyncio.Event: будит SSE-цикл при появлении данных. */
+/** Событие-флаг: будит SSE-цикл при появлении данных. */
 export class StreamEvent {
   private flag = false;
   private resolvers: (() => void)[] = [];
@@ -445,7 +458,7 @@ export class StreamEvent {
     this.flag = false;
   }
 
-  /** true — событие пришло, false — истёк таймаут (пора слать keepalive). */
+  /** true - событие пришло, false - истёк таймаут (пора слать keepalive). */
   wait(timeoutMs: number): Promise<boolean> {
     if (this.flag) return Promise.resolve(true);
     return new Promise<boolean>((resolve) => {
@@ -469,26 +482,26 @@ export class StreamEvent {
 }
 
 export class StreamState {
-  session_id: string;
-  message_id: number;
+  dialogue_id: string;
+  message_id: string;
   started_at: Date;
-  /** Последовательные чанки текста — индекс в массиве и есть seq. */
+  /** Последовательные чанки текста - индекс в массиве и есть seq. */
   buffer: string[] = [];
   finished = false;
   cancelled = false;
   /** queued | search | rerank | generate */
   status = 'search';
-  /** Позиция в очереди к ассистенту, пока запрос ждёт (0 — не в очереди). */
+  /** Позиция в очереди к ассистенту, пока запрос ждёт (0 - не в очереди). */
   queue_position = 0;
   queue_total = 0;
-  /** Структурные источники — готовы ДО текста. */
+  /** Структурные источники - готовы до текста. */
   sources: unknown[] = [];
   /** id только что созданного сообщения пользователя (для обычной отправки). */
-  user_message_id: number | null = null;
+  user_message_id: string | null = null;
   event = new StreamEvent();
 
-  constructor(sessionId: string, messageId: number, userMessageId: number | null = null) {
-    this.session_id = sessionId;
+  constructor(dialogueId: string, messageId: string, userMessageId: string | null = null) {
+    this.dialogue_id = dialogueId;
     this.message_id = messageId;
     this.started_at = new Date();
     this.user_message_id = userMessageId;
@@ -514,41 +527,82 @@ export class StreamState {
 }
 
 const g = globalThis as unknown as {
-  __hrStreams?: Map<number, StreamState>;
-  __hrStreamsBySession?: Map<string, Set<number>>;
+  __hrStreams?: Map<string, StreamState>;
+  __hrStreamsByDialogue?: Map<string, Set<string>>;
 };
 
 function registry() {
   if (!g.__hrStreams) g.__hrStreams = new Map();
-  if (!g.__hrStreamsBySession) g.__hrStreamsBySession = new Map();
-  return { byId: g.__hrStreams, bySession: g.__hrStreamsBySession };
+  if (!g.__hrStreamsByDialogue) g.__hrStreamsByDialogue = new Map();
+  return { byId: g.__hrStreams, byDialogue: g.__hrStreamsByDialogue };
 }
 
 export function registerStream(state: StreamState): void {
-  const { byId, bySession } = registry();
+  const { byId, byDialogue } = registry();
   byId.set(state.message_id, state);
-  const set = bySession.get(state.session_id) ?? new Set<number>();
+  const set = byDialogue.get(state.dialogue_id) ?? new Set<string>();
   set.add(state.message_id);
-  bySession.set(state.session_id, set);
+  byDialogue.set(state.dialogue_id, set);
 }
 
 export function unregisterStream(state: StreamState): void {
-  const { byId, bySession } = registry();
+  const { byId, byDialogue } = registry();
   byId.delete(state.message_id);
-  const set = bySession.get(state.session_id);
+  const set = byDialogue.get(state.dialogue_id);
   if (set) {
     set.delete(state.message_id);
-    if (!set.size) bySession.delete(state.session_id);
+    if (!set.size) byDialogue.delete(state.dialogue_id);
   }
 }
 
-export function getStream(messageId: number): StreamState | null {
+export function getStream(messageId: string): StreamState | null {
   return registry().byId.get(messageId) ?? null;
 }
 
-export function sessionStreams(sessionId: string): StreamState[] {
-  const { byId, bySession } = registry();
-  return [...(bySession.get(sessionId) ?? [])]
+export function dialogueStreams(dialogueId: string): StreamState[] {
+  const { byId, byDialogue } = registry();
+  return [...(byDialogue.get(dialogueId) ?? [])]
     .map((id) => byId.get(id))
     .filter((s): s is StreamState => Boolean(s));
+}
+
+/**
+ * Восстановление после рестарта сервера: реестр стримов и очередь LLM живут
+ * в памяти, вместе с процессом умирают и сами генерации (это оборванные
+ * HTTP-запросы - их не "доиграть"). Чтобы у пользователя не висело вечное
+ * "печатает...", закрываем осиротевшие сообщения ассистента понятной пометкой -
+ * кнопка "повторить" создаст новый вариант.
+ *
+ * Вызывается из instrumentation.ts на старте; активные стримы (появившиеся
+ * между стартом и вызовом) не трогаем.
+ */
+export async function recoverInterruptedStreams(): Promise<number> {
+  const { prisma } = await import('@/lib/db');
+  const live = [...registry().byId.keys()];
+  const orphans = await prisma.chat_messages.findMany({
+    where: {
+      role: 'assistant',
+      is_finished: false,
+      ...(live.length ? { id: { notIn: live } } : {}),
+      // Свежесозданные (< 10 с) могло ещё не подхватить runGeneration.
+      created_at: { lt: new Date(Date.now() - 10_000) },
+    },
+    select: { id: true, content: true },
+  });
+  const note =
+    '⚠️ Генерация была прервана перезапуском сервера. ' +
+    'Отправьте вопрос ещё раз или нажмите «повторить».';
+  for (const m of orphans) {
+    await prisma.chat_messages
+      .update({
+        where: { id: m.id },
+        data: {
+          content: m.content ? `${m.content}\n\n${note}` : note,
+          is_finished: true,
+          finished_at: new Date(),
+        },
+      })
+      .catch(() => undefined);
+  }
+  return orphans.length;
 }

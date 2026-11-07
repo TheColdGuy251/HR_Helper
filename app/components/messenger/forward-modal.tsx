@@ -5,18 +5,18 @@ import { apiGet } from '@/lib/api';
 import type { ConvItem, ConversationsData } from './types';
 import { matchesAssistant } from './types';
 
-// Модалка выбора беседы для пересылки (порт диалога пересылки из messenger.js).
-// Список — GET /api/messenger/conversations?q=, отправка — на стороне вызывающего:
+// Модалка выбора беседы для пересылки.
+// Список - GET /api/messenger/conversations?q=, отправка - на стороне вызывающего:
 // POST /api/messenger/send с forward_user_message_id / forward_message_id.
-// Первым в списке — «HR-ассистент» (легаси assistantRow в режиме пересылки,
-// messenger.js:415-451): пересылка уходит в POST /api/messenger/forward-to-assistant.
+// Первым в списке - "HR-ассистент": пересылка ему уходит в
+// POST /api/messenger/forward-to-assistant.
 
 const SEARCH_DEBOUNCE = 220;
 
 /** Куда пересылаем: общий чат или личный диалог. */
 export interface ForwardTarget {
   general: boolean;
-  peerId: number | null;
+  peerId: string | null;
   name: string;
 }
 
@@ -38,7 +38,7 @@ export function ForwardModal({
   busy?: boolean;
   error?: string;
   onPick: (t: ForwardTarget) => void;
-  /** Строка «HR-ассистент» — как в легаси (assistantRow в messenger.js). */
+  /** Строка "HR-ассистент". */
   onAssistant?: () => void;
   onClose: () => void;
 }) {
@@ -64,7 +64,7 @@ export function ForwardModal({
       alive = false;
       clearTimeout(t);
     };
-    // data намеренно не в зависимостях: нужен только флаг «первая загрузка».
+    // data намеренно не в зависимостях: нужен только флаг "первая загрузка".
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q]);
 

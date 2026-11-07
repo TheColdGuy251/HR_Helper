@@ -20,10 +20,10 @@ import { EmptyState, ErrorCallout, InfoCallout, PrimaryButton, SearchInput, Seco
 import GroupBlocks, { buildSections } from '@/components/kb/group-blocks';
 import KbFilters, { type FilterDef } from '@/components/kb/filters-modal';
 
-// Вкладка «FAQ» (только редакторы БЗ) — порт loadFaq/renderFaq/openFaqEditor/loadKbUsers из kb.js.
+// Вкладка "FAQ" (только редакторы БЗ).
 
 interface FaqEntry {
-  id: number;
+  id: string;
   group_key: string;
   position: number;
   source_file: string | null;
@@ -38,7 +38,7 @@ interface FaqEntry {
 }
 
 interface KbUser {
-  id: number;
+  id: string;
   full_name: string;
   username: string;
   position: string | null;
@@ -50,15 +50,14 @@ const inputCls =
   'w-full px-4 py-2.5 bg-white border border-gray-200 rounded-xl focus:outline-none focus:border-[#2563eb] text-sm text-slate-700';
 const labelCls = 'text-xs font-bold text-gray-500 flex flex-col gap-1';
 
-/** Тематика FAQ — из имени файла-источника («чат-бот Отпуска.docx» → «Отпуска»).
- *  Порт faqCategoryName из kb.js:1537. */
+/** Тематика FAQ - из имени файла-источника ("чат-бот Отпуска.docx" -> "Отпуска"). */
 function faqCategoryName(sourceFile: string | null): string {
   let stem = String(sourceFile || '').replace(/\.[a-z0-9]+$/i, '');
   stem = stem.replace(/чат[\s-]?бот/i, '').replace(/^[\s\-–_]+|[\s\-–_]+$/g, '');
   return stem ? stem[0].toUpperCase() + stem.slice(1) : 'Прочее';
 }
 
-/** Ветвящаяся запись — есть метка под-ветки или уточняющий вопрос (kb.js:1515). */
+/** Ветвящаяся запись - есть метка под-ветки или уточняющий вопрос. */
 const isBranch = (e: FaqEntry) => !!(e.option_label || e.clarify_question);
 
 export default function FaqTab({ isAdmin }: { isAdmin: boolean }) {
@@ -66,10 +65,10 @@ export default function FaqTab({ isAdmin }: { isAdmin: boolean }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
-  // Фильтры вкладки — в модалке «Фильтры» (kb.html:328-348).
+  // Фильтры вкладки - в модалке "Фильтры".
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [status, setStatus] = useState<{ kind: 'ok' | 'error' | 'progress'; text: string } | null>(null);
-  const [editId, setEditId] = useState<number | null>(null);
+  const [editId, setEditId] = useState<string | null>(null);
   const importRef = useRef<HTMLInputElement>(null);
   const statusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -102,7 +101,7 @@ export default function FaqTab({ isAdmin }: { isAdmin: boolean }) {
     }
   };
 
-  const deleteEntry = async (id: number) => {
+  const deleteEntry = async (id: string) => {
     if (!window.confirm('Удалить FAQ-запись? Ответы бота перестанут её использовать.')) return;
     try {
       await apiDelete(`/api/kb/faq/${id}`);
@@ -135,7 +134,7 @@ export default function FaqTab({ isAdmin }: { isAdmin: boolean }) {
     }
   };
 
-  // Фильтры — порт faqPredicate из kb.js:1548 + тематика + поиск.
+  // Фильтры + тематика + поиск.
   const q = search.trim().toLowerCase();
   const filtered = items.filter((e) => {
     if (filters.group && faqCategoryName(e.source_file) !== filters.group) return false;
@@ -154,7 +153,7 @@ export default function FaqTab({ isAdmin }: { isAdmin: boolean }) {
     return hay.includes(q);
   });
 
-  // Опции «Тематика» строим по полному списку (kb.js:165 fillGroupFilter).
+  // Опции "Тематика" строим по полному списку.
   const topics = [...new Set(items.map((e) => faqCategoryName(e.source_file)))].sort((a, b) =>
     a.localeCompare(b, 'ru'),
   );
@@ -245,7 +244,7 @@ export default function FaqTab({ isAdmin }: { isAdmin: boolean }) {
       {/* Доступы редакторов (только админ) */}
       {isAdmin && <EditorsAccess />}
 
-      {/* Список FAQ: плитка групп по тематикам (kb.js:1568) */}
+      {/* Список FAQ: плитка групп по тематикам */}
       {loading ? (
         <EmptyState>Загрузка…</EmptyState>
       ) : filtered.length === 0 ? (
@@ -451,7 +450,7 @@ function FaqEditor({ entry, onCancel, onSaved }: { entry: FaqEntry; onCancel: ()
   );
 }
 
-/** Блок «Доступы: редакторы базы знаний» (только админ). */
+/** Блок "Доступы: редакторы базы знаний" (только админ). */
 function EditorsAccess() {
   const [open, setOpen] = useState(false);
   const [users, setUsers] = useState<KbUser[]>([]);

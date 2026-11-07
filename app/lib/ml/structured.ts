@@ -1,5 +1,6 @@
 import 'server-only';
 import { prisma } from '@/lib/db';
+import { compareIds } from '@/lib/ids';
 import { ABBREVIATIONS } from './aliases';
 import { initStemmer, tokenize } from './bm25';
 import { RAG } from './config';
@@ -17,24 +18,21 @@ import {
 
 // Структурные режимы retrieval по плану запроса: точная статья/единица,
 // первая/последняя, первые N, количество + подтяжка связанных норм.
-// Порт metadata-методов RAGPipeline (services/rag/pipeline.py): _exact_*,
-// _extreme_*, _range_*, _count_*, _resolve_doc_hint, _merge_article_chunks,
-// _expand_with_linked_articles.
 
-// Заголовок статьи в начале чанка: «Статья 81. …»
+// Заголовок статьи в начале чанка: "Статья 81. ..."
 const ARTICLE_HEADER_RE = /^\s*стать[яеи]?\s+(\d+(?:\.\d+)?)/i;
-// Маркер чанка-продолжения длинной статьи: «[Статья 81. … — продолжение] …»
+// Маркер чанка-продолжения длинной статьи: "[Статья 81. ... - продолжение] ..."
 const CONT_TAG_RE = /^\[[^\]]*—\s*продолжение\]\s*/i;
 
-/** 81.0 → «81», 84.1 → «84.1» (для текстовых фолбэков и справок). */
+/** 81.0 -> "81", 84.1 -> "84.1" (для текстовых фолбэков и справок). */
 export function fmtArticleNo(n: number): string {
   return Number.isInteger(n) ? String(Math.trunc(n)) : String(n);
 }
 
 /**
- * Склеивает чанки одной статьи (голова + «— продолжение») в ЦЕЛЬНЫЙ текст:
+ * Склеивает чанки одной статьи (голова + "- продолжение") в цельный текст:
  * снимает маркер продолжения и срезает дублирующееся перекрытие чанкера.
- * Иначе модель видит «фрагменты» с обрывом посреди слова и отказывается
+ * Иначе модель видит "фрагменты" с обрывом посреди слова и отказывается
  * цитировать статью, хотя весь текст уже в контексте.
  */
 export function mergeArticleChunks(chunks: RetrievedChunk[]): RetrievedChunk[] {
@@ -51,7 +49,7 @@ export function mergeArticleChunks(chunks: RetrievedChunk[]): RetrievedChunk[] {
     ) {
       const cont = c.text.slice(m[0].length);
       // Перекрытие: конец головы дословно повторяется в начале продолжения
-      // (chunk_overlap символов, часто с обрывом слова) — ищем стык.
+      // (chunk_overlap символов, часто с обрывом слова) - ищем стык.
       const maxOv = Math.min(prev.text.length, cont.length, RAG.chunkOverlap + 80);
       let joined: string | null = null;
       for (let k = maxOv; k > 19; k--) {
@@ -70,16 +68,16 @@ export function mergeArticleChunks(chunks: RetrievedChunk[]): RetrievedChunk[] {
 }
 
 /**
- * Прямая выборка чанков, начинающихся со «Статья N.» — фолбэк для старых
+ * Прямая выборка чанков, начинающихся со "Статья N." - фолбэк для старых
  * данных без article_no в payload.
  *
- * Лимит сознательно небольшой: «Статья 1.» встречается во многих документах,
+ * Лимит сознательно небольшой: "Статья 1." встречается во многих документах,
  * без лимита промпт раздувается до 3-4 тысяч токенов.
  */
 export async function exactArticleRetrieve(articleNos: string[]): Promise<RetrievedChunk[]> {
   const out: RetrievedChunk[] = [];
   for (const n of articleNos) {
-    // digitBoundary: «статья 28» не должна цеплять «Статья 280»/«28.1».
+    // digitBoundary: "статья 28" не должна цеплять "Статья 280"/"28.1".
     const hits = await fetchChunksByTextPrefix(`статья ${n}`.toLowerCase(), 4, true);
     const contHits = await fetchChunksByTextPrefix(`[статья ${n}`.toLowerCase(), 4, true);
     out.push(...hits, ...contHits);
@@ -93,12 +91,12 @@ export async function exactArticleRetrieve(articleNos: string[]): Promise<Retrie
     seen.add(key);
     uniq.push(c);
   }
-  uniq.sort((a, b) => (a.document_id ?? 0) - (b.document_id ?? 0) || (a.chunk_index ?? 0) - (b.chunk_index ?? 0));
+  uniq.sort((a, b) => compareIds(a.document_id ?? '', b.document_id ?? '') || (a.chunk_index ?? 0) - (b.chunk_index ?? 0));
   return mergeArticleChunks(uniq);
 }
 
 /**
- * Сканирует заголовки «Статья N» и возвращает минимальный/максимальный номер —
+ * Сканирует заголовки "Статья N" и возвращает минимальный/максимальный номер -
  * фолбэк extreme для данных без article_no.
  */
 export async function findExtremeArticleNumber(kind: 'first' | 'last'): Promise<string | null> {
@@ -116,19 +114,19 @@ export async function findExtremeArticleNumber(kind: 'first' | 'last'): Promise<
 }
 
 /**
- * Голосование топ-5 dense-хитов за document_id — чтобы extreme/range/exact
- * привязывались к одному документу («последняя статья ТК», а не по всей базе).
+ * Голосование топ-5 dense-хитов за document_id - чтобы extreme/range/exact
+ * привязывались к одному документу ("последняя статья ТК", а не по всей базе).
  */
-export async function pickRelevantDocument(query: string): Promise<number | null> {
+export async function pickRelevantDocument(query: string): Promise<string | null> {
   try {
     const qvec = await embedOne(query, true);
     const hits = await denseSearch(qvec, { topK: 5 });
-    const votes = new Map<number, number>();
+    const votes = new Map<string, number>();
     for (const h of hits) {
       if (h.document_id === null) continue;
       votes.set(h.document_id, (votes.get(h.document_id) ?? 0) + 1);
     }
-    let best: number | null = null;
+    let best: string | null = null;
     let bestVotes = 0;
     for (const [docId, n] of votes) {
       if (n > bestVotes) {
@@ -142,15 +140,79 @@ export async function pickRelevantDocument(query: string): Promise<number | null
   }
 }
 
+// Слова, не различающие документы одной организации, - не считаем совпадением.
+const DOC_GENERIC_LEMMAS = new Set([
+  'тиу', 'университет', 'тюменский', 'индустриальный', 'год', 'работник',
+  'организация', 'российский', 'федерация', 'рф',
+]);
+
 /**
- * «ТК»/«коллективного договора» → document_id. Аббревиатуру разворачиваем
- * через aliases, затем сопоставляем ЛЕММЫ подсказки с леммами названий:
- * SQL LIKE не понижает кириллицу и не знает падежей («коллективного договора»
- * ≠ подстрока «Коллективный договор»). Документов десятки, полный проход дёшев.
- * Совпадение — все леммы подсказки входят в леммы названия; при нескольких
+ * Документ по названию, упомянутому в самом запросе ("сколько пунктов в
+ * положении о наградах"). Нужен, потому что LLM-планировщик часто оставляет
+ * doc_hint пустым, а семантическое голосование (pickRelevantDocument) на
+ * "пересекающихся" названиях промахивается - и count/range уверенно считают
+ * структуру чужого документа.
+ *
+ * Совпадение: >=2 значимых лемм названия встречаются в запросе. Побеждает
+ * документ с наибольшим числом совпавших лемм (при равенстве - с более
+ * коротким названием); неоднозначная ничья -> null (не угадываем).
+ */
+export async function resolveDocFromQuery(query: string): Promise<string | null> {
+  const q = (query || '').trim();
+  if (!q) return null;
+  try {
+    await initStemmer();
+    const qLemmas = new Set(tokenize(q));
+    if (qLemmas.size < 2) return null;
+
+    const docs = await prisma.kb_documents.findMany({
+      where: { status: 'indexed' },
+      select: { id: true, title: true },
+    });
+
+    let bestId: string | null = null;
+    let bestScore = 0;
+    let secondScore = 0;
+    for (const d of docs) {
+      // Числа в названии участвуют в матче только "длинные" (>=3 цифр):
+      // "постановление 225" должно найтись по номеру, а случайное совпадение
+      // "пункт 5" <-> "Новость 5" - нет.
+      const tLemmas = [...new Set(tokenize(d.title || ''))].filter(
+        (t) =>
+          !DOC_GENERIC_LEMMAS.has(t) &&
+          !(/^\d/.test(t) && t.replace(/\D/g, '').length < 3)
+      );
+      if (!tLemmas.length) continue;
+      const hit = tLemmas.filter((t) => qLemmas.has(t)).length;
+      if (hit < 2) continue;
+      // Доля совпавших лемм названия - тай-брейк в пользу точного короткого
+      // названия ("Положение о наградах" против длинного составного).
+      const score = hit + hit / tLemmas.length;
+      if (score > bestScore) {
+        secondScore = bestScore;
+        bestScore = score;
+        bestId = d.id;
+      } else if (score > secondScore) {
+        secondScore = score;
+      }
+    }
+    // Ничья между двумя документами - выбор недостоверен.
+    if (bestId !== null && bestScore === secondScore) return null;
+    return bestId;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * "ТК"/"коллективного договора" -> document_id. Аббревиатуру разворачиваем
+ * через aliases, затем сопоставляем леммы подсказки с леммами названий:
+ * SQL LIKE не понижает кириллицу и не знает падежей ("коллективного договора"
+ * != подстрока "Коллективный договор"). Документов десятки, полный проход дёшев.
+ * Совпадение - все леммы подсказки входят в леммы названия; при нескольких
  * кандидатах берём самое короткое (наиболее точное) название.
  */
-export async function resolveDocHint(docHint: string | null): Promise<number | null> {
+export async function resolveDocHint(docHint: string | null): Promise<string | null> {
   if (!docHint) return null;
   try {
     await initStemmer();
@@ -166,7 +228,7 @@ export async function resolveDocHint(docHint: string | null): Promise<number | n
       select: { id: true, title: true, source_uri: true },
     });
 
-    let bestId: number | null = null;
+    let bestId: string | null = null;
     let bestExtra: number | null = null;
     for (const d of docs) {
       const titleLemmas = new Set([...tokenize(d.title || ''), ...tokenize(d.source_uri || '')]);
@@ -195,10 +257,10 @@ export async function resolveDocHint(docHint: string | null): Promise<number | n
 }
 
 /**
- * Синтетический чанк с ДЕТЕРМИНИРОВАННЫМ фактом о структуре документа.
- * Нужен, потому что в обычных выдержках нет признака «это последняя статья», и
+ * Синтетический чанк с детерминированным фактом о структуре документа.
+ * Нужен, потому что в обычных выдержках нет признака "это последняя статья", и
  * системный промпт справедливо отказывается угадывать. Факт вычислен по индексу
- * (article_no/unit_ord), не галлюцинация — поэтому даём его модели как источник.
+ * (article_no/unit_ord), не галлюцинация - поэтому даём его модели как источник.
  */
 function structureNote(docTitle: string, text: string): RetrievedChunk {
   return {
@@ -217,7 +279,7 @@ function structureNote(docTitle: string, text: string): RetrievedChunk {
 // Статьи (unit = article)
 // ---------------------------------------------------------------------------
 
-async function articlesChunks(pairs: [number, number | null][]): Promise<RetrievedChunk[]> {
+async function articlesChunks(pairs: [number, string | null][]): Promise<RetrievedChunk[]> {
   const out: RetrievedChunk[] = [];
   const seen = new Set<string>();
   for (const [no, did] of pairs) {
@@ -233,26 +295,30 @@ async function articlesChunks(pairs: [number, number | null][]): Promise<Retriev
 
 export async function exactArticleByMeta(
   articleNos: number[],
-  documentId: number | null = null
+  documentId: string | null = null
 ): Promise<RetrievedChunk[]> {
   return mergeArticleChunks(await articlesChunks(articleNos.map((n) => [n, documentId])));
 }
 
-/** Только заголовок статьи (первый чанк) — для extreme/range этого достаточно. */
-async function headChunk(no: number, did: number | null): Promise<RetrievedChunk | null> {
+/** Только заголовок статьи (первый чанк) - для extreme/range этого достаточно. */
+async function headChunk(no: number, did: string | null): Promise<RetrievedChunk | null> {
   const cs = await fetchChunksByArticleNo(no, did, 1);
   return cs.length ? cs[0] : null;
 }
 
-async function headsFor(query: string, docHint: string | null): Promise<[number, number | null][]> {
-  // Документ по явной подсказке («ТК») приоритетнее семантического выбора.
-  const docId = (await resolveDocHint(docHint)) ?? (await pickRelevantDocument(query));
+async function headsFor(query: string, docHint: string | null): Promise<[number, string | null][]> {
+  // Приоритет: явная подсказка плана ("ТК") -> название документа в самом
+  // запросе -> семантическое голосование (последнее чаще всего ошибается).
+  const docId =
+    (await resolveDocHint(docHint)) ??
+    (await resolveDocFromQuery(query)) ??
+    (await pickRelevantDocument(query));
   let heads = await fetchArticleHeads(docId);
   if (!heads.length && docId !== null) heads = await fetchArticleHeads(null); // глобальный фолбэк
   return heads;
 }
 
-/** «Первая/последняя статья»: справка о структуре + заголовок этой статьи. */
+/** "Первая/последняя статья": справка о структуре + заголовок этой статьи. */
 export async function extremeArticleByMeta(
   extreme: 'first' | 'last',
   query: string,
@@ -276,7 +342,7 @@ export async function extremeArticleByMeta(
   return [note, head];
 }
 
-/** «Первые/последние N статей»: справка + заголовки выбранных статей. */
+/** "Первые/последние N статей": справка + заголовки выбранных статей. */
 export async function rangeArticlesByMeta(
   n: number,
   order: 'asc' | 'desc',
@@ -308,7 +374,7 @@ export async function rangeArticlesByMeta(
 }
 
 /**
- * Богатая справка о количестве статей — чтобы модель отвечала на семейство
+ * Богатая справка о количестве статей - чтобы модель отвечала на семейство
  * вопросов (всего / без подстатей / сколько подстатей / диапазон), а не на один
  * шаблон. Считаем по уникальным номерам заголовков.
  */
@@ -319,8 +385,8 @@ export async function countArticles(
   const heads = await headsFor(query, docHint);
   if (!heads.length) return [];
   const nos = [...new Set(heads.map(([no]) => no))].sort((a, b) => a - b);
-  const main = nos.filter((n) => Number.isInteger(n)); // 81, 82 …
-  const sub = nos.filter((n) => !Number.isInteger(n)); // 84.1, 22.2 …
+  const main = nos.filter((n) => Number.isInteger(n)); // 81, 82 ...
+  const sub = nos.filter((n) => !Number.isInteger(n)); // 84.1, 22.2 ...
   const sample = await headChunk(nos[0], null);
   const title = sample?.title || 'документ';
   const rng = main.length
@@ -341,7 +407,7 @@ export async function countArticles(
 }
 
 // ---------------------------------------------------------------------------
-// Обобщённая навигация по единицам (раздел/глава/пункт/§) — не «Статья»
+// Обобщённая навигация по единицам (раздел/глава/пункт/параграф) - не "Статья"
 // ---------------------------------------------------------------------------
 // (первый_прил, последний_прил, именительный ед.ч., родительный мн.ч.)
 const UNIT_WORDS: Record<string, [string, string, string, string]> = {
@@ -356,33 +422,84 @@ function unitWords(unit: string): [string, string, string, string] {
   return UNIT_WORDS[unit] ?? ['первый', 'последний', unit, unit];
 }
 
+/** Порядок перебора типов юнитов внутри документа, когда запрошенный пуст. */
+const UNIT_FALLBACK_ORDER: PlanUnit[] = ['section', 'chapter', 'clause', 'paragraph', 'article'];
+
+interface UnitHeadsResult {
+  /** Фактический тип юнита, по которому найдены головы (может отличаться от запрошенного). */
+  unit: PlanUnit;
+  /** true - в найденном документе запрошенный тип не размечен, взят другой. */
+  substituted: boolean;
+  heads: [string, number, string | null][];
+}
+
 async function unitHeadsFor(
   unit: PlanUnit,
   query: string,
   docHint: string | null
-): Promise<[string, number, number | null][]> {
-  const docId = (await resolveDocHint(docHint)) ?? (await pickRelevantDocument(query));
+): Promise<UnitHeadsResult> {
+  const docId =
+    (await resolveDocHint(docHint)) ??
+    (await resolveDocFromQuery(query)) ??
+    (await pickRelevantDocument(query));
+
   let heads = await fetchUnitHeads(unit, docId);
-  if (!heads.length && docId !== null) heads = await fetchUnitHeads(unit, null);
-  return heads;
+  if (heads.length || docId === null) return { unit, substituted: false, heads };
+
+  // Документ определён, но юнитов запрошенного типа в нём нет ("сколько
+  // разделов в колдоговоре", а размечены только пункты). Раньше здесь был
+  // глобальный фолбэк по всей базе - он давал уверенный подсчёт по чужому
+  // документу. Вместо этого пробуем другие типы юнитов этого документа.
+  for (const alt of UNIT_FALLBACK_ORDER) {
+    if (alt === unit) continue;
+    heads = await fetchUnitHeads(alt, docId);
+    if (heads.length) return { unit: alt, substituted: true, heads };
+  }
+  // В документе вообще нет размеченных юнитов - прежний глобальный фолбэк.
+  heads = await fetchUnitHeads(unit, null);
+  return { unit, substituted: false, heads };
 }
 
 export async function exactUnitsByMeta(
   unit: PlanUnit,
   nos: number[],
-  documentId: number | null = null
+  documentId: string | null = null
 ): Promise<RetrievedChunk[]> {
   const out: RetrievedChunk[] = [];
   const seen = new Set<string>();
+  const push = (c: RetrievedChunk): void => {
+    const key = `${c.document_id}:${c.chunk_index}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(c);
+  };
+  // Головы юнитов документа - для префиксного фолбэка (лениво, один раз).
+  let headsCache: [string, number, string | null][] | null = null;
+
   for (const n of nos) {
-    for (const c of await fetchChunksByUnit(unit, fmtArticleNo(n), documentId, 8)) {
-      const key = `${c.document_id}:${c.chunk_index}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push(c);
+    const exact = await fetchChunksByUnit(unit, fmtArticleNo(n), documentId, 8);
+    exact.forEach(push);
+    // "пункт 1" в документе, где размечены только подпункты (1.5, 1.7...):
+    // точного юнита "1" нет - отдаём головы подпунктов 1.x этого документа.
+    if (!exact.length && Number.isInteger(n) && documentId !== null) {
+      headsCache ??= await fetchUnitHeads(unit, documentId);
+      const prefix = `${fmtArticleNo(n)}.`;
+      for (const [noStr, , doc] of headsCache.filter(([s]) => s.startsWith(prefix)).slice(0, 6)) {
+        (await fetchChunksByUnit(unit, noStr, doc, 1)).forEach(push);
+      }
     }
   }
   return out;
+}
+
+/** Пометка в справку, если запрошенный тип юнита в документе не размечен. */
+function substitutionNote(requested: PlanUnit, actual: PlanUnit): string {
+  const reqGen = unitWords(requested)[3];
+  const actNoun = unitWords(actual)[2];
+  return (
+    ` Обратите внимание: ${reqGen} как таковых в структуре документа не размечено — ` +
+    `структурной единицей является «${actNoun}».`
+  );
 }
 
 export async function extremeUnitByMeta(
@@ -391,21 +508,24 @@ export async function extremeUnitByMeta(
   query: string,
   docHint: string | null = null
 ): Promise<RetrievedChunk[]> {
-  const heads = await unitHeadsFor(unit, query, docHint);
+  const res = await unitHeadsFor(unit, query, docHint);
+  const heads = res.heads;
   if (!heads.length) return [];
+  const actualUnit = res.unit;
   const [noStr, , doc] = extreme === 'first' ? heads[0] : heads[heads.length - 1];
-  const cs = await fetchChunksByUnit(unit, noStr, doc, 1);
+  const cs = await fetchChunksByUnit(actualUnit, noStr, doc, 1);
   if (!cs.length) return [];
   const head = cs[0];
 
-  const [firstAdj, lastAdj, noun] = unitWords(unit);
+  const [firstAdj, lastAdj, noun] = unitWords(actualUnit);
   const which = extreme === 'first' ? firstAdj : lastAdj;
   const capNoun = noun.charAt(0).toUpperCase() + noun.slice(1);
   const note = structureNote(
     head.title || 'документ',
     `По структуре документа определено: единицы «${noun}» нумеруются с ${heads[0][0]} по ` +
       `${heads[heads.length - 1][0]}. Таким образом, ${which} ${noun} — ${capNoun} ${noStr}. ` +
-      'Заголовок приведён ниже.'
+      'Заголовок приведён ниже.' +
+      (res.substituted ? substitutionNote(unit, actualUnit) : '')
   );
   return [note, head];
 }
@@ -417,23 +537,26 @@ export async function rangeUnitsByMeta(
   query: string,
   docHint: string | null = null
 ): Promise<RetrievedChunk[]> {
-  const heads = await unitHeadsFor(unit, query, docHint);
+  const res = await unitHeadsFor(unit, query, docHint);
+  const heads = res.heads;
   if (!heads.length) return [];
+  const actualUnit = res.unit;
   const chosen = (order === 'asc' ? heads.slice(0, n) : heads.slice(-n)).sort((a, b) => a[1] - b[1]);
 
   const out: RetrievedChunk[] = [];
   for (const [noStr, , doc] of chosen) {
-    const cs = await fetchChunksByUnit(unit, noStr, doc, 1);
+    const cs = await fetchChunksByUnit(actualUnit, noStr, doc, 1);
     if (cs.length) out.push(cs[0]);
   }
   if (!out.length) return [];
 
-  const gen = unitWords(unit)[3];
+  const gen = unitWords(actualUnit)[3];
   const which = order === 'asc' ? 'первые' : 'последние';
   const nums = chosen.map(([noStr]) => noStr).join(', ');
   const note = structureNote(
     out[0].title || 'документ',
-    `Запрошены ${which} ${out.length} ${gen}: ${nums}. Заголовки приведены ниже.`
+    `Запрошены ${which} ${out.length} ${gen}: ${nums}. Заголовки приведены ниже.` +
+      (res.substituted ? substitutionNote(unit, actualUnit) : '')
   );
   return [note, ...out];
 }
@@ -443,17 +566,20 @@ export async function countUnits(
   query: string,
   docHint: string | null = null
 ): Promise<RetrievedChunk[]> {
-  const heads = await unitHeadsFor(unit, query, docHint);
+  const res = await unitHeadsFor(unit, query, docHint);
+  const heads = res.heads;
   if (!heads.length) return [];
+  const actualUnit = res.unit;
   const distinct = new Set(heads.map(([noStr]) => noStr)).size;
-  const gen = unitWords(unit)[3];
-  const cs = await fetchChunksByUnit(unit, heads[0][0], heads[0][2], 1);
+  const gen = unitWords(actualUnit)[3];
+  const cs = await fetchChunksByUnit(actualUnit, heads[0][0], heads[0][2], 1);
   const title = cs.length ? cs[0].title || 'документ' : 'документ';
   return [
     structureNote(
       title,
       `По структуре документа определено: всего ${gen} — ${distinct} ` +
-        `(нумерация с ${heads[0][0]} по ${heads[heads.length - 1][0]}).`
+        `(нумерация с ${heads[0][0]} по ${heads[heads.length - 1][0]}).` +
+        (res.substituted ? substitutionNote(unit, actualUnit) : '')
     ),
   ];
 }
@@ -476,13 +602,11 @@ export async function listQueryRetrieve(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Граф ссылок kb_links (порт _expand_with_linked_articles)
-// ---------------------------------------------------------------------------
+// Граф ссылок kb_links
 
 /**
  * По графу kb_links добираем статьи, на которые ссылаются найденные чанки.
- * Помогает на вопросах вида «расскажи про ст. 81» — модель получает не только
+ * Помогает на вопросах вида "расскажи про ст. 81" - модель получает не только
  * саму ст. 81, но и ст. 192, на которую она ссылается.
  */
 export async function expandWithLinkedArticles(
@@ -491,7 +615,7 @@ export async function expandWithLinkedArticles(
 ): Promise<RetrievedChunk[]> {
   if (!chunks.length) return chunks;
   try {
-    const sourceDocIds = [...new Set(chunks.map((c) => c.document_id).filter((d): d is number => d !== null))];
+    const sourceDocIds = [...new Set(chunks.map((c) => c.document_id).filter((d): d is string => d !== null))];
     const sourceChunkIdx = [...new Set(chunks.map((c) => c.chunk_index).filter((i): i is number => i !== null))];
     if (!sourceDocIds.length) return chunks;
 
@@ -505,7 +629,7 @@ export async function expandWithLinkedArticles(
     });
     if (!links.length) return chunks;
 
-    // Номера УЖЕ найденных статей: ссылка «на себя» (заголовок статьи в старых
+    // Номера уже найденных статей: ссылка "на себя" (заголовок статьи в старых
     // kb_links) не должна подтягивать чужие статьи через префикс.
     const sourceNos = new Set(
       chunks.map((c) => parseArticleNo(c.text)).filter((n): n is number => n !== null)

@@ -4,18 +4,13 @@ import { NextResponse, after } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import { badRequest, requireKbEditor } from '@/lib/auth';
-import { DOCS_DIR, baseName, stemOf, suffixOf, toDocsPath, validationError } from '@/lib/news';
+import { DOCS_DIR, baseName, stemOf, suffixOf, validationError } from '@/lib/news';
 import { indexPendingFile } from '@/lib/ml/indexer';
 
-// Загрузка документа в базу знаний.
-// Порт POST /api/kb/upload из backend/routes/kb.py (upload).
-//
-// Все разрешённые форматы разбираются здесь же (PDF, сканы под OCR и старый
-// Office — см. lib/parsers), поэтому проксирование в FastAPI осталось только
-// как страховка на случай новых расширений в ALLOWED. Решение принимается ДО
-// сохранения файла, по расширению: дублировать запись в БД нельзя.
+// Загрузка документа в базу знаний. Все разрешённые форматы разбираются здесь же
+// (PDF, сканы под OCR и старый Office - см. lib/parsers).
 
-/** settings.docs_local — туда же кладёт файлы FastAPI. */
+/** Каталог локальных документов базы знаний. */
 const DOCS_LOCAL = path.join(DOCS_DIR, 'local');
 
 const ALLOWED = new Set([
@@ -33,7 +28,7 @@ async function exists(p: string): Promise<boolean> {
   }
 }
 
-/** Не перезатираем уже существующий файл с тем же именем (порт _unique_path). */
+/** Не перезатираем уже существующий файл с тем же именем. */
 async function uniquePath(dir: string, filename: string): Promise<string> {
   const base = stemOf(filename);
   const ext = suffixOf(filename);
@@ -50,8 +45,6 @@ export async function POST(request: NextRequest) {
   const gate = await requireKbEditor();
   if ('response' in gate) return gate.response;
 
-  // Тело читаем в буфер: если формат не наш, тот же байт-в-байт запрос уходит
-  // в FastAPI, а второй раз прочитать поток нельзя.
   const raw = await request.arrayBuffer();
   let form: FormData;
   try {
@@ -70,27 +63,28 @@ export async function POST(request: NextRequest) {
   const name = baseName(file.name || '');
   const suffix = suffixOf(name).toLowerCase();
   if (!ALLOWED.has(suffix)) return badRequest(`Неподдерживаемый формат: ${suffix}`);
+  if (file.size > 100 * 1024 * 1024) return badRequest('Файл больше 100 МБ');
 
   await mkdir(DOCS_LOCAL, { recursive: true });
   const target = await uniquePath(DOCS_LOCAL, name || 'document');
   await writeFile(target, Buffer.from(await file.arrayBuffer()));
 
   // Создаём pending-запись синхронно (сразу видна в списке), а тяжёлый
-  // парсинг/эмбеддинги уносим в фон — ответ не ждёт индексации.
+  // парсинг/эмбеддинги уносим в фон - ответ не ждёт индексации.
   const doc = await prisma.kb_documents.create({
     data: {
       title: baseName(target),
       source_type: 'local',
-      source_uri: toDocsPath(target),
+      source_uri: target,
       status: 'pending',
-      // Значения по умолчанию из модели SQLAlchemy (в схеме Prisma их нет).
+      // Значения по умолчанию (в схеме Prisma их нет).
       priority: 2,
       is_archived: false,
       chunks_count: 0,
     },
   });
 
-  // after() продлевает жизнь запроса до завершения работы — без него Next
+  // after() продлевает жизнь запроса до завершения работы - без него Next
   // может свернуть контекст сразу после ответа и убить индексацию.
   after(async () => {
     await indexPendingFile(doc.id, target);

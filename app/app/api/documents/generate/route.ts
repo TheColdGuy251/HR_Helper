@@ -6,16 +6,14 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { notFound, requireUser } from '@/lib/auth';
 import { isFile } from '@/lib/kb';
-import { toDocsPath } from '@/lib/news';
 import { detectPiiDocument, modelBody, pydanticErrors, type PydanticError } from '@/lib/pii';
 import { GENERATED_DIR, timestamp } from '@/lib/docs/common';
 import { renderTemplateBuffer, safeFilename, templatePath } from '@/lib/docs/generator';
 
 // Генерация документа по шаблону.
-// Порт POST /api/documents/generate из backend/routes/documents.py.
 //
-// Сам рендер (render_template: docxtpl-шаблон или бланк-«пустографка») живёт в
-// lib/docs/generator.ts — тем же кодом пользуется генерация внутри диалога.
+// Сам рендер (шаблон с {{переменными}} или бланк-"пустографка") живёт в
+// lib/docs/generator.ts - тем же кодом пользуется генерация внутри диалога.
 
 interface ValidBody {
   template_key: string;
@@ -23,7 +21,7 @@ interface ValidBody {
   title: string | null;
 }
 
-/** Проверка GenerateDocRequest: pydantic отдаёт все ошибки разом. */
+/** Проверка тела запроса: все ошибки возвращаются разом. */
 function validate(body: Record<string, unknown>): ValidBody | PydanticError[] {
   const errors: PydanticError[] = [];
   const has = (k: string) => Object.prototype.hasOwnProperty.call(body, k);
@@ -78,7 +76,7 @@ export async function POST(request: NextRequest) {
   const checked = validate(parsedBody.body);
   if (Array.isArray(checked)) return pydanticErrors(checked);
 
-  const tpl = await prisma.doc_templates.findFirst({ where: { key: checked.template_key } });
+  const tpl = await prisma.doc_templates.findUnique({ where: { key: checked.template_key } });
   if (!tpl) return notFound(`Шаблон '${checked.template_key}' не найден`);
 
   const src = templatePath(tpl.file_path);
@@ -110,12 +108,13 @@ export async function POST(request: NextRequest) {
     data: {
       user_id: gate.user.id,
       title: checked.title || tpl.title,
-      template_key: checked.template_key,
-      file_path: toDocsPath(outPath),
+      generator: 'template',
+      template_id: tpl.id,
+      file_path: outPath,
       progress: 100,
       status: 'ready',
       fields: checked.fields as Prisma.InputJsonValue,
-      // ПДн-документы не храним: пометка включает скрытие из «Моих документов»
+      // ПДн-документы не храним: пометка включает скрытие из "Моих документов"
       // и автоудаление по TTL (pii_cleanup).
       is_pii: detectPiiDocument(checked.template_key, Object.values(checked.fields)),
     },

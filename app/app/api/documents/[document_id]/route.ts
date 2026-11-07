@@ -9,9 +9,6 @@ import { generateJsonOrMock } from '@/lib/ml/llm-json';
 import { SYSTEM_PROMPT_EXTRACT } from '@/lib/ml/prompts';
 
 // Удаление сгенерированного документа + LLM-извлечение полей шаблона.
-// Порт DELETE /api/documents/{document_id} и POST /api/documents/extract-fields
-// из backend/routes/documents.py (+ extract_fields_with_llm из
-// services/documents/generator.py).
 
 type Ctx = { params: Promise<{ document_id: string }> };
 
@@ -22,11 +19,8 @@ export async function DELETE(_request: NextRequest, { params }: Ctx) {
   const parsed = parsePathId((await params).document_id, 'document_id');
   if ('response' in parsed) return parsed.response;
 
-  // Общий доступ: любой сотрудник может удалить документ (по #2).
-  const doc =
-    parsed.value === null
-      ? null
-      : await prisma.my_documents.findUnique({ where: { id: parsed.value } });
+  // Общий доступ: любой сотрудник может удалить документ.
+  const doc = await prisma.my_documents.findUnique({ where: { id: parsed.value } });
   if (!doc) return notFound('Документ не найден');
 
   // Удаляем файл, если он внутри docs/ (path-traversal-safe)
@@ -40,16 +34,15 @@ export async function DELETE(_request: NextRequest, { params }: Ctx) {
 }
 
 /**
- * json.dumps({...}, ensure_ascii=False): у Python разделители «, » и «: »,
- * у JSON.stringify — без пробелов. Подсказка идёт в промпт, поэтому формат
- * должен совпадать дословно.
+ * JSON с разделителями ", " и ": " (JSON.stringify пишет без пробелов) - в
+ * таком виде подсказка идёт в промпт.
  */
 function schemaHint(schema: unknown[]): string | null {
   const parts: string[] = [];
   for (const f of schema) {
-    if (!f || typeof f !== 'object' || Array.isArray(f)) return null; // TypeError в Python
+    if (!f || typeof f !== 'object' || Array.isArray(f)) return null;
     const item = f as Record<string, unknown>;
-    if (!('name' in item)) return null; // KeyError в Python
+    if (!('name' in item)) return null;
     const type = 'type' in item ? item.type : 'string';
     parts.push(`${JSON.stringify(pyStr(item.name))}: ${JSON.stringify(type)}`);
   }
@@ -58,9 +51,8 @@ function schemaHint(schema: unknown[]): string | null {
 
 /**
  * POST на этом пути обслуживает /api/documents/extract-fields: Next
- * сопоставляет маршрут по ПУТИ, и статический сегмент попадает в динамический
- * [document_id]. На реальные id метода POST нет ни здесь, ни в Python —
- * отвечаем тем же 405, что отдал бы Starlette, не привлекая FastAPI.
+ * сопоставляет маршрут по пути, и статический сегмент попадает в динамический
+ * [document_id]. На реальные id метода POST нет - отвечаем 405.
  */
 export async function POST(request: NextRequest, { params }: Ctx) {
   if ((await params).document_id !== 'extract-fields') {
@@ -76,7 +68,7 @@ export async function POST(request: NextRequest, { params }: Ctx) {
   const templateKey = body.body.template_key;
   const tpl =
     typeof templateKey === 'string'
-      ? await prisma.doc_templates.findFirst({ where: { key: templateKey } })
+      ? await prisma.doc_templates.findUnique({ where: { key: templateKey } })
       : null;
   if (!tpl) return notFound('Шаблон не найден');
 

@@ -1,16 +1,19 @@
 import { NextResponse } from 'next/server';
 import { isoUtc, prisma } from '@/lib/db';
 import { requireUser } from '@/lib/auth';
-import { asDict, asList, baseName, isoDate, pyBool, reviewStatus } from '@/lib/kb';
+import { asDict, baseName, isoDate, pyBool, reviewStatus } from '@/lib/kb';
+import { getIndexProgress } from '@/lib/ml/index-progress';
 
 // Список документов базы знаний.
-// Порт GET /api/kb/documents из backend/routes/kb.py (list_documents).
 
 export async function GET() {
   const gate = await requireUser();
   if ('response' in gate) return gate.response;
 
-  const docs = await prisma.kb_documents.findMany({ orderBy: { created_at: 'desc' } });
+  const docs = await prisma.kb_documents.findMany({
+    orderBy: { created_at: 'desc' },
+    include: { tags: { orderBy: { tag: 'asc' } } },
+  });
 
   return NextResponse.json({
     success: true,
@@ -19,7 +22,7 @@ export async function GET() {
       return {
         id: d.id,
         title: d.title,
-        // Имя файла: сначала то, что сохранил индексатор, иначе — из пути.
+        // Имя файла: сначала то, что сохранил индексатор, иначе - из пути.
         filename:
           (typeof extra.filename === 'string' && extra.filename) ||
           (d.source_type === 'local' && d.source_uri ? baseName(d.source_uri) : null),
@@ -31,13 +34,13 @@ export async function GET() {
         issuer: d.issuer,
         effective_from: isoDate(d.effective_from),
         effective_to: isoDate(d.effective_to),
-        tags: asList(d.tags),
+        tags: d.tags.map((t) => t.tag),
         is_archived: d.is_archived,
         review_status: reviewStatus(d),
         chunks_count: d.chunks_count,
-        // Живой прогресс индексации лежит в памяти Python-процесса
-        // (services/rag/indexer._progress) и отсюда недоступен — всегда null.
-        progress: null,
+        // Живой прогресс индексации: индексация идёт в этом же процессе
+        // (lib/ml/index-progress), для готовых документов - null.
+        progress: getIndexProgress(d.id),
         ocr_applied: pyBool(extra.ocr_applied),
         // А8: признаки ПДн в документе общей БЗ ({fio_count, reason, samples})
         pii_warning: extra.pii_warning ?? null,

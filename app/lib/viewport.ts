@@ -1,17 +1,17 @@
 'use client';
 import { useEffect, type RefObject } from 'react';
 
-/* Хуки под плавающий композер чата/мессенджера — порт scripts.js:654-714. */
+/* Хуки под плавающий композер чата/мессенджера. */
 
 /**
- * Подъём поля ввода из-под экранной клавиатуры (порт scripts.js:654-684).
+ * Подъём поля ввода из-под экранной клавиатуры.
  *
  * При открытии клавиатуры браузер сжимает visualViewport. Меряем, насколько
- * композер ушёл под клавиатуру, и ровно на столько поднимаем его вверх —
+ * композер ушёл под клавиатуру, и ровно на столько поднимаем его вверх -
  * лента сообщений при этом остаётся на месте.
  *
  * Работает только на сенсорных устройствах (`pointer: coarse`): на десктопе
- * экранной клавиатуры нет, и композер ошибочно «уезжал» бы вверх.
+ * экранной клавиатуры нет, и композер ошибочно "уезжал" бы вверх.
  */
 export function useKeyboardInset(ref: RefObject<HTMLElement | null>) {
   useEffect(() => {
@@ -25,8 +25,8 @@ export function useKeyboardInset(ref: RefObject<HTMLElement | null>) {
       raf = null;
       const el = ref.current;
       if (!el) return;
-      el.style.transform = ''; // сброс — измеряем натуральное положение
-      // Высота, «съеденная» клавиатурой. Мала (<80px) — клавиатуры нет.
+      el.style.transform = ''; // сброс - измеряем натуральное положение
+      // Высота, "съеденная" клавиатурой. Мала (<80px) - клавиатуры нет.
       const kb = window.innerHeight - vv.height - vv.offsetTop;
       if (kb < 80) return;
       const rect = el.getBoundingClientRect();
@@ -52,11 +52,11 @@ export function useKeyboardInset(ref: RefObject<HTMLElement | null>) {
 }
 
 /**
- * Отступ ленты под плавающим композером (порт scripts.js:686-714).
+ * Отступ ленты под плавающим композером.
  *
- * Фиксированный отступ был больше реальной высоты поля на телефоне — под ним
- * оставалась пустая прокручиваемая «кромка». Считаем по фактической высоте:
- * ResizeObserver на композере → paddingBottom ленты = height + gap.
+ * Фиксированный отступ был больше реальной высоты поля на телефоне - под ним
+ * оставалась пустая прокручиваемая "кромка". Считаем по фактической высоте:
+ * ResizeObserver на композере -> paddingBottom ленты = height + gap.
  */
 export function useComposerPadding(
   listRef: RefObject<HTMLElement | null>,
@@ -79,7 +79,7 @@ export function useComposerPadding(
     run();
     window.addEventListener('resize', run);
     window.addEventListener('orientationchange', run);
-    // Высота поля меняется: многострочный ввод, вложения, «Частые вопросы».
+    // Высота поля меняется: многострочный ввод, вложения, "Частые вопросы".
     let ro: ResizeObserver | null = null;
     if (typeof ResizeObserver !== 'undefined' && composerRef.current) {
       ro = new ResizeObserver(run);

@@ -8,10 +8,10 @@ import { newsBodyCss, type NewsItem } from '@/components/news/editor';
 import { plural } from '@/components/messenger/types';
 import { ErrorCallout, PageShell, StatusPill } from '@/components/ui';
 
-// Страница новости — порт static/js/news_article.js + templates/news_article.html.
-// Отдельного GET /api/news/{id} на бэкенде нет: берём пост из ленты GET /api/news.
+// Страница новости. Отдельного GET /api/news/{id} нет: берём пост из ленты
+// GET /api/news.
 
-// ─────────────────────────── типы (по _poll_state в routes/news.py) ───────────────────────────
+// типы
 
 interface PollVoter {
   name: string;
@@ -19,7 +19,7 @@ interface PollVoter {
 }
 
 interface PollOption {
-  id: number;
+  id: string;
   text: string;
   votes: number;
   mine: boolean;
@@ -27,7 +27,7 @@ interface PollOption {
 }
 
 interface PollState {
-  id: number;
+  id: string;
   question: string;
   description: string | null;
   allow_multiple: boolean;
@@ -38,7 +38,7 @@ interface PollState {
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : 'Неизвестная ошибка');
 
-/** Дата публикации: как в легаси-шаблоне (%d.%m.%Y %H:%M). */
+/** Дата публикации: ДД.ММ.ГГГГ ЧЧ:ММ. */
 function fmtDate(iso: string | null | undefined): string {
   if (!iso) return '';
   const d = new Date(iso);
@@ -58,7 +58,7 @@ const ARTICLE_EXTRA_CSS = `
 .news-body .news-doc img { cursor: default; }
 `;
 
-// ─────────────────────────── голосование ───────────────────────────
+// голосование
 
 function PollBlock({ postId }: { postId: string }) {
   const [poll, setPoll] = useState<PollState | null>(null);
@@ -69,7 +69,7 @@ function PollBlock({ postId }: { postId: string }) {
       const d = await apiGet<{ poll: PollState | null }>(`/api/news/${postId}/poll`);
       setPoll(d.poll);
     } catch {
-      /* нет опроса или нет доступа — просто не показываем блок */
+      /* нет опроса или нет доступа - просто не показываем блок */
     }
   }, [postId]);
 
@@ -77,7 +77,7 @@ function PollBlock({ postId }: { postId: string }) {
     load();
   }, [load]);
 
-  async function vote(optionId: number) {
+  async function vote(optionId: string) {
     setError(null);
     try {
       // Бэкенд возвращает пересчитанный опрос; на всякий случай перезагружаем, если его нет.
@@ -162,7 +162,7 @@ function PollBlock({ postId }: { postId: string }) {
   );
 }
 
-// ─────────────────────────── страница статьи ───────────────────────────
+// страница статьи
 
 export default function NewsArticlePage() {
   const { id } = useParams<{ id: string }>();
@@ -209,7 +209,7 @@ export default function NewsArticlePage() {
     };
   }, [lightbox]);
 
-  // Делегированный клик по картинкам тела статьи → лайтбокс.
+  // Делегированный клик по картинкам тела статьи -> лайтбокс.
   function onBodyClick(e: React.MouseEvent<HTMLDivElement>) {
     const img = (e.target as HTMLElement).closest('img');
     if (!(img instanceof HTMLImageElement)) return;
@@ -304,7 +304,7 @@ export default function NewsArticlePage() {
               {edited && <span>· изменено {fmtDate(post.updated_at)}</span>}
             </div>
 
-            {/* HTML санитизирован на бэкенде (utils/htmlsanitize.py) */}
+            {/* HTML санитизирован на бэкенде */}
             <div
               className="news-body text-[15px] leading-relaxed"
               onClick={onBodyClick}
@@ -312,7 +312,7 @@ export default function NewsArticlePage() {
             />
           </article>
 
-          {/* Голосование есть в ленте (poll ≠ null) — актуальные счётчики тянем отдельно */}
+          {/* Голосование есть в ленте (poll != null) - актуальные счётчики тянем отдельно */}
           {post.poll && <PollBlock postId={String(post.id)} />}
         </>
       )}

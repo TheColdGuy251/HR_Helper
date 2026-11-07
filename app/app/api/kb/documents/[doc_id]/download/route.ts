@@ -6,7 +6,6 @@ import { baseName, boolQuery, fileResponse, isFile, parsePathId, resolveInsideDo
 import { previewPdfResponse } from '@/lib/file-preview';
 
 // Отдача файла документа базы знаний.
-// Порт GET /api/kb/documents/{doc_id}/download из backend/routes/kb.py.
 
 type Ctx = { params: Promise<{ doc_id: string }> };
 
@@ -29,26 +28,26 @@ export async function GET(request: NextRequest, { params }: Ctx) {
   if (!doc) return notFound('Документ не найден');
 
   // Веб-источники открываем по оригинальному URL. Собираем ответ вручную:
-  // NextResponse.redirect валидирует URL, а RedirectResponse в Python — нет.
+  // NextResponse.redirect валидирует URL и отвергает часть реальных адресов.
   if (doc.source_type === 'web') {
     if (!doc.source_uri) return notFound('URL источника отсутствует');
     return new NextResponse(null, { status: 302, headers: { Location: doc.source_uri } });
   }
 
-  // Локальные файлы — отдаём из docs/local. Защита от path-traversal:
+  // Локальные файлы - отдаём из docs/local. Защита от path-traversal:
   // разрешаем только файлы внутри docs/.
   const file = resolveInsideDocs(doc.source_uri);
   if (!file) return forbidden('Доступ к файлу запрещён');
   if (!(await isFile(file))) return notFound('Файл отсутствует на диске');
 
-  // as=pdf — отдаём PDF-версию презентации (pptx/ppt/odp) для предпросмотра.
+  // as=pdf - отдаём PDF-версию презентации (pptx/ppt/odp) для предпросмотра.
   // Для остальных форматов превью нет, и ниже уходит исходный файл.
   if (asFormat === 'pdf') {
     const preview = await previewPdfResponse(file);
     if (preview) return preview;
   }
 
-  // inline=1 — показать в браузере (для PDF в iframe просмотрщика); иначе скачать
+  // inline=1 - показать в браузере (для PDF в iframe просмотрщика); иначе скачать
   const resp = await fileResponse(file, {
     filename: baseName(file),
     mediaType: doc.mime_type || 'application/octet-stream',

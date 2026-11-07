@@ -16,15 +16,14 @@ import {
 } from '@/lib/pii';
 
 // Поиск карточек сотрудников и создание новой.
-// Порт GET/POST /api/pii/persons из backend/routes/pii.py (list_persons, create_person).
 
 export async function GET(request: NextRequest) {
   const gate = await requirePiiAccess();
   if ('response' in gate) return gate.response;
 
   const q = request.nextUrl.searchParams.get('q');
-  // Спецсимволы LIKE (% и _) Python не экранирует — Prisma тоже, поведение совпадает.
-  // `if q:` в Python — фильтр не включает только пустая строка (пробелы включают).
+  // Спецсимволы LIKE (% и _) не экранируем. Фильтр не включается только для
+  // пустой строки (строка из пробелов его включает).
   const like = q ? q.trim().toLowerCase() : null;
   const where =
     like === null
@@ -40,12 +39,12 @@ export async function GET(request: NextRequest) {
   const persons = await prisma.pii_persons.findMany({
     where,
     orderBy: [{ surname: 'asc' }, { name: 'asc' }],
-    include: { _count: { select: { pii_documents: true } } },
+    include: { _count: { select: { documents: true } } },
   });
 
-  const items = persons.map((p) => personPayload(p, { documentsCount: p._count.pii_documents }));
+  const items = persons.map((p) => personPayload(p, { documentsCount: p._count.documents }));
 
-  // Если по ФИО есть полные дубли — добавим в display подсказку с датой рождения
+  // Если по ФИО есть полные дубли - добавим в display подсказку с датой рождения
   const fios = new Map<string, number>();
   const keyOf = (it: (typeof items)[number]) => `${it.surname}|${it.name}|${it.patronymic || ''}`;
   for (const it of items) fios.set(keyOf(it), (fios.get(keyOf(it)) ?? 0) + 1);
@@ -58,12 +57,12 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({ success: true, items });
 }
 
-// ── PersonCreate (pydantic) ────────────────────────────────────────────────
+// Тело запроса на создание карточки
 
 /**
  * Проверка строкового поля с ограничениями Field(min_length/max_length).
- * Отсутствие ключа — «missing» только у обязательных, а вот явный null всегда
- * идёт по ветке типа: у `str` это ошибка, у `str | None` — валидное значение.
+ * Отсутствие ключа - "missing" только у обязательных, а вот явный null всегда
+ * идёт по ветке типа: для обязательной строки это ошибка, для необязательной - валидное значение.
  */
 function checkStr(
   errors: PydanticError[],
@@ -97,7 +96,7 @@ function checkStr(
     });
     return null;
   }
-  // pydantic считает длину в кодовых точках, а не в UTF-16.
+  // Длину считаем в кодовых точках, а не в UTF-16.
   const len = Array.from(value).length;
   if (opts.min !== undefined && len < opts.min) {
     errors.push({
@@ -135,7 +134,7 @@ export async function POST(request: NextRequest) {
   const name = checkStr(errors, body, 'name', { required: true, min: 1, max: 128 });
   const patronymic = checkStr(errors, body, 'patronymic', { required: false, max: 128 });
   const birthDateRaw = checkStr(errors, body, 'birth_date', { required: false });
-  // surname/name не могут быть null без ошибки — проверка нужна только компилятору.
+  // surname/name не могут быть null без ошибки - проверка нужна только компилятору.
   if (errors.length || surname === null || name === null) return pydanticErrors(errors);
 
   const bd = parseBirthDate(birthDateRaw);
@@ -145,12 +144,12 @@ export async function POST(request: NextRequest) {
 
   const existing = await prisma.pii_persons.findFirst({
     where: { ...fio, birth_date: bd },
-    include: { _count: { select: { pii_documents: true } } },
+    include: { _count: { select: { documents: true } } },
   });
   if (existing) {
     return NextResponse.json({
       success: true,
-      person: personPayload(existing, { documentsCount: existing._count.pii_documents }),
+      person: personPayload(existing, { documentsCount: existing._count.documents }),
       created: false,
     });
   }

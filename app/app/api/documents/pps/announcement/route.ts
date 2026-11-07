@@ -14,9 +14,8 @@ import {
 } from '@/lib/docs/common';
 import { createAnnouncement, parseForm2Rows, type Form2 } from '@/lib/docs/pps-announcement';
 
-// Б5: выгрузки «Форма 2» (по одному файлу на должность) → word-объявление
+// Б5: выгрузки "Форма 2" (по одному файлу на должность) -> word-объявление
 // о выборах заведующих кафедрами и конкурсе ППС.
-// Порт POST /api/documents/pps/announcement из backend/routes/documents.py.
 
 const XL_EXT = new Set(['.xls', '.xlsx', '.xlsm']);
 const XL_LIST = '.xls/.xlsm/.xlsx';
@@ -30,7 +29,7 @@ export async function POST(request: NextRequest) {
 
   const files = form.form.getAll('files').filter((v): v is File => v instanceof File);
   if (!files.length) {
-    // `files: list[UploadFile] = File(...)` — поле обязательное.
+    // `files: list[UploadFile] = File(...)` - поле обязательное.
     return validationError(['body', 'files'], 'missing', 'Field required', null);
   }
   if (files.length > 20) return badRequest('Не больше 20 файлов за раз');
@@ -44,8 +43,8 @@ export async function POST(request: NextRequest) {
       }
       const data = Buffer.from(await file.arrayBuffer());
       if (data.length > 30 * 1024 * 1024) return badRequest('Файл больше 30 МБ');
-      // В Python имя в тексте ошибки берётся у ВРЕМЕННОГО файла; здесь
-      // подставляем исходное — так подсказка про «не ту» выгрузку полезнее.
+      // В текст ошибки подставляем исходное имя файла - так подсказка про "не ту"
+      // выгрузку полезнее.
       form2List.push(parseForm2Rows(sheetRows(activeSheet(readWorkbook(data))), baseName(file.name || '')));
     }
 

@@ -5,27 +5,27 @@ import Docxtemplater from 'docxtemplater';
 import PizZip from 'pizzip';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
-import { DOCS_DIR, toDocsPath } from '@/lib/news';
+import { DOCS_DIR } from '@/lib/news';
 import { detectPiiDocument } from '@/lib/pii';
 import { analyzeBlank, autofillDocx, renderFieldPreviewDocx, type FieldSpec } from './autofill';
 import { GENERATED_DIR, timestamp } from './common';
 
 /**
- * Рендер документов по шаблонам — порт services/documents/generator.py.
+ * Рендер документов по шаблонам.
  *
- * ШАБЛОНЫ БЫВАЮТ ДВУХ ВИДОВ:
- *  1) с {{ переменными }} — рендерим через docxtemplater (делимитеры переставлены
- *     на {{ }}, чтобы работали существующие jinja-шаблоны);
- *  2) бланк БЕЗ переменных — значения подставляются прямо в «пустографки» с
+ * Шаблоны бывают двух видов:
+ *  1) с {{ переменными }} - рендерим через docxtemplater (делимитеры переставлены
+ *     на {{ }}, как в существующих шаблонах);
+ *  2) бланк без переменных - значения подставляются прямо в "пустографки" с
  *     сохранением формата места (см. lib/docs/autofill.ts).
  *
- * Модуль вынесен из app/api/documents/generate/route.ts: тем же рендером теперь
- * пользуется генерация документов внутри диалога (lib/docs/docgen.ts).
+ * Рендер вынесен из app/api/documents/generate/route.ts: им же пользуется
+ * генерация документов внутри диалога (lib/docs/docgen.ts).
  */
 
 export const TEMPLATES_DIR = path.join(DOCS_DIR, 'templates');
 
-/** _safe_filename: запрещённые в имени файла символы → «_». */
+/** Запрещённые в имени файла символы -> "_". */
 export function safeFilename(s: string): string {
   const bad = '<>:"/\\|?*';
   const out = Array.from(s)
@@ -35,15 +35,15 @@ export function safeFilename(s: string): string {
   return out.slice(0, 120) || 'document';
 }
 
-/** _resolve_template_path: относительный путь считается от docs/templates. */
+/** Относительный путь считается от docs/templates. */
 export function templatePath(filePath: string): string {
   return path.isAbsolute(filePath) ? filePath : path.join(TEMPLATES_DIR, filePath);
 }
 
-// Делимитеры Jinja: у docxtemplater по умолчанию «{ }», а в шаблонах «{{ }}».
+// Делимитеры: у docxtemplater по умолчанию "{ }", а в шаблонах "{{ }}".
 const DELIMITERS = { start: '{{', end: '}}' };
 
-/** Тег «{{ surname }}» приходит с пробелами; поддерживаем и точечный путь. */
+/** Тег "{{ surname }}" приходит с пробелами; поддерживаем и точечный путь. */
 function tagParser(tag: string) {
   const name = tag.trim();
   return {
@@ -65,20 +65,20 @@ function buildDoc(content: Buffer) {
     paragraphLoop: true,
     linebreaks: true,
     parser: tagParser,
-    // None → пустая строка: в бланке нужно пустое место для незаполненных
-    // (в т.ч. опциональных) полей, а не буквальное «None».
+    // null -> пустая строка: в бланке нужно пустое место для незаполненных
+    // (в т.ч. опциональных) полей, а не буквальное "null".
     nullGetter: () => '',
   });
 }
 
-// Части docx, где docxtpl ищет переменные: тело, колонтитулы.
+// Части docx, где ищем переменные: тело, колонтитулы.
 const TEMPLATE_PARTS = /^word\/(document\d*|header\d*|footer\d*)\.xml$/;
 
 /**
- * has_jinja_placeholders: есть ли в .docx хоть один тег {{ … }}.
- * Разметку снимаем перед поиском: Word режет «{{ date_start }}» на несколько
+ * Есть ли в .docx хоть один тег {{ ... }}.
+ * Разметку снимаем перед поиском: Word режет "{{ date_start }}" на несколько
  * <w:t>, и по сырому XML тег не найдётся. (Штатный InspectModule
- * docxtemplater не годится — он тянет lodash, которого в проекте нет.)
+ * docxtemplater не годится - он тянет lodash, которого в проекте нет.)
  */
 export function hasJinjaPlaceholders(content: Buffer): boolean {
   try {
@@ -90,11 +90,11 @@ export function hasJinjaPlaceholders(content: Buffer): boolean {
     }
     return false;
   } catch {
-    return false; // битый шаблон — как except в Python
+    return false; // битый шаблон
   }
 }
 
-/** Значения в контекст: Jinja печатает str(v), None — пустую строку. */
+/** Значения в контекст: null - пустая строка, остальное - строкой. */
 function toJinjaValue(v: unknown): unknown {
   if (v === null || v === undefined) return '';
   if (typeof v === 'boolean') return v ? 'True' : 'False';
@@ -111,7 +111,7 @@ export function renderTemplateBuffer(content: Buffer, fields: Record<string, unk
     return doc.toBuffer();
   }
   // Бланк без переменных: значения идут в области ввода как есть (без подмены
-  // None на "" — autofill сам пропускает незаполненные поля).
+  // null на "" - autofill сам пропускает незаполненные поля).
   return autofillDocx(content, fields);
 }
 
@@ -138,16 +138,16 @@ export async function renderTemplate(
 }
 
 /**
- * generate_document: рендер + запись в «Мои документы».
- * Бросает ошибку, если шаблона нет или рендер упал (как ValueError в Python).
+ * generate_document: рендер + запись в "Мои документы".
+ * Бросает ошибку, если шаблона нет или рендер упал.
  */
 export async function generateDocument(
-  userId: number,
+  userId: string,
   templateKey: string,
   fields: Record<string, unknown>,
   title: string | null = null
 ) {
-  const tpl = await prisma.doc_templates.findFirst({ where: { key: templateKey } });
+  const tpl = await prisma.doc_templates.findUnique({ where: { key: templateKey } });
   if (!tpl) throw new Error(`Шаблон '${templateKey}' не найден`);
 
   const outPath = await renderTemplate(tpl, fields);
@@ -156,12 +156,13 @@ export async function generateDocument(
     data: {
       user_id: userId,
       title: title || tpl.title,
-      template_key: templateKey,
-      file_path: toDocsPath(outPath),
+      generator: 'template',
+      template_id: tpl.id,
+      file_path: outPath,
       progress: 100,
       status: 'ready',
       fields: fields as unknown as Prisma.InputJsonValue,
-      // ПДн-документы не храним: пометка включает скрытие из «Моих документов»
+      // ПДн-документы не храним: пометка включает скрытие из "Моих документов"
       // и автоудаление по TTL (pii_cleanup).
       is_pii: detectPiiDocument(templateKey, Object.values(fields)),
     },
@@ -169,7 +170,7 @@ export async function generateDocument(
 }
 
 /**
- * auto_field_schema: авто-определённая схема полей бланка без переменных — для
+ * auto_field_schema: авто-определённая схема полей бланка без переменных - для
  * регистрации шаблона и уточняющих вопросов. {name,label,type,required}.
  */
 export async function autoFieldSchema(filePath: string): Promise<FieldSpec[]> {
@@ -177,17 +178,17 @@ export async function autoFieldSchema(filePath: string): Promise<FieldSpec[]> {
 }
 
 /**
- * template_display_path: путь к версии шаблона ДЛЯ ПРОСМОТРА/СКАЧИВАНИЯ. Для
- * бланка .docx без {{переменных}} — версия с подставленными НАЗВАНИЯМИ авто-полей
+ * Путь к версии шаблона для просмотра/скачивания. Для
+ * бланка .docx без {{переменных}} - версия с подставленными названиями авто-полей
  * (кэшируется в docs/templates/.previews, пересобирается при правке исходника).
- * Для остального (jinja-docx, pdf) — оригинал. Если рендер превью упал — тоже
- * оригинал (как `except` в Python).
+ * Для остального (docx с переменными, pdf) - оригинал. Если рендер превью упал - тоже
+ * оригинал.
  *
- * Публичное имя — templateDisplayPath в lib/kb.ts: там же живут вызывающие
+ * Публичное имя - templateDisplayPath в lib/kb.ts: там же живут вызывающие
  * роуты, а путь шаблона они уже разрешили сами (поэтому принимаем src, а не
  * запись шаблона, как питоновский оригинал).
  */
-export async function templatePreviewPath(tplId: number, src: string): Promise<string> {
+export async function templatePreviewPath(tplId: string, src: string): Promise<string> {
   if (path.extname(src).toLowerCase() !== '.docx') return src;
 
   const source = await Promise.all([readFile(src), stat(src)]).catch(() => null);
@@ -204,7 +205,7 @@ export async function templatePreviewPath(tplId: number, src: string): Promise<s
       await writeFile(out, renderFieldPreviewDocx(content));
     }
   } catch {
-    // preview рендер шаблона не удался — отдаём оригинал
+    // preview рендер шаблона не удался - отдаём оригинал
     return src;
   }
   return out;

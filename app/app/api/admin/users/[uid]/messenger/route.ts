@@ -1,32 +1,12 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { isoUtc, prisma } from '@/lib/db';
+import { parsePathId } from '@/lib/kb';
 import { fullName, notFound, requireAdmin } from '@/lib/auth';
 
 // Список бесед пользователя в мессенджере (общий чат + личные).
-// Порт GET /api/admin/users/{uid}/messenger (backend/routes/admin.py).
 
-function parseIntParam(raw: string): number | null {
-  return /^\s*[+-]?\d+\s*$/.test(raw) ? Number(raw) : null;
-}
-
-function invalidIntPath(name: string, input: string) {
-  return NextResponse.json(
-    {
-      detail: [
-        {
-          type: 'int_parsing',
-          loc: ['path', name],
-          msg: 'Input should be a valid integer, unable to parse string as an integer',
-          input,
-        },
-      ],
-    },
-    { status: 422 }
-  );
-}
-
-/** Служебная строка («закрепил(а) сообщение») — не часть переписки. */
+/** Служебная строка ("закрепил(а) сообщение") - не часть переписки. */
 function isSystemRow(meta: unknown): boolean {
   if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return false;
   return Boolean((meta as Record<string, unknown>).system);
@@ -36,14 +16,14 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
   const gate = await requireAdmin();
   if ('response' in gate) return gate.response;
 
-  const { uid } = await params;
-  const userId = parseIntParam(uid);
-  if (userId === null) return invalidIntPath('uid', uid);
+  const parsed = parsePathId((await params).uid, 'uid');
+  if ('response' in parsed) return parsed.response;
+  const userId = parsed.value;
 
   const owner = await prisma.users.findUnique({ where: { id: userId }, select: { id: true } });
   if (!owner) return notFound('Пользователь не найден');
 
-  // Без лимита и без сортировки — ровно как в Python.
+  // Без лимита и без сортировки.
   const msgs = await prisma.user_messages.findMany({
     where: { OR: [{ sender_id: userId }, { recipient_id: userId }] },
     select: {
@@ -56,7 +36,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
   });
 
   interface Conv {
-    peer_id: number | null;
+    peer_id: string | null;
     count: number;
     last_at: Date | null;
   }
@@ -65,13 +45,13 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     if (isSystemRow(m.forwarded_meta)) continue;
 
     let key: string;
-    let peerId: number | null;
+    let peerId: string | null;
     if (m.is_general) {
       key = 'general';
       peerId = null;
     } else {
       peerId = m.sender_id === userId ? m.recipient_id : m.sender_id;
-      key = String(peerId);
+      key = peerId ?? 'general';
     }
 
     let conv = convs.get(key);
@@ -85,10 +65,10 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     }
   }
 
-  // Имена собеседников одним запросом (peer_id=0/null отсеиваются, как `if c["peer_id"]`).
+  // Имена собеседников одним запросом (null - общий чат).
   const peerIds = [...convs.values()]
     .map((c) => c.peer_id)
-    .filter((v): v is number => Boolean(v));
+    .filter((v): v is string => Boolean(v));
   const peers = peerIds.length ? await prisma.users.findMany({ where: { id: { in: peerIds } } }) : [];
   const peerMap = new Map(peers.map((u) => [u.id, u]));
 
@@ -103,7 +83,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     return { key, title, count: c.count, last_at: isoUtc(c.last_at) };
   });
 
-  // Сортировка по строке даты — как в Python (стабильная).
+  // Сортировка по строке даты (стабильная).
   items.sort((a, b) => {
     const av = a.last_at ?? '';
     const bv = b.last_at ?? '';

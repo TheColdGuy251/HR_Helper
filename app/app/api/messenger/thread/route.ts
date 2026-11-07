@@ -2,21 +2,23 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import { badRequest, notFound, requireUser } from '@/lib/auth';
-import { asDict, asList, boolQuery, pyBool } from '@/lib/kb';
+import { compareIds } from '@/lib/ids';
+import { asDict, boolQuery, pyBool } from '@/lib/kb';
 import { publish } from '@/lib/events';
 import {
   GENERAL_KEY,
-  intQuery,
+  idQuery,
   markRead,
+  notHiddenFor,
+  peerUserIdOf,
   serializeMessages,
   threadWhere,
   userById,
 } from '@/lib/messenger';
 
 // История диалога с постраничной подгрузкой вверх.
-// Порт GET /api/messenger/thread из backend/routes/messenger.py.
 
-// Сразу отдаём последние 100 сообщений, дальше — партиями по 50 (before_id).
+// Сразу отдаём последние 100 сообщений, дальше - партиями по 50 (before_id).
 const INITIAL_THREAD = 100;
 const THREAD_PAGE = 50;
 
@@ -26,11 +28,11 @@ export async function GET(request: NextRequest) {
   const me = gate.user.id;
 
   const query = request.nextUrl.searchParams;
-  const peer = intQuery(query.get('peer_id'), 'peer_id');
+  const peer = idQuery(query.get('peer_id'), 'peer_id');
   if ('response' in peer) return peer.response;
   const general = boolQuery(query.get('general'), 'general');
   if ('response' in general) return general.response;
-  const before = intQuery(query.get('before_id'), 'before_id');
+  const before = idQuery(query.get('before_id'), 'before_id');
   if ('response' in before) return before.response;
 
   const peerId = peer.value;
@@ -40,42 +42,44 @@ export async function GET(request: NextRequest) {
   if (!isGeneral && !peerId) return badRequest('Не указан собеседник');
   if (!isGeneral && !(await userById(peerId))) return notFound('Пользователь не найден');
 
-  const where = threadWhere(me, peerId, isGeneral);
-  const rows = (
+  const thread = threadWhere(me, peerId, isGeneral);
+  // "Удалённые только у себя" скрываем уже в запросе - страница не "худеет".
+  const visible = { AND: [thread, notHiddenFor(me)] };
+  // UUIDv7 растут со временем: "старше before_id" - это id меньше него.
+  const msgs = (
     await prisma.user_messages.findMany({
-      where: beforeId ? { AND: [where, { id: { lt: beforeId } }] } : where,
+      where: beforeId ? { AND: [visible, { id: { lt: beforeId } }] } : visible,
       orderBy: { id: 'desc' },
       take: beforeId ? THREAD_PAGE : INITIAL_THREAD,
     })
   ).reverse(); // по возрастанию id
 
-  // «удалённые только у себя» — скрываем от этого пользователя
-  const msgs = rows.filter((m) => !asList(m.hidden_for).includes(me));
-
   // Есть ли ещё более старые сообщения (для подгрузки).
   let hasMore = false;
-  if (rows.length) {
+  if (msgs.length) {
     const older = await prisma.user_messages.findFirst({
-      where: { AND: [where, { id: { lt: rows[0].id } }] },
+      where: { AND: [visible, { id: { lt: msgs[0].id } }] },
       select: { id: true },
     });
     hasMore = older !== null;
   }
 
-  const peerKey = isGeneral ? GENERAL_KEY : String(peerId);
+  const peerKey = isGeneral || !peerId ? GENERAL_KEY : peerId;
 
-  // Граница «новых» сообщений: первое чужое, которое пользователь ещё не читал.
-  // Нужна для разделителя «Новые» и бейджа на стрелке вниз.
-  let firstUnreadId: number | null = null;
+  // Граница "новых" сообщений: первое чужое, которое пользователь ещё не читал.
+  // Нужна для разделителя "Новые" и бейджа на стрелке вниз.
+  let firstUnreadId: string | null = null;
   let unreadCount = 0;
   if (!beforeId) {
     const rr = await prisma.messenger_reads.findFirst({
-      where: { user_id: me, peer_key: peerKey },
-      orderBy: { id: 'asc' },
+      where: { user_id: me, peer_user_id: peerUserIdOf(peerKey) },
     });
-    const lastRead = rr?.last_read_id ?? 0;
+    const lastRead = rr?.last_read_id ?? null;
     const unread = msgs.filter(
-      (m) => m.id > lastRead && m.sender_id !== me && !pyBool(asDict(m.forwarded_meta).system)
+      (m) =>
+        (lastRead === null || compareIds(m.id, lastRead) > 0) &&
+        m.sender_id !== me &&
+        !pyBool(asDict(m.forwarded_meta).system)
     );
     if (unread.length) {
       firstUnreadId = unread[0].id;
@@ -85,10 +89,10 @@ export async function GET(request: NextRequest) {
 
   // Отметку о прочтении ставим только при первом открытии, не при подгрузке.
   if (!beforeId) {
-    await markRead(me, peerKey, where);
+    await markRead(me, peerKey, thread);
     if (!isGeneral && peerId && msgs.length) {
-      const maxId = Math.max(...msgs.map((m) => m.id));
-      publish(peerId, { type: 'user_read', peer_key: String(me), last_read_id: maxId });
+      const lastId = msgs[msgs.length - 1].id;
+      publish(peerId, { type: 'user_read', peer_key: me, last_read_id: lastId });
     }
   }
 

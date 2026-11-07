@@ -9,7 +9,7 @@ import TemplatesTab from '@/components/kb/templates-tab';
 import PiiTab from '@/components/kb/pii-tab';
 import FaqTab from '@/components/kb/faq-tab';
 
-// База знаний: документы, веб-источники, шаблоны, ПДн и FAQ (порт kb.html/kb.js).
+// База знаний: документы, веб-источники, шаблоны, ПДн и FAQ.
 
 type TabKey = 'documents' | 'sources' | 'templates' | 'personal' | 'faq';
 

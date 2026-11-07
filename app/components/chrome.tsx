@@ -9,7 +9,7 @@ import { PendingGenerations } from '@/components/pending-generations';
 import { ScrollbarAutoHide } from '@/components/scrollbar';
 
 // Клиентский каркас приложения: шапка + SSE-канал + тосты для закрытой части,
-// «голый» рендер для публичных страниц (/login, /register).
+// "голый" рендер для публичных страниц (/login, /register).
 
 const PUBLIC_PATHS = ['/login', '/register', '/offline.html'];
 
@@ -46,15 +46,15 @@ export function Chrome({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [popup, setPopup] = useState(false);
 
-  // Регистрация service worker (PWA) — один раз на вкладку.
+  // Регистрация service worker (PWA) - один раз на вкладку.
   useEffect(() => {
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => {});
     }
   }, []);
 
-  // /messenger?popup=1 — мессенджер вынесен в отдельное окно: шапка сайта там
-  // только отнимает место (порт body.msgr-popup, messenger_page.js:9-12).
+  // /messenger?popup=1 - мессенджер вынесен в отдельное окно: шапка сайта там
+  // только отнимает место.
   // Читаем location, а не useSearchParams, чтобы не тянуть Suspense в каркас.
   useEffect(() => {
     let flag = false;

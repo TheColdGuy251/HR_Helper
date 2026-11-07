@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 
-// Модалка «все источники» (порт openSourcesModal из chat.js).
+// Модалка "все источники".
 // Блок источников в ответе схлопнут до трёх карточек, кнопка `.md-sources-more`
 // (её рисует lib/msgfmt.ts) открывает полный список.
 
@@ -56,7 +56,7 @@ export function useSourcesModal() {
       setHtml(`<div class="md-docs md-docs-modal">${clone.innerHTML}</div>`);
       return;
     }
-    // Легаси-фолбэк: блок «Источники» из текста модели (ul/li).
+    // Фолбэк: блок "Источники" из текста модели (ul/li).
     const ul = btn.parentElement?.querySelector('ul');
     if (ul) setHtml(`<ul class="md-sources-fulllist">${ul.innerHTML}</ul>`);
   };

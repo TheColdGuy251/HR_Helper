@@ -7,17 +7,14 @@ import { baseName, suffixOf, validationError } from '@/lib/news';
 import { BAD_DATE, parseBirthDate, piiLog, requirePiiAccess } from '@/lib/pii';
 
 // Импорт карточек сотрудников из табличной выгрузки 1С (CSV/XLSX/XLS/ODS).
-// Порт POST /api/pii/import/1c из backend/routes/pii.py (import_1c_persons,
-// _parse_person_table, _rows_from_table, _detect_person_columns).
 //
-// Персональные данные идут в раздел ПДн, НЕ в LLM/RAG (#18) — файл нигде не
+// Персональные данные идут в раздел ПДн, не в LLM/RAG - файл нигде не
 // сохраняется, из него берутся только ФИО и дата рождения.
 
 const MAX_BYTES = 30 * 1024 * 1024; // 30 МБ
 const ALLOWED_EXT = new Set(['.csv', '.xlsx', '.xls', '.ods']);
 
-// Порядок важен: колонка достаётся первому подошедшему ключу (dict в Python
-// сохраняет порядок объявления).
+// Порядок важен: колонка достаётся первому подошедшему ключу.
 const PERSON_COL_ALIASES: [string, string[]][] = [
   ['surname', ['фамилия', 'surname', 'lastname', 'last_name']],
   ['name', ['имя', 'name', 'firstname', 'first_name']],
@@ -29,7 +26,7 @@ const PERSON_COL_ALIASES: [string, string[]][] = [
   ['fullname', ['фио', 'ф.и.о', 'сотрудник', 'fullname', 'full_name', 'физлицо', 'физическое лицо']],
 ];
 
-/** Колонка подходит при точном совпадении заголовка ИЛИ вхождении алиаса в него. */
+/** Колонка подходит при точном совпадении заголовка или вхождении алиаса в него. */
 function detectPersonColumns(header: string[]): Map<string, number> {
   const norm = header.map((h) => (h || '').trim().toLowerCase());
   const mapping = new Map<string, number>();
@@ -44,11 +41,11 @@ function detectPersonColumns(header: string[]): Map<string, number> {
   return mapping;
 }
 
-// ── CSV ────────────────────────────────────────────────────────────────────
+// CSV
 
 /** decode("utf-8-sig", errors="ignore"): BOM снимаем, битые байты выбрасываем. */
 function decodeUtf8Sig(data: Buffer): string {
-  // Node подставляет вместо битых байт U+FFFD — убираем его, чтобы результат
+  // Node подставляет вместо битых байт U+FFFD - убираем его, чтобы результат
   // совпал с errors="ignore" (тот же приём, что в lib/parsers).
   const text = data.toString('utf8').replace(/\uFFFD/g, '');
   return text.startsWith('\uFEFF') ? text.slice(1) : text;
@@ -63,13 +60,11 @@ type CsvState =
   | 'eat_crnl';
 
 /**
- * Порт csv.reader (Modules/_csv.c) для диалекта по умолчанию: кавычки значимы
- * только в начале поля, «""» внутри — литеральная кавычка, перевод строки
- * внутри кавычек — часть значения. Пустая строка даёт пустую запись.
+ * Пустая строка даёт пустую запись.
  *
  * Написан вручную, а не через SheetJS: у того собственные эвристики (угадывание
- * разделителя, строка «sep=», приведение типов), из-за которых разбор разошёлся
- * бы с Python на неочевидных файлах.
+ * разделителя, строка "sep=", приведение типов), из-за которых разбор
+ * неочевидных файлов становится непредсказуемым.
  */
 function readCsv(text: string, delim: string): string[][] {
   const rows: string[][] = [];
@@ -82,7 +77,7 @@ function readCsv(text: string, delim: string): string[][] {
   };
   const isEol = (c: string) => c === '\n' || c === '\r';
 
-  // Один символ автомата. '\0' — маркер конца строки, который csv.reader
+  // Один символ автомата. '\0' - маркер конца строки, который csv.reader
   // подставляет сам после каждой прочитанной строки.
   const step = (s: CsvState, c: string): CsvState => {
     if (s === 'start_record') {
@@ -116,7 +111,7 @@ function readCsv(text: string, delim: string): string[][] {
       return 'in_field';
     }
     if (s === 'in_quoted') {
-      if (c === '\0') return 'in_quoted'; // конец строки внутри кавычек — поле продолжается
+      if (c === '\0') return 'in_quoted'; // конец строки внутри кавычек - поле продолжается
       if (c === '"') return 'quote_in_quoted';
       field += c;
       return 'in_quoted';
@@ -134,13 +129,12 @@ function readCsv(text: string, delim: string): string[][] {
         save();
         return c === '\0' ? 'start_record' : 'eat_crnl';
       }
-      field += c; // не strict: мусор после кавычки — обычный текст
+      field += c; // не strict: мусор после кавычки - обычный текст
       return 'in_field';
     }
     if (isEol(c)) return 'eat_crnl';
     if (c === '\0') return 'start_record';
-    // Текст ошибки уходит в ответ («Не удалось разобрать таблицу: …») — берём
-    // его дословно из _csv.Error текущего Python (3.12).
+    // Текст ошибки уходит в ответ ("Не удалось разобрать таблицу: ...").
     throw new Error(
       "new-line character seen in unquoted field - do you need to open the file with newline=''?"
     );
@@ -169,9 +163,9 @@ function readCsv(text: string, delim: string): string[][] {
   return rows;
 }
 
-// ── Excel/ODS ──────────────────────────────────────────────────────────────
+// Excel/ODS
 
-// SSF в типах пакета объявлен как any — сужаем до того, что реально нужно.
+// SSF в типах пакета объявлен как any - сужаем до того, что реально нужно.
 const ssf = XLSX.SSF as {
   is_date: (fmt: string) => boolean;
   parse_date_code: (
@@ -188,7 +182,7 @@ function dateTimeString(y: number, m: number, d: number, H: number, M: number, S
 }
 
 /**
- * `str(cell)` как в openpyxl: дата — «YYYY-MM-DD HH:MM:SS», bool — True/False.
+ * Ячейка строкой: дата - "YYYY-MM-DD HH:MM:SS", bool - True/False.
  *
  * Дату собираем из серийного номера Excel, а не из опции cellDates: SheetJS
  * строит Date через локальную зону, а в зонах с дробным LMT-смещением
@@ -204,7 +198,7 @@ function cellToString(cell: XLSX.CellObject | undefined): string {
       v.getUTCHours(), v.getUTCMinutes(), v.getUTCSeconds()
     );
   }
-  // Число с форматом даты — у openpyxl это datetime, а не «45324».
+  // Число с форматом даты - это дата, а не "45324".
   if (cell.t === 'n' && typeof cell.v === 'number' && cell.z && ssf.is_date(String(cell.z))) {
     const p = ssf.parse_date_code(cell.v);
     if (p) return dateTimeString(p.y, p.m, p.d, p.H, p.M, p.S);
@@ -215,8 +209,8 @@ function cellToString(cell: XLSX.CellObject | undefined): string {
 function rowsFromSheet(data: Buffer): string[][] {
   // cellNF: без строки формата не отличить дату от обычного числа.
   const wb = XLSX.read(data, { type: 'buffer', cellNF: true });
-  // openpyxl берёт wb.active; SheetJS активный лист при чтении не сохраняет,
-  // поэтому берём первый — в выгрузках 1С это один и тот же лист.
+  // Нужен активный лист; SheetJS его при чтении не сохраняет,
+  // поэтому берём первый - в выгрузках 1С это один и тот же лист.
   const ws = wb.SheetNames.length ? wb.Sheets[wb.SheetNames[0]] : undefined;
   const ref = ws?.['!ref'];
   if (!ws || !ref) return [];
@@ -235,7 +229,7 @@ function rowsFromSheet(data: Buffer): string[][] {
   return rows;
 }
 
-// ── Разбор таблицы ─────────────────────────────────────────────────────────
+// Разбор таблицы
 
 interface ImportedPerson {
   surname: string;
@@ -260,7 +254,7 @@ function parsePersonTable(data: Buffer, suffix: string): ImportedPerson[] {
   const cols = detectPersonColumns(table[0]);
   if (!cols.size) return [];
   // Шапку пропускаем, только если нашлась колонка с ФИО: таблица, где узналась
-  // одна «Дата рождения», разбирается с первой строки — как в Python.
+  // одна "Дата рождения", разбирается с первой строки.
   const hasHeader = ['surname', 'name', 'fullname'].some((k) => cols.has(k));
 
   const out: ImportedPerson[] = [];
@@ -311,7 +305,7 @@ export async function POST(request: NextRequest) {
     return validationError(['body', 'file'], 'missing', 'Field required', null);
   }
 
-  // Здесь Python берёт Path(...).suffix, а не rsplit, как в загрузке документов.
+  // Расширение - суффикс последнего компонента пути.
   const suffix = suffixOf(baseName(file.name || '')).toLowerCase();
   if (!ALLOWED_EXT.has(suffix)) {
     return badRequest('Ожидается таблица сотрудников из 1С (CSV/XLSX/XLS/ODS)');
@@ -338,7 +332,7 @@ export async function POST(request: NextRequest) {
     const birthDate = parsed === BAD_DATE ? null : parsed;
 
     // Дубли внутри самого файла тоже отсекаются: запись создаётся сразу и
-    // находится этим же запросом на следующей строке (в Python — autoflush).
+    // находится этим же запросом на следующей строке.
     const existing = await prisma.pii_persons.findFirst({
       where: {
         surname: r.surname,

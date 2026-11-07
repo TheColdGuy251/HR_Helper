@@ -7,8 +7,6 @@ import { internalError, jsonBody, parsePathId, pyBool, pyInt } from '@/lib/kb';
 import { deleteKbDocument } from '@/lib/ml/indexer';
 
 // Правка и удаление веб-источника базы знаний.
-// Порт PATCH/DELETE /api/kb/sources/{source_id} из backend/routes/kb.py
-// (patch_source, delete_source).
 
 type Ctx = { params: Promise<{ source_id: string }> };
 
@@ -34,7 +32,7 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
 
   if (has('priority')) {
     const p = pyInt(body.priority);
-    if (p === null) return internalError(); // int(...) в Python бросил бы исключение
+    if (p === null) return internalError();
     if (p !== 1 && p !== 2 && p !== 3) return badRequest('priority должен быть 1, 2 или 3');
     data.priority = p;
   }
@@ -49,8 +47,8 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
 
 /**
  * Удаление источника вместе с его проиндексированными документами: без этого в
- * поиске остались бы «призраки» — векторы Qdrant, BM25 и граф kb_links.
- * Отсутствующий источник ошибкой не считается — ответ всегда success.
+ * поиске остались бы "призраки" - векторы Qdrant, BM25 и граф kb_links.
+ * Отсутствующий источник ошибкой не считается - ответ всегда success.
  */
 export async function DELETE(_request: NextRequest, { params }: Ctx) {
   const gate = await requireKbEditor();
@@ -73,7 +71,7 @@ export async function DELETE(_request: NextRequest, { params }: Ctx) {
       try {
         await deleteKbDocument(d.id);
       } catch {
-        /* «Не удалось удалить документ источника» — сам источник всё равно сносим */
+        /* "Не удалось удалить документ источника" - сам источник всё равно сносим */
       }
     }
     await prisma.kb_sources.delete({ where: { id: src.id } });

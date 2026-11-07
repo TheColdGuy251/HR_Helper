@@ -4,21 +4,20 @@ import { prisma } from '@/lib/db';
 import { buildXlsx, type XlsxCell } from './xlsx';
 import { crc32, sequenceRatio } from './seqmatch';
 import { DocValueError, round1, saveGenerated, timestamp } from './common';
-import { toDocsPath } from '@/lib/news';
 
 /**
  * Б7: поиск однотипных инструкций по охране труда.
- * Порт services/documents/ot_dedup.py. Без LLM.
+ * Без LLM.
  *
  * 1) дешёвый кандидат-отбор: шинглы (5-словные n-граммы, crc32) + инвертированный
- *    индекс → Dice-коэффициент по множествам шинглов для всех пар сразу;
- * 2) точная похожесть для кандидатов: SequenceMatcher по СЛОВАМ.
+ *    индекс -> Dice-коэффициент по множествам шинглов для всех пар сразу;
+ * 2) точная похожесть для кандидатов: Ratcliff/Obershelp по словам (lib/docs/seqmatch.ts).
  */
 
 /**
- * Триггер чат-команды «найди дубликаты инструкций».
- * `[\w-]` из Python пишем классом целиком: ru() подставляет \w как готовый
- * класс, и вложить его внутрь другого класса нельзя.
+ * Триггер чат-команды "найди дубликаты инструкций".
+ * `[\w-]` пишем классом целиком: ru() подставляет \w как готовый класс, и
+ * вложить его внутрь другого класса нельзя.
  */
 export const OT_DEDUP_REQUEST_RE =
   /(?:дубл|однотип|совпаден)[0-9A-Za-zА-Яа-яЁё_-]*[^.]{0,60}инструкц|инструкц[0-9A-Za-zА-Яа-яЁё_-]*[^.]{0,60}(?:дубл|однотип)/i;
@@ -26,9 +25,9 @@ export const OT_DEDUP_REQUEST_RE =
 const WORD_RE = /[а-яёa-z0-9]+/gi;
 const SHINGLE = 5;
 const CANDIDATE_DICE = 0.5;
-/** Порог «однотипные» из брифа отдела ОТ. */
+/** Порог "однотипные" из брифа отдела ОТ. */
 export const DUPLICATE_THRESHOLD = 0.8;
-/** Пары ниже порога, но выше этого — «пограничные», тоже попадают в отчёт. */
+/** Пары ниже порога, но выше этого - "пограничные", тоже попадают в отчёт. */
 const REPORT_THRESHOLD = 0.6;
 
 function words(text: string): string[] {
@@ -66,13 +65,13 @@ export interface DedupResult {
   unreadable: string[];
 }
 
-/** docs: [имя файла, текст] → пары и группы однотипных. */
+/** docs: [имя файла, текст] -> пары и группы однотипных. */
 export function compareDocuments(docs: [string, string][]): Omit<DedupResult, 'unreadable'> {
   const names = docs.map(([n]) => n);
   const wordLists = docs.map(([, t]) => words(t));
   const shingleSets = wordLists.map(shingles);
 
-  // Инвертированный индекс шинглов → счётчик общих шинглов по парам
+  // Инвертированный индекс шинглов -> счётчик общих шинглов по парам
   const byShingle = new Map<number, number[]>();
   shingleSets.forEach((ss, i) => {
     for (const h of ss) {
@@ -83,7 +82,7 @@ export function compareDocuments(docs: [string, string][]): Omit<DedupResult, 'u
   });
   const common = new Map<string, number>();
   for (const ids of byShingle.values()) {
-    // Шингл-«шум», общий для всех файлов, не информативен.
+    // Шингл-"шум", общий для всех файлов, не информативен.
     if (ids.length < 2 || ids.length > 50) continue;
     for (let x = 0; x < ids.length; x += 1) {
       for (let y = x + 1; y < ids.length; y += 1) {
@@ -109,7 +108,7 @@ export function compareDocuments(docs: [string, string][]): Omit<DedupResult, 'u
   }
   pairs.sort((x, y) => y.percent - x.percent);
 
-  // Группы однотипных (связные компоненты по парам ≥ 80%)
+  // Группы однотипных (связные компоненты по парам >= 80%)
   const parent = docs.map((_, i) => i);
   const find = (x: number): number => {
     let cur = x;
@@ -157,7 +156,7 @@ export function compareDocuments(docs: [string, string][]): Omit<DedupResult, 'u
   };
 }
 
-/** «{v:.0f}» из Python: половина округляется к чётному. */
+/** Округление до целого с половиной к чётному. */
 function fmt0(v: number): string {
   const fl = Math.floor(v);
   const diff = v - fl;
@@ -165,7 +164,7 @@ function fmt0(v: number): string {
   return String(r);
 }
 
-/** xlsx-отчёт: лист «Пары» (все ≥60%) + лист «Группы однотипных» (≥80%). */
+/** xlsx-отчёт: лист "Пары" (все >=60%) + лист "Группы однотипных" (>=80%). */
 export function buildDedupXlsx(result: Omit<DedupResult, 'unreadable'>): Buffer {
   const pairCells: XlsxCell[] = [];
   ['Инструкция 1', 'Инструкция 2', 'Совпадение, %'].forEach((h, i) => {
@@ -210,8 +209,8 @@ export function buildDedupXlsx(result: Omit<DedupResult, 'unreadable'>): Buffer 
   ]);
 }
 
-/** Полный цикл: разобранные инструкции → сравнение → xlsx в «Мои документы». */
-export async function runDedup(userId: number, docs: [string, string][], unreadable: string[]) {
+/** Полный цикл: разобранные инструкции -> сравнение -> xlsx в "Мои документы". */
+export async function runDedup(userId: string, docs: [string, string][], unreadable: string[]) {
   if (docs.length < 2) {
     throw new DocValueError('В архиве меньше двух читаемых инструкций (docx/doc/pdf/rtf/txt)');
   }
@@ -221,8 +220,8 @@ export async function runDedup(userId: number, docs: [string, string][], unreada
     data: {
       user_id: userId,
       title: `Дубликаты инструкций ОТ (${result.files} файлов, ${result.duplicates} пар ≥80%)`,
-      template_key: 'ot_dedup',
-      file_path: toDocsPath(filePath),
+      generator: 'ot_dedup',
+      file_path: filePath,
       progress: 100,
       status: 'ready',
       fields: { files: result.files, duplicates: result.duplicates } as Prisma.InputJsonValue,

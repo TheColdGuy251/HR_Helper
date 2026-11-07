@@ -15,6 +15,7 @@ import {
   X,
 } from 'lucide-react';
 import { apiDelete, apiGet, apiPost, formatBytes } from '@/lib/api';
+import { compareIds } from '@/lib/ids';
 import { useComposerPadding } from '@/lib/viewport';
 import { useAuth } from '@/components/auth-context';
 import { toast } from '@/components/events';
@@ -52,34 +53,32 @@ import {
   groupedCopyText,
   groupFlag,
   insertOrdered,
+  isSavedId,
   lastSeenText,
   messageText,
   typingLabel,
 } from './types';
 
 // Тред мессенджера: история с подгрузкой вверх, разделители дат, пин-бар,
-// presence, «печатает…», вложения диалога и стриминговые ответы ИИ.
-// Эндпоинты — HR Helper/routes/messenger.py.
+// presence, "печатает...", вложения диалога и стриминговые ответы ИИ.
 
 const TYPING_TTL = 6000;   // сколько считаем собеседника печатающим
-const TICK_MS = 2500;      // пересчёт индикатора «печатает…»
+const TICK_MS = 2500;      // пересчёт индикатора "печатает..."
 const LOAD_MORE_PX = 160;  // порог подгрузки истории при прокрутке вверх
 
-// Выделение протяжкой (порт attachThreadInteractions из messenger_common.js).
-const DRAG_OUT_PX = 3;   // выход курсора за границы пузыря → режим выделения
+// Выделение протяжкой.
+const DRAG_OUT_PX = 3;   // выход курсора за границы пузыря -> режим выделения
 const EDGE = 66;         // зона автоскролла у краёв ленты
 const EDGE_SPEED = 16;   // максимальный шаг автоскролла за кадр
 const FORWARD_LIMIT = 30; // столько сообщений принимает /forward-to-assistant
-// Порог «клик, а не перетаскивание» для шапки — как DRAG_SLOP в widget.tsx
-// и `Math.abs(dx) < 4` в легаси (messenger.js:340).
+// Порог "клик, а не перетаскивание" для шапки - как DRAG_SLOP в widget.tsx.
 const HEAD_CLICK_SLOP = 4;
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : 'Не удалось выполнить действие');
 
 /**
- * Точка прокрутки к разделителю «Новые сообщения» (порт dividerScrollTop,
- * messenger_common.js:1122): линию держим повыше, но два сообщения ДО неё
- * оставляем в кадре — чтобы не терялся контекст разговора.
+ * Точка прокрутки к разделителю "Новые сообщения": линию держим повыше, но два
+ * сообщения до неё оставляем в кадре - чтобы не терялся контекст разговора.
  */
 function dividerScrollTop(divider: HTMLElement): number {
   let anchor = divider;
@@ -97,7 +96,7 @@ function dividerScrollTop(divider: HTMLElement): number {
 }
 
 /**
- * Отступ ленты под композером — только на сенсорных экранах: там композер
+ * Отступ ленты под композером - только на сенсорных экранах: там композер
  * приподнимается над клавиатурой (useKeyboardInset) и перекрывает последние
  * сообщения. На десктопе он в обычном потоке, и отступ был бы пустой полосой.
  */
@@ -118,7 +117,7 @@ function ComposerPadding({
   return null;
 }
 
-// ── Модалка «Вложения диалога» ──────────────────────────────────────────────
+// Модалка "Вложения диалога"
 
 type AttTab = 'documents' | 'media' | 'links';
 
@@ -303,7 +302,7 @@ function AttachmentsModal({ conv, onClose }: { conv: ActiveConv; onClose: () => 
   );
 }
 
-// ── Тред ────────────────────────────────────────────────────────────────────
+// Тред
 
 export function Thread({
   conv,
@@ -313,7 +312,7 @@ export function Thread({
 }: {
   conv: ActiveConv;
   onBack: () => void;
-  /** Мини-мессенджер: кнопка «назад» нужна и на десктопе. */
+  /** Мини-мессенджер: кнопка "назад" нужна и на десктопе. */
   compact?: boolean;
   headerExtra?: React.ReactNode;
 }) {
@@ -326,21 +325,21 @@ export function Thread({
   const [notice, setNotice] = useState('');
   const [hasMore, setHasMore] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
-  const [dividerId, setDividerId] = useState<number | null>(null); // линия «Новые сообщения»
-  const [newCount, setNewCount] = useState(0);                     // бейдж на стрелке «вниз»
+  const [dividerId, setDividerId] = useState<string | null>(null); // линия "Новые сообщения"
+  const [newCount, setNewCount] = useState(0);                     // бейдж на стрелке "вниз"
   const [atBottom, setAtBottom] = useState(true);
   const [coarse, setCoarse] = useState(false);
   const [reply, setReply] = useState<Msg | null>(null);
-  const [typers, setTypers] = useState<Record<number, { name: string; ts: number }>>({});
+  const [typers, setTypers] = useState<Record<string, { name: string; ts: number }>>({});
   const [presence, setPresence] = useState<PresenceInfo | null>(null);
   const [attachOpen, setAttachOpen] = useState(false);
-  const [highlight, setHighlight] = useState<number | null>(null);
+  const [highlight, setHighlight] = useState<string | null>(null);
   const [, setTick] = useState(0);
 
   // выделение и пересылка
   const [selMode, setSelMode] = useState(false);
-  const [selected, setSelected] = useState<Set<number>>(() => new Set());
-  const [forward, setForward] = useState<{ ids: number[] } | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [forward, setForward] = useState<{ ids: string[] } | null>(null);
   const [fwdBusy, setFwdBusy] = useState(false);
   const [fwdError, setFwdError] = useState('');
   const [delMenu, setDelMenu] = useState(false); // открыто окно подтверждения удаления
@@ -356,10 +355,10 @@ export function Thread({
   const composerRef = useRef<HTMLDivElement>(null);
   const newCountRef = useRef(0);                                    // зеркало newCount для SSE
   const stickRef = useRef(false);                                   // доскроллить вниз
-  const jumpRef = useRef<number | null>(null);                      // подскочить к сообщению
+  const jumpRef = useRef<string | null>(null);                      // подскочить к сообщению
   const keepRef = useRef<{ top: number; height: number } | null>(null); // удержать позицию
   const tmpRef = useRef(0);
-  const meId = user?.id ?? -1;
+  const meId = user?.id ?? '';
 
   // Жест протяжки: стартовые координаты, границы стартового пузыря, режим.
   const dragRef = useRef<{ y: number; top: number; bottom: number; active: boolean } | null>(null);
@@ -368,13 +367,13 @@ export function Thread({
 
   const params = conv.general ? 'general=1' : `peer_id=${conv.peerId}`;
 
-  // ── скролл ────────────────────────────────────────────────────────────────
+  // скролл
   const nearBottom = () => {
     const el = listRef.current;
     return !el || el.scrollHeight - el.scrollTop - el.clientHeight < 80;
   };
 
-  /** Дочитали до низа — бейдж новых гаснет (порт clearNewBadge). */
+  /** Дочитали до низа - бейдж новых гаснет. */
   const clearNew = useCallback(() => {
     if (!newCountRef.current) return;
     newCountRef.current = 0;
@@ -396,7 +395,7 @@ export function Thread({
       const node = el.querySelector<HTMLElement>(`[data-mid="${jump}"]`);
       if (node) {
         node.scrollIntoView({ block: 'center' });
-        // Всё непрочитанное поместилось в кадр — бейдж не нужен.
+        // Всё непрочитанное поместилось в кадр - бейдж не нужен.
         if (nearBottom()) clearNew();
         setAtBottom(nearBottom());
         return;
@@ -419,7 +418,7 @@ export function Thread({
     return () => mq.removeEventListener('change', apply);
   }, []);
 
-  // ── первичная загрузка ────────────────────────────────────────────────────
+  // первичная загрузка
   useEffect(() => {
     let alive = true;
     setLoading(true);
@@ -429,7 +428,7 @@ export function Thread({
         setMessages(r.messages);
         setHasMore(r.has_more);
         setDividerId(r.first_unread_id);
-        // Непрочитанные есть — подскакиваем к линии и показываем их счётчик.
+        // Непрочитанные есть - подскакиваем к линии и показываем их счётчик.
         newCountRef.current = r.first_unread_id ? r.unread_count || 0 : 0;
         setNewCount(newCountRef.current);
         if (r.first_unread_id) jumpRef.current = r.first_unread_id;
@@ -447,7 +446,7 @@ export function Thread({
     };
   }, [params]);
 
-  // ── presence собеседника ──────────────────────────────────────────────────
+  // presence собеседника
   useEffect(() => {
     if (conv.general || conv.notes || !conv.peerId) return;
     let alive = true;
@@ -461,13 +460,13 @@ export function Thread({
     };
   }, [conv]);
 
-  // Индикатор «печатает…» гаснет сам — просто перерисовываемся раз в 2.5 с.
+  // Индикатор "печатает..." гаснет сам - просто перерисовываемся раз в 2.5 с.
   useEffect(() => {
     const t = setInterval(() => setTick((v) => v + 1), TICK_MS);
     return () => clearInterval(t);
   }, []);
 
-  // ── отметка прочтения ─────────────────────────────────────────────────────
+  // отметка прочтения
   const markRead = useCallback(() => {
     if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
     const body = conv.general ? { general: true } : { peer_id: conv.peerId };
@@ -486,14 +485,14 @@ export function Thread({
     };
   }, [markRead]);
 
-  const patch = useCallback((id: number | string, upd: Partial<Msg>) => {
-    setMessages((prev) => prev.map((m) => (String(m.id) === String(id) ? { ...m, ...upd } : m)));
+  const patch = useCallback((id: string, upd: Partial<Msg>) => {
+    setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, ...upd } : m)));
   }, []);
 
-  // ── подгрузка истории вверх ───────────────────────────────────────────────
+  // подгрузка истории вверх
   const loadOlder = useCallback(async () => {
     const el = listRef.current;
-    const first = messages.find((m) => typeof m.id === 'number');
+    const first = messages.find((m) => isSavedId(m.id));
     if (!el || !first || loadingOlder || !hasMore) return;
     setLoadingOlder(true);
     const snap = { top: el.scrollTop, height: el.scrollHeight };
@@ -505,7 +504,7 @@ export function Thread({
       setHasMore(!!r.has_more && r.messages.length > 0);
       setMessages((prev) => [...r.messages, ...prev]);
     } catch {
-      /* сеть моргнула — попробуем при следующей прокрутке */
+      /* сеть моргнула - попробуем при следующей прокрутке */
     } finally {
       setLoadingOlder(false);
     }
@@ -520,7 +519,7 @@ export function Thread({
     if (el.scrollTop <= LOAD_MORE_PX) loadOlder();
   };
 
-  /** Стрелка «вниз»: при новых — сначала к разделителю, повторно — в самый низ. */
+  /** Стрелка "вниз": при новых - сначала к разделителю, повторно - в самый низ. */
   const scrollDown = () => {
     const el = listRef.current;
     if (!el) return;
@@ -533,7 +532,7 @@ export function Thread({
     clearNew();
   };
 
-  const jumpTo = useCallback((id: number) => {
+  const jumpTo = useCallback((id: string) => {
     const node = listRef.current?.querySelector<HTMLElement>(`[data-mid="${id}"]`);
     if (!node) return;
     node.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -541,14 +540,14 @@ export function Thread({
     setTimeout(() => setHighlight((v) => (v === id ? null : v)), 1600);
   }, []);
 
-  // ── выделение сообщений ───────────────────────────────────────────────────
+  // выделение сообщений
   const exitSelect = useCallback(() => {
     setSelMode(false);
     setSelected(new Set());
     setDelMenu(false);
   }, []);
 
-  const toggleSelect = useCallback((id: number) => {
+  const toggleSelect = useCallback((id: string) => {
     if (clickGuard.current) {
       clickGuard.current = false;
       return;
@@ -562,12 +561,12 @@ export function Thread({
   }, []);
 
   const startSelect = useCallback((m: Msg) => {
-    if (typeof m.id !== 'number') return;
+    if (!isSavedId(m.id)) return;
     setSelMode(true);
-    setSelected((prev) => new Set(prev).add(m.id as number));
+    setSelected((prev) => new Set(prev).add(m.id));
   }, []);
 
-  // Esc выходит из режима выделения (как в легаси). Пока открыто окно
+  // Esc выходит из режима выделения. Пока открыто окно
   // подтверждения удаления, Esc гасит только его.
   useEffect(() => {
     if (!selMode || delMenu) return;
@@ -581,21 +580,21 @@ export function Thread({
   // Тулбар прячется, когда ничего не выбрано (но режим остаётся).
   const selCount = selected.size;
 
-  /** Сообщение под курсором по вертикали — как msgAtY в легаси. */
-  const msgAtY = useCallback((y: number): number | null => {
+  /** Сообщение под курсором по вертикали. */
+  const msgAtY = useCallback((y: number): string | null => {
     const nodes = listRef.current?.querySelectorAll<HTMLElement>('[data-selectable]');
     if (!nodes) return null;
     for (const n of nodes) {
       const r = n.getBoundingClientRect();
       if (y >= r.top && y <= r.bottom) {
-        const id = Number(n.getAttribute('data-mid'));
-        return Number.isFinite(id) ? id : null;
+        const id = n.getAttribute('data-mid');
+        return isSavedId(id) ? id : null;
       }
     }
     return null;
   }, []);
 
-  /** Протяжка только ДОБАВЛЯЕТ в набор — как в легаси. */
+  /** Протяжка только добавляет в набор. */
   const addAtY = useCallback(
     (y: number) => {
       const id = msgAtY(y);
@@ -613,7 +612,7 @@ export function Thread({
     }
   }, []);
 
-  // Отпустить кнопку можно и за пределами ленты — слушаем окно.
+  // Отпустить кнопку можно и за пределами ленты - слушаем окно.
   useEffect(() => {
     window.addEventListener('pointerup', stopDrag);
     window.addEventListener('pointercancel', stopDrag);
@@ -661,7 +660,7 @@ export function Thread({
     if (!d || e.pointerType !== 'mouse') return;
     d.y = e.clientY;
     if (!d.active) {
-      // Выход курсора выше/ниже пузыря включает выделение (внутри — обычное
+      // Выход курсора выше/ниже пузыря включает выделение (внутри - обычное
       // выделение текста).
       if (e.clientY >= d.top - DRAG_OUT_PX && e.clientY <= d.bottom + DRAG_OUT_PX) return;
       d.active = true;
@@ -674,14 +673,14 @@ export function Thread({
     startAutoScroll();
   };
 
-  // ── действия над выделенным ───────────────────────────────────────────────
+  // действия над выделенным
   const selectedMsgs = useMemo(
-    () => messages.filter((m) => typeof m.id === 'number' && selected.has(m.id)),
+    () => messages.filter((m) => isSavedId(m.id) && selected.has(m.id)),
     [messages, selected]
   );
-  /** id выделенных в порядке ленты — как selectedMsgs() в легаси. */
+  /** id выделенных в порядке ленты. */
   const selectedIds = useMemo(
-    () => selectedMsgs.map((m) => m.id).filter((v): v is number => typeof v === 'number'),
+    () => selectedMsgs.map((m) => m.id),
     [selectedMsgs]
   );
 
@@ -695,7 +694,7 @@ export function Thread({
     const list = selectedMsgs;
     exitSelect();
     for (const m of list) {
-      if (typeof m.id !== 'number') continue;
+      if (!isSavedId(m.id)) continue;
       try {
         await apiDelete(`/api/messenger/messages/${m.id}${forAll ? '?for_all=1' : ''}`);
         setMessages((prev) => prev.filter((x) => String(x.id) !== String(m.id)));
@@ -712,7 +711,7 @@ export function Thread({
     setForward({ ids: selectedIds });
   };
 
-  /** N последовательных POST /api/messenger/send — сервер принимает по одному id. */
+  /** N последовательных POST /api/messenger/send - сервер принимает по одному id. */
   const doForward = async (target: ForwardTarget) => {
     if (!forward) return;
     setFwdBusy(true);
@@ -745,19 +744,19 @@ export function Thread({
     }
   };
 
-  /** Пересылка выбранного в новый диалог с ассистентом (лимит бэкенда — 30). */
-  const forwardToAssistant = async (ids: number[]) => {
+  /** Пересылка выбранного в новый диалог с ассистентом (лимит бэкенда - 30). */
+  const forwardToAssistant = async (ids: string[]) => {
     if (!ids.length) return;
     setFwdBusy(true);
     setFwdError('');
     try {
-      const r = await apiPost<{ session_id: string | number }>(
+      const r = await apiPost<{ dialogue_id: string }>(
         '/api/messenger/forward-to-assistant',
         { message_ids: ids.slice(0, FORWARD_LIMIT) }
       );
       setForward(null);
       exitSelect();
-      router.push(`/chat/${r.session_id}`);
+      router.push(`/chat/${r.dialogue_id}`);
     } catch (e) {
       setFwdError(errMsg(e));
       setNotice(errMsg(e));
@@ -766,7 +765,7 @@ export function Thread({
     }
   };
 
-  // ── отправка ──────────────────────────────────────────────────────────────
+  // отправка
   const send = useCallback(
     async (content: string, list: MsgAttachment[]) => {
       const replyTo = reply;
@@ -790,7 +789,7 @@ export function Thread({
         reactions: [],
         poll: null,
         reply_to:
-          replyTo && typeof replyTo.id === 'number'
+          replyTo && isSavedId(replyTo.id)
             ? {
                 id: replyTo.id,
                 sender_name: replyTo.sender_name,
@@ -804,7 +803,7 @@ export function Thread({
       const body: Record<string, unknown> = { content };
       if (conv.general) body.general = true;
       else body.peer_id = conv.peerId;
-      if (replyTo && typeof replyTo.id === 'number') body.reply_to_id = replyTo.id;
+      if (replyTo && isSavedId(replyTo.id)) body.reply_to_id = replyTo.id;
       if (list.length) body.attachment_ids = list.map((a) => a.id);
 
       try {
@@ -854,7 +853,7 @@ export function Thread({
     [conv]
   );
 
-  // ── действия над сообщением ───────────────────────────────────────────────
+  // действия над сообщением
   const actions: MessageActions = useMemo(
     () => ({
       onReply: (m) => setReply(m),
@@ -867,7 +866,7 @@ export function Thread({
         }
       },
       onDelete: async (m, forAll) => {
-        if (typeof m.id !== 'number') return;
+        if (!isSavedId(m.id)) return;
         try {
           await apiDelete(`/api/messenger/messages/${m.id}${forAll ? '?for_all=1' : ''}`);
           setMessages((prev) => prev.filter((x) => String(x.id) !== String(m.id)));
@@ -876,7 +875,7 @@ export function Thread({
         }
       },
       onPin: async (m) => {
-        if (typeof m.id !== 'number') return;
+        if (!isSavedId(m.id)) return;
         try {
           await apiPost('/api/messenger/pin', { message_id: m.id, pinned: !m.is_pinned });
         } catch (e) {
@@ -905,7 +904,7 @@ export function Thread({
         }
       },
       onForward: (m) => {
-        if (typeof m.id !== 'number') return;
+        if (!isSavedId(m.id)) return;
         setFwdError('');
         setForward({ ids: [m.id] });
       },
@@ -916,7 +915,7 @@ export function Thread({
     [patch, jumpTo, startSelect, toggleSelect]
   );
 
-  // ── SSE ───────────────────────────────────────────────────────────────────
+  // SSE
   useEffect(() => {
     const key = conv.key;
 
@@ -934,9 +933,9 @@ export function Thread({
       setMessages((prev) => insertOrdered(prev, m));
       if (stick) {
         stickRef.current = true;
-      } else if (!m.mine && !m.system && typeof m.id === 'number') {
-        // Читаем историю выше — линия «Новые сообщения» встаёт перед началом
-        // свежей партии, счётчик уезжает на стрелку (порт markIncoming).
+      } else if (!m.mine && !m.system && isSavedId(m.id)) {
+        // Читаем историю выше - линия "Новые сообщения" встаёт перед началом
+        // свежей партии, счётчик уезжает на стрелку.
         if (!newCountRef.current) setDividerId(m.id);
         newCountRef.current += 1;
         setNewCount(newCountRef.current);
@@ -978,7 +977,7 @@ export function Thread({
       if (!d || d.peer_key !== key) return;
       setMessages((prev) =>
         prev.map((m) =>
-          m.mine && typeof m.id === 'number' && m.id <= d.last_read_id && m.status !== 'seen'
+          m.mine && isSavedId(m.id) && compareIds(m.id, d.last_read_id) <= 0 && m.status !== 'seen'
             ? { ...m, status: 'seen' as const }
             : m
         )
@@ -1081,7 +1080,7 @@ export function Thread({
     return () => handlers.forEach(([n, h]) => window.removeEventListener(n, h));
   }, [conv, markRead, meId, patch]);
 
-  // ── производные данные ────────────────────────────────────────────────────
+  // производные данные
   const pinned = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i -= 1) if (messages[i].is_pinned) return messages[i];
     return null;
@@ -1140,7 +1139,7 @@ export function Thread({
           highlight={highlight != null && String(highlight) === String(m.id)}
           selection={{
             mode: selMode,
-            checked: typeof m.id === 'number' && selected.has(m.id),
+            checked: isSavedId(m.id) && selected.has(m.id),
           }}
           actions={actions}
         />
@@ -1149,12 +1148,12 @@ export function Thread({
     return out;
   }, [messages, dividerId, conv.general, highlight, actions, selMode, selected]);
 
-  // «Удалить для всех» доступно, только если ВСЕ выбранные — свои (легаси).
+  // "Удалить для всех" доступно, только если все выбранные - свои.
   const allMine = selectedMsgs.every((m) => m.mine && !m.system);
 
   return (
     <section className="flex-1 bg-white border border-gray-100 rounded-2xl shadow-sm flex flex-col overflow-hidden min-h-0 relative">
-      {/* тулбар выделения — поверх шапки, как .msgr-seltools в легаси */}
+      {/* тулбар выделения - поверх шапки */}
       {selMode && selCount > 0 && (
         <div className="absolute inset-x-0 top-0 z-30 h-12 px-3 flex items-center gap-2 bg-gradient-to-r from-[#1e40af]/95 to-[#2563eb]/95 backdrop-blur text-white shadow-md">
           <span className="text-xs font-semibold">
@@ -1175,9 +1174,9 @@ export function Thread({
             >
               <Forward size={16} />
             </button>
-            {/* отдельной кнопки «переслать ассистенту» в легаси не было:
-                ассистент — один из получателей в окне пересылки */}
-            {/* одна кнопка «Удалить» → окно выбора, как ctx.toolbar.del в легаси */}
+            {/* отдельной кнопки "переслать ассистенту" нет: ассистент - один из
+                получателей в окне пересылки */}
+            {/* одна кнопка "Удалить" -> окно выбора */}
             <button
               onClick={() => setDelMenu(true)}
               title="Удалить"
@@ -1196,7 +1195,7 @@ export function Thread({
         </div>
       )}
 
-      {/* шапка (data-msgr-head — за неё тащится плавающая панель мессенджера) */}
+      {/* шапка (data-msgr-head - за неё тащится плавающая панель мессенджера) */}
       <div
         data-msgr-head
         className="p-3 md:p-4 border-b border-gray-50 flex items-center gap-3 bg-gray-50/30 shrink-0"
@@ -1208,9 +1207,8 @@ export function Thread({
         >
           <ChevronLeft size={18} />
         </button>
-        {/* Аватар + имя — клик открывает «Вложения диалога» (messenger.js:810-811,
-            messenger_page.js:499-501). Это не <button>: иначе widget.tsx исключит
-            область из зоны перетаскивания панели. */}
+        {/* Аватар + имя - клик открывает "Вложения диалога". Это не <button>:
+            иначе widget.tsx исключит область из зоны перетаскивания панели. */}
         <div
           role="button"
           tabIndex={0}
@@ -1221,7 +1219,7 @@ export function Thread({
           onClick={(e) => {
             const p = headPressRef.current;
             headPressRef.current = null;
-            // Панель тащили этим же движением — клик не засчитываем.
+            // Панель тащили этим же движением - клик не засчитываем.
             if (
               p &&
               (Math.abs(e.clientX - p.x) > HEAD_CLICK_SLOP ||
@@ -1258,7 +1256,7 @@ export function Thread({
         <div className="flex items-center gap-2 px-4 py-2 bg-blue-50/60 border-b border-blue-100 shrink-0">
           <Pin size={14} className="text-[#2563eb] shrink-0" />
           <button
-            onClick={() => typeof pinned.id === 'number' && jumpTo(pinned.id)}
+            onClick={() => isSavedId(pinned.id) && jumpTo(pinned.id)}
             className="flex-1 min-w-0 text-left"
           >
             <span className="block text-[10px] font-bold text-[#2563eb]">
@@ -1306,7 +1304,7 @@ export function Thread({
           )}
         </div>
 
-        {/* стрелка «вниз» с бейджем новых сообщений */}
+        {/* стрелка "вниз" с бейджем новых сообщений */}
         {!loading && !error && messages.length > 0 && (!atBottom || newCount > 0) && (
           <button
             onClick={scrollDown}

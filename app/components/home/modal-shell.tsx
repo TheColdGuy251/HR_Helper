@@ -5,7 +5,7 @@ import { CheckCircle2, Loader2, Upload, X } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 
 // Общий каркас модалок-мастеров главной страницы.
-// Стиль — Tyuiu.bot-main: белые карточки rounded-2xl, синий #2563eb.
+// Белые карточки rounded-2xl, синий #2563eb.
 
 /** Человекочитаемый текст ошибки запроса. */
 export function errText(e: unknown): string {
@@ -139,7 +139,7 @@ export function ResultHead({ children }: { children: React.ReactNode }) {
   );
 }
 
-/** Чипы со статистикой (как .dpo-chip в легаси). */
+/** Чипы со статистикой. */
 export function StatChips({ items }: { items: [string, React.ReactNode][] }) {
   return (
     <div className="flex flex-wrap gap-2">
@@ -164,7 +164,7 @@ export function TextPreview({ text }: { text: string }) {
   );
 }
 
-// Классы кнопок-ссылок — дословно как PrimaryButton/SecondaryButton из ui.tsx.
+// Классы кнопок-ссылок - дословно как PrimaryButton/SecondaryButton из ui.tsx.
 const PRIMARY_LINK =
   'bg-[#2563eb] text-white px-5 py-3 rounded-xl font-semibold text-sm inline-flex items-center justify-center gap-2 hover:bg-[#1e40af] transition shadow-md shadow-blue-100';
 const SECONDARY_LINK =

@@ -7,7 +7,6 @@ import { publish } from '@/lib/events';
 import { bodyParams, messageById, peerKeyOf, recipientsOf } from '@/lib/messenger';
 
 // Правка своего сообщения.
-// Порт POST /api/messenger/edit из backend/routes/messenger.py.
 
 export async function POST(request: NextRequest) {
   const gate = await requireUser();
@@ -18,7 +17,7 @@ export async function POST(request: NextRequest) {
   if ('response' in parsed) return parsed.response;
   const p = parsed.params;
 
-  const messageId = p.int('message_id');
+  const messageId = p.uuid('message_id');
   const rawContent = p.str('content', '');
   const invalid = p.invalid();
   if (invalid) return invalid;
@@ -26,7 +25,7 @@ export async function POST(request: NextRequest) {
   const msg = await messageById(messageId);
   if (!msg) return notFound('Сообщение не найдено');
   if (msg.sender_id !== me) return forbidden('Можно редактировать только свои сообщения');
-  // Пустая мета в Python ложна, поэтому проверяем именно «истинность» значения.
+  // Пустая мета считается отсутствующей, поэтому проверяем "истинность" значения.
   if (pyBool(msg.forwarded_meta)) return badRequest('Пересланное сообщение нельзя редактировать');
 
   const content = rawContent.trim();

@@ -3,10 +3,9 @@ import { prisma } from '@/lib/db';
 import { forbidden, fullName, requireUser } from '@/lib/auth';
 
 // Доступы (А6): список активных пользователей с ролями.
-// Порт GET /api/kb/users из backend/routes/kb.py (list_users_roles).
 //
-// Гейт именно require_user + ручная проверка is_admin — как в Python. Это важно:
-// require_admin отдал бы другой текст 403 («Доступ только для администраторов»).
+// Гейт именно require_user + ручная проверка is_admin. Это важно:
+// require_admin отдал бы другой текст 403 ("Доступ только для администраторов").
 
 export async function GET() {
   const gate = await requireUser();

@@ -3,23 +3,22 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { buildDocx, emptyPara, type DocxPara } from './docx';
 import { DocValueError, cellToString, ru, saveGenerated, timestamp } from './common';
-import { toDocsPath } from '@/lib/news';
 
 /**
- * Б5: объявление на конкурс ППС из выгрузок 1С:ЗиК «Форма 2».
- * Порт services/documents/pps_announcement.py. Без LLM.
+ * Б5: объявление на конкурс ППС из выгрузок 1С:ЗиК "Форма 2".
+ * Без LLM.
  *
  * По одному файлу на должность; внутри люди сгруппированы строками-заголовками
- * институт → кафедра. Скобки требований — черновик для правки кадровиком в Word.
+ * институт -> кафедра. Скобки требований - черновик для правки кадровиком в Word.
  */
 
-/** Триггер чат-команды «объявление о конкурсе ППС / выборах заведующих». */
+/** Триггер чат-команды "объявление о конкурсе ППС / выборах заведующих". */
 export const PPS_REQUEST_RE = ru(
   'объявлени\\w*[^.]{0,50}(?:конкурс|ппс|выбор)|конкурс[^.]{0,20}ппс|выбор\\w*\\s+завед',
   'i'
 );
 
-// Порядок секций объявления; ключ — по подстроке в названии должности.
+// Порядок секций объявления; ключ - по подстроке в названии должности.
 const SECTION_ORDER: [string, string][] = [
   ['заведующ', 'ВЫБОРЫ\nЗАВЕДУЮЩИХ КАФЕДРАМИ:'],
   ['профессор', 'ПРОФЕССОРОВ КАФЕДР:'],
@@ -54,7 +53,7 @@ function sectionKey(position: string): string {
 }
 
 /**
- * Один файл «Форма 2» → {position, rows}. Группировка институт/кафедра —
+ * Один файл "Форма 2" -> {position, rows}. Группировка институт/кафедра -
  * по строкам-заголовкам (в строке ровно одно непустое значение).
  */
 export function parseForm2Rows(rows: unknown[][], filename: string): Form2 {
@@ -91,7 +90,7 @@ export function parseForm2Rows(rows: unknown[][], filename: string): Form2 {
   for (const row of rows.slice(headerRow + 1)) {
     const vals = row.filter((v) => v !== null && v !== undefined && cellToString(v).trim());
     if (!vals.length) continue;
-    // Строка-заголовок группы (институт/кафедра) — объединённая ячейка.
+    // Строка-заголовок группы (институт/кафедра) - объединённая ячейка.
     if (vals.length === 1) {
       const text = cellToString(vals[0]).replace(/\s+/g, ' ').trim();
       if (DEPT_HEAD_RE.test(text)) {
@@ -124,10 +123,19 @@ export function parseForm2Rows(rows: unknown[][], filename: string): Form2 {
   return { position: position || '', rows: out };
 }
 
-/** «Кафедра интеллектуальных систем» → «интеллектуальных систем». */
-function deptDisplay(department: string): string {
+/**
+ * "Кафедра интеллектуальных систем" -> "интеллектуальных систем".
+ *
+ * Первую букву опускаем только у обычного слова: названия базовых кафедр
+ * начинаются с аббревиатуры или кавычки ("АО "Мостострой-11"",
+ * "ООО "Газпром ВНИИГАЗ"") - их регистр трогать нельзя (отзыв УРП от 21.07:
+ * в объявлении выходило "аО", "оОО").
+ */
+export function deptDisplay(department: string): string {
   const d = department.trim().replace(/^(базовая\s+)?кафедра\s+/i, '');
-  return d ? d.slice(0, 1).toLowerCase() + d.slice(1) : department;
+  if (!d) return department;
+  if (!/^[А-ЯЁA-Z][а-яёa-z]/.test(d)) return d; // аббревиатура, кавычка, цифра...
+  return d.slice(0, 1).toLowerCase() + d.slice(1);
 }
 
 /** Черновик требований по одному работнику: образование + степень. */
@@ -138,7 +146,7 @@ function personProfile(row: Form2Row): string {
     .filter((s) => s.trim())
     .map((s) => s.replace(/^[ \-–]+/, '').replace(/[ \-–]+$/, ''));
   if (specs.length) {
-    // «Программное обеспечение…-Инженер» → специальность до «-квалификация»
+    // "Программное обеспечение...-Инженер" -> специальность до "-квалификация"
     const names: string[] = [];
     for (const s of specs.slice(0, 2)) {
       const name = s.split(/\s*-\s*(?=[А-ЯЁ][а-яё]+$)/)[0].trim();
@@ -169,7 +177,7 @@ export interface AnnouncementData {
   people: number;
 }
 
-/** Собирает секции объявления из разобранных «форм 2». */
+/** Собирает секции объявления из разобранных "форм 2". */
 export function buildAnnouncement(form2List: Form2[], today = new Date()): AnnouncementData {
   const sections = new Map<string, Map<string, string[]>>();
   let people = 0;
@@ -269,16 +277,16 @@ async function renderAnnouncementDocx(data: AnnouncementData): Promise<string> {
   return saveGenerated(`pps_announcement_${timestamp()}.docx`, buildDocx(paras));
 }
 
-/** Полный цикл: файлы «Форма 2» (по одному на должность) → word-объявление. */
-export async function createAnnouncement(userId: number, form2List: Form2[]) {
+/** Полный цикл: файлы "Форма 2" (по одному на должность) -> word-объявление. */
+export async function createAnnouncement(userId: string, form2List: Form2[]) {
   const data = buildAnnouncement(form2List);
   const filePath = await renderAnnouncementDocx(data);
   const rec = await prisma.my_documents.create({
     data: {
       user_id: userId,
       title: `Объявление о конкурсе ППС от ${data.date}`,
-      template_key: 'pps_announcement',
-      file_path: toDocsPath(filePath),
+      generator: 'pps_announcement',
+      file_path: filePath,
       progress: 100,
       status: 'ready',
       fields: { positions: data.positions, departments: data.departments } as Prisma.InputJsonValue,

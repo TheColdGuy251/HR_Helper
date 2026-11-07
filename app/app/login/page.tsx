@@ -5,8 +5,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { apiPost } from '@/lib/api';
 
-// Вход в HR-помощник. Дизайн — карточка авторизации Tyuiu.bot-main,
-// логика — JSON-вход FastAPI (POST /api/auth/login: логин ИЛИ почта + пароль).
+// Вход в HR-помощник: логин или почта + пароль (POST /api/auth/login).
 
 function LoginForm() {
   const router = useRouter();

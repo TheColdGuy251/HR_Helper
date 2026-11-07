@@ -12,7 +12,6 @@ import {
 } from '@/lib/pii';
 
 // Повторная аутентификация по паролю перед доступом к ПДн.
-// Порт POST /api/pii/reauth из backend/routes/pii.py (pii_reauth).
 
 export async function POST(request: NextRequest) {
   const gate = await requireUser();
@@ -24,7 +23,7 @@ export async function POST(request: NextRequest) {
     return forbidden('Доступ к персональным данным запрещён');
   }
 
-  // ReauthRequest(password: str) — пустое тело и неверный тип дают 422, как в pydantic.
+  // Пароль обязателен: пустое тело и неверный тип дают 422.
   const parsed = await modelBody(request);
   if ('response' in parsed) return parsed.response;
   const password = parsed.body.password;
@@ -33,7 +32,7 @@ export async function POST(request: NextRequest) {
       { type: 'missing', loc: ['body', 'password'], msg: 'Field required', input: parsed.body },
     ]);
   }
-  // null — это не «поле отсутствует», а неверный тип: pydantic даёт string_type.
+  // null - это не "поле отсутствует", а неверный тип (string_type).
   if (typeof password !== 'string') {
     return pydanticErrors([
       {
@@ -45,7 +44,7 @@ export async function POST(request: NextRequest) {
     ]);
   }
 
-  // password_hash не входит в CurrentUser — берём отдельным запросом.
+  // password_hash не входит в CurrentUser - берём отдельным запросом.
   const row = await prisma.users.findUnique({
     where: { id: user.id },
     select: { password_hash: true },

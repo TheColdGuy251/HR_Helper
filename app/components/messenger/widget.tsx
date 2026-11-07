@@ -8,18 +8,16 @@ import { Conversations } from './conversations';
 import { Thread } from './thread';
 import type { ActiveConv, ConversationsData, Msg } from './types';
 
-// Плавающий мини-мессенджер (порт #msgrFab / #msgrPanel из messenger.js +
-// templates/base.html): FAB, панель «список ↔ тред», счётчик непрочитанного,
-// мобильный мост, вынос панели в отдельное окно (messenger.js:195-247),
-// перетаскивание за шапку (messenger.js:304), ресайз за углы (messenger.js:249)
-// и «булавка» (messenger.js:149).
+// Плавающий мини-мессенджер: FAB, панель "список <-> тред", счётчик
+// непрочитанного, мобильный мост, вынос панели в отдельное окно,
+// перетаскивание за шапку, ресайз за углы и "булавка".
 //
-// Состояние живёт в localStorage с ключами легаси:
-//   msgrWidgetState — {open, conv:{key,peerId,general,name,…}}
-//   mpLastConv      — последняя беседа для страницы /messenger
-//   msgrPanelSize   — {w,h} размер панели
-//   msgrPanelPos    — {left,top} положение панели
-//   msgrPinned      — «1»/«0», закреплена ли панель
+// Состояние живёт в localStorage:
+//   msgrWidgetState - {open, conv:{key,peerId,general,name,...}}
+//   mpLastConv      - последняя беседа для страницы /messenger
+//   msgrPanelSize   - {w,h} размер панели
+//   msgrPanelPos    - {left,top} положение панели
+//   msgrPinned      - "1"/"0", закреплена ли панель
 
 const STATE_KEY = 'msgrWidgetState';
 const LAST_CONV_KEY = 'mpLastConv';
@@ -30,7 +28,7 @@ const MOBILE_QUERY = '(max-width: 900px)';
 const POPUP_FEATURES =
   'width=430,height=680,menubar=no,toolbar=no,location=no,status=no,resizable=yes';
 
-const MIN_W = 320; // минимальные размеры панели — как в легаси
+const MIN_W = 320; // минимальные размеры панели
 const MIN_H = 380;
 const DRAG_SLOP = 4; // порог, отличающий перетаскивание от клика
 const REOPEN_GUARD_MS = 350; // клик, открывший панель / завершивший drag-resize
@@ -107,7 +105,7 @@ function writeState(open: boolean, conv: ActiveConv | null) {
   writeJson(STATE_KEY, { open, conv });
 }
 
-/** Снимок для /messenger — поля как у страницы (peer_key/peer_id). */
+/** Снимок для /messenger - поля как у страницы (peer_key/peer_id). */
 function rememberConv(conv: ActiveConv) {
   writeJson(LAST_CONV_KEY, {
     key: conv.key,
@@ -127,7 +125,7 @@ function dressPipWindow(win: Window) {
     try {
       win.document.head.appendChild(n.cloneNode(true));
     } catch {
-      /* стиль с другого origin — пропускаем */
+      /* стиль с другого origin - пропускаем */
     }
   });
   const theme = document.documentElement.getAttribute('data-theme');
@@ -146,12 +144,12 @@ export function MessengerWidget() {
   const [unread, setUnread] = useState<Record<string, number>>({});
   const [mobile, setMobile] = useState(false);
   const [pip, setPip] = useState<Window | null>(null);
-  // Положение/размер панели и «булавка» — восстанавливаются из localStorage.
+  // Положение/размер панели и "булавка" - восстанавливаются из localStorage.
   const [pos, setPos] = useState<PanelPos | null>(null);
   const [size, setSize] = useState<PanelSize | null>(null);
   const [pinned, setPinned] = useState(false);
   // Узел-контейнер панели: живёт вне корня приложения и целиком переезжает
-  // между документами (appendChild) — см. комментарий у портала в render.
+  // между документами (appendChild) - см. комментарий у портала в render.
   const [host] = useState<HTMLDivElement | null>(() =>
     typeof document === 'undefined' ? null : document.createElement('div')
   );
@@ -182,7 +180,7 @@ export function MessengerWidget() {
     return () => host.remove();
   }, [host]);
 
-  // Уход со страницы/размонтирование виджета — закрываем осиротевшее PiP-окно.
+  // Уход со страницы/размонтирование виджета - закрываем осиротевшее PiP-окно.
   useEffect(
     () => () => {
       try {
@@ -194,10 +192,10 @@ export function MessengerWidget() {
     []
   );
 
-  // На /messenger виджет не нужен — там полноценная страница.
+  // На /messenger виджет не нужен - там полноценная страница.
   const hidden = pathname === '/messenger' || pathname.startsWith('/messenger/');
 
-  // ── ширина экрана: <900px → вместо панели переходим на страницу ────────────
+  // ширина экрана: <900px -> вместо панели переходим на страницу
   useEffect(() => {
     const mq = window.matchMedia(MOBILE_QUERY);
     const apply = () => setMobile(mq.matches);
@@ -206,7 +204,7 @@ export function MessengerWidget() {
     return () => mq.removeEventListener('change', apply);
   }, []);
 
-  // Панель пропала (узкий экран или переход на /messenger) — закрываем и окно,
+  // Панель пропала (узкий экран или переход на /messenger) - закрываем и окно,
   // иначе останется висеть пустым.
   useEffect(() => {
     if (!mobile && !hidden) return;
@@ -219,7 +217,7 @@ export function MessengerWidget() {
     setPip(null);
   }, [mobile, hidden, host]);
 
-  // ── счётчик непрочитанного ────────────────────────────────────────────────
+  // счётчик непрочитанного
   const loadUnread = useCallback(async () => {
     try {
       const d = await apiGet<ConversationsData>('/api/messenger/conversations');
@@ -239,7 +237,7 @@ export function MessengerWidget() {
     void loadUnread();
   }, [hidden, loadUnread]);
 
-  // Новое сообщение коллеги увеличивает счётчик сразу (как в легаси).
+  // Новое сообщение коллеги увеличивает счётчик сразу.
   useEffect(() => {
     if (hidden) return;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -266,7 +264,7 @@ export function MessengerWidget() {
     };
   }, [hidden, loadUnread]);
 
-  // ── восстановление состояния панели ───────────────────────────────────────
+  // восстановление состояния панели
   useEffect(() => {
     if (hidden || mobile) return;
     const st = readState();
@@ -278,7 +276,7 @@ export function MessengerWidget() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hidden]);
 
-  // ── геометрия панели: восстановление, перетаскивание, ресайз ───────────────
+  // геометрия панели: восстановление, перетаскивание, ресайз
 
   useEffect(() => {
     const s = readJson<PanelSize>(SIZE_KEY);
@@ -292,7 +290,7 @@ export function MessengerWidget() {
     }
   }, []);
 
-  // Сохранённое положение могло остаться за пределами окна (другой монитор) —
+  // Сохранённое положение могло остаться за пределами окна (другой монитор) -
   // заводим панель обратно в видимую область при её появлении.
   useLayoutEffect(() => {
     const el = panelRef.current;
@@ -304,7 +302,7 @@ export function MessengerWidget() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, pip]);
 
-  /** Начало перетаскивания — только по шапке и не по её кнопкам (messenger.js:330). */
+  /** Начало перетаскивания - только по шапке и не по её кнопкам. */
   const onPanelMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
     if (e.button !== 0 || pip) return;
     const t = e.target;
@@ -322,7 +320,7 @@ export function MessengerWidget() {
     const el = panelRef.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
-    // Тянем угол — противоположный остаётся на месте, поэтому запоминаем весь
+    // Тянем угол - противоположный остаётся на месте, поэтому запоминаем весь
     // исходный прямоугольник.
     resizeRef.current = {
       dir,
@@ -340,7 +338,7 @@ export function MessengerWidget() {
 
   // Само движение ведём через style элемента, а не через состояние: перерисовка
   // треда на каждый mousemove слишком дорога. В состояние и localStorage
-  // результат уходит один раз — на mouseup.
+  // результат уходит один раз - на mouseup.
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
       const el = panelRef.current;
@@ -459,7 +457,7 @@ export function MessengerWidget() {
     writeState(true, null);
   };
 
-  /** Возврат панели на страницу (порт restoreFromPip, messenger.js:213). */
+  /** Возврат панели на страницу. */
   const restoreFromPip = useCallback(() => {
     if (host && host.ownerDocument !== document) document.body.appendChild(host);
     setPip(null);
@@ -467,7 +465,7 @@ export function MessengerWidget() {
 
   const close = useCallback(() => {
     try {
-      pipRef.current?.close(); // панель свернули — отдельное окно тоже не нужно
+      pipRef.current?.close(); // панель свернули - отдельное окно тоже не нужно
     } catch {
       /* окно уже закрыто */
     }
@@ -476,7 +474,7 @@ export function MessengerWidget() {
     writeState(false, active);
   }, [restoreFromPip, active]);
 
-  /** Сброс к размерам и положению по умолчанию (порт resetPanel, messenger.js:120). */
+  /** Сброс к размерам и положению по умолчанию. */
   const resetPanel = () => {
     setPos(null);
     setSize(null);
@@ -503,13 +501,11 @@ export function MessengerWidget() {
     }
   };
 
-  // Незакреплённая панель закрывается кликом мимо (порт messenger.js:168).
+  // Незакреплённая панель закрывается кликом мимо.
   // Решение принимаем на mousedown: к моменту click узел мог уже исчезнуть из
   // DOM (закрылось меню сообщения) и closest() ничего бы не нашёл.
-  // Легаси перечисляло свои оверлеи поимённо (.msgr-modal-ov, .toast-container,
-  // …); здесь вместо списка классов — общее правило: клики по любому плавающему
-  // слою (position: fixed) панель не закрывают. Так тосты и модалки, живущие
-  // вне поддерева панели, её не гасят.
+  // Клики по любому плавающему слою (position: fixed) панель не закрывают -
+  // так тосты и модалки, живущие вне поддерева панели, её не гасят.
   const keepOpenRef = useRef(false);
   useEffect(() => {
     if (!open || mobile || pinned || pip) return;
@@ -542,7 +538,7 @@ export function MessengerWidget() {
     };
   }, [open, mobile, pinned, pip, close]);
 
-  // Одиночный клик по FAB открывает/сворачивает, двойной — сбрасывает геометрию.
+  // Одиночный клик по FAB открывает/сворачивает, двойной - сбрасывает геометрию.
   const lastFabClickRef = useRef(0);
   const toggle = () => {
     if (mobile) {
@@ -565,7 +561,7 @@ export function MessengerWidget() {
     writeState(true, active);
   };
 
-  // ── вынос панели в отдельное окно (порт popOut, messenger.js:218) ──────────
+  // вынос панели в отдельное окно
   const popOut = async () => {
     const dpip = window.documentPictureInPicture;
     if (dpip && typeof dpip.requestWindow === 'function' && host) {
@@ -583,11 +579,11 @@ export function MessengerWidget() {
         setPip(win);
         return;
       } catch {
-        restoreFromPip(); // API есть, но окно не открылось — идём в обычное окно
+        restoreFromPip(); // API есть, но окно не открылось - идём в обычное окно
       }
     }
     // Фолбэк: обычное окно браузера. sessionStorage туда не переносится, поэтому
-    // текущую беседу кладём в localStorage — /messenger поднимет её из mpLastConv.
+    // текущую беседу кладём в localStorage - /messenger поднимет её из mpLastConv.
     if (active) rememberConv(active);
     setOpen(false);
     writeState(false, active);
@@ -595,7 +591,7 @@ export function MessengerWidget() {
     if (w) {
       w.focus();
     } else {
-      setOpen(true); // popup заблокирован — возвращаем панель
+      setOpen(true); // popup заблокирован - возвращаем панель
       writeState(true, active);
     }
   };
@@ -604,14 +600,14 @@ export function MessengerWidget() {
 
   // Своя геометрия перебивает классы по умолчанию; в отдельном окне панель
   // всегда во весь экран, поэтому там стилей нет.
-  // ВНИМАНИЕ: геометрия панели НЕ передаётся в style у React.
+  // Геометрия панели не передаётся в style у React.
   //
   // Перетаскивание и ресайз ведутся императивно (el.style.left/top/width) ради
-  // производительности — setState на каждый mousemove перерисовывал бы всю
+  // производительности - setState на каждый mousemove перерисовывал бы всю
   // ленту сообщений. Если те же свойства заодно приходили бы из React-стиля,
   // любой ререндер во время жеста (SSE, счётчик непрочитанных, набор текста)
-  // возвращал бы панель на сохранённое место — со стороны это выглядело как
-  // «панель не двигается». Поэтому сохранённые left/top/width/height
+  // возвращал бы панель на сохранённое место - со стороны это выглядело как
+  // "панель не двигается". Поэтому сохранённые left/top/width/height
   // применяются эффектом ниже, а style остаётся пустым.
   // Сохранённая геометрия. Во время жеста панель двигается императивно
   // (el.style.*), а сюда попадает только итог по mouseup: React в это время
@@ -623,7 +619,7 @@ export function MessengerWidget() {
         ...(pos ? { left: pos.left, top: pos.top, right: 'auto', bottom: 'auto' } : null),
       };
 
-  /** Кнопка-«булавка»: закреплённая панель не закрывается кликом мимо. */
+  /** Кнопка-"булавка": закреплённая панель не закрывается кликом мимо. */
   const pinButton = (cls: string) => (
     <button
       onClick={togglePinned}

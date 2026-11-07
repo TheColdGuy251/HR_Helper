@@ -4,10 +4,9 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import { badRequest, requireKbEditor } from '@/lib/auth';
-import { NEWS_DIR, baseName, stemOf, suffixOf, toDocsPath, validationError } from '@/lib/news';
+import { NEWS_DIR, baseName, stemOf, suffixOf, validationError } from '@/lib/news';
 
 // Загрузка картинки или документа для новости.
-// Порт POST /api/news/upload из backend/routes/news.py (upload_media).
 
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp']);
 const FILE_EXT = new Set([
@@ -24,7 +23,7 @@ async function exists(p: string): Promise<boolean> {
   }
 }
 
-/** Свободное имя в каталоге: «file.png», «file (1).png», … (аналог _unique_path). */
+/** Свободное имя в каталоге: "file.png", "file (1).png", .... */
 async function uniquePath(dir: string, filename: string): Promise<string> {
   const base = stemOf(filename);
   const ext = suffixOf(filename);
@@ -67,7 +66,7 @@ export async function POST(request: NextRequest) {
   const media = await prisma.news_media.create({
     data: {
       original_name: name || path.basename(target),
-      stored_path: toDocsPath(target),
+      stored_path: target,
       mime_type: file.type || null,
       size: bytes.length,
       is_image: isImage,

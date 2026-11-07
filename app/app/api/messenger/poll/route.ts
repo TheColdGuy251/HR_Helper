@@ -2,7 +2,6 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import { badRequest, notFound, requireUser } from '@/lib/auth';
-import { pyStr } from '@/lib/kb';
 import {
   GENERAL_KEY,
   bodyParams,
@@ -14,7 +13,6 @@ import {
 } from '@/lib/messenger';
 
 // Создание голосования в диалоге.
-// Порт POST /api/messenger/poll из backend/routes/messenger.py.
 
 export async function POST(request: NextRequest) {
   const gate = await requireUser();
@@ -25,7 +23,7 @@ export async function POST(request: NextRequest) {
   if ('response' in parsed) return parsed.response;
   const p = parsed.params;
 
-  const peerId = p.optInt('peer_id');
+  const peerId = p.optUuid('peer_id');
   const general = p.bool('general', false);
   const rawQuestion = p.str('question');
   const description = p.str('description', '');
@@ -50,34 +48,29 @@ export async function POST(request: NextRequest) {
 
   if (!general && (!peerId || !(await userById(peerId)))) return notFound('Получатель не найден');
 
+  // Сообщение, опрос и варианты - одной вложенной записью (одна транзакция).
   const msg = await prisma.user_messages.create({
     data: {
       sender_id: me,
       recipient_id: general ? null : peerId,
       is_general: general,
       content: question,
-      is_pinned: false,
-      is_edited: false,
-      is_ai_query: false,
+      poll: {
+        create: {
+          question,
+          description: description.trim() || null,
+          allow_multiple: allowMultiple,
+          show_voters: showVoters,
+          allow_change: allowChange,
+          allow_bot: allowBot,
+          options: { create: options.map((text, i) => ({ text, position: i })) },
+        },
+      },
     },
-  });
-  const poll = await prisma.polls.create({
-    data: {
-      message_id: msg.id,
-      question,
-      description: description.trim() || null,
-      allow_multiple: allowMultiple,
-      show_voters: showVoters,
-      allow_change: allowChange,
-      allow_bot: allowBot,
-    },
-  });
-  await prisma.poll_options.createMany({
-    data: options.map((text, i) => ({ poll_id: poll.id, text, position: i })),
   });
 
   const where = threadWhere(me, peerId, general);
-  await markRead(me, general ? GENERAL_KEY : pyStr(peerId), where);
+  await markRead(me, general || !peerId ? GENERAL_KEY : peerId, where);
   await broadcastMessage(msg);
 
   return NextResponse.json(await serializeMessage(msg, me));

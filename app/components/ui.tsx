@@ -3,15 +3,14 @@ import { useEffect, useRef, useState } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import { Check, ChevronDown, Search } from 'lucide-react';
 
-// Общие UI-элементы платформы. Все классы взяты дословно из страниц
-// Tyuiu.bot-main (chat, knowledge-base, profile) — это эталон стиля.
+// Общие UI-элементы платформы.
 
 /**
  * Стандартная обёртка страницы: как /chat и /knowledge-base.
  *
- * ВНИМАНИЕ: это вертикальный flex-контейнер (`flex flex-col`), растянутый на всю
+ * Это вертикальный flex-контейнер (`flex flex-col`), растянутый на всю
  * высоту экрана (`flex-1`). Значит у любого прямого потомка с классом `flex-1`
- * главная ось — ВЕРТИКАЛЬНАЯ, и он съест всё свободное место по высоте, отодвинув
+ * главная ось - вертикальная, и он съест всё свободное место по высоте, отодвинув
  * следующие блоки к низу окна. Прямым потомкам PageShell класс `flex-1` давать
  * нельзя (см. SearchInput ниже).
  */
@@ -113,6 +112,21 @@ export function ErrorCallout({ children }: { children: React.ReactNode }) {
   );
 }
 
+/** Жёлтая плашка предупреждений валидации: результат готов, но стоит проверить. */
+export function WarnCallout({ items }: { items: string[] }) {
+  if (!items.length) return null;
+  return (
+    <div className="bg-amber-50 border border-amber-200 text-amber-800 p-3 rounded-xl text-xs font-medium">
+      <p className="font-semibold mb-1">Обратите внимание:</p>
+      <ul className="list-disc pl-4 space-y-0.5">
+        {items.map((w, i) => (
+          <li key={i}>{w}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 /** Синяя информационная плашка. */
 export function InfoCallout({ children }: { children: React.ReactNode }) {
   return (
@@ -156,11 +170,11 @@ export function StatusPill({
 /**
  * Поиск с иконкой слева (как на /chat).
  *
- * По умолчанию корень — `flex-1`: компонент задуман для ГОРИЗОНТАЛЬНОГО ряда
+ * По умолчанию корень - `flex-1`: компонент задуман для горизонтального ряда
  * (поиск + фильтры), где `flex-1` растягивает его по ширине.
  * Если поиск стоит отдельной строкой внутри вертикального flex-контейнера
  * (PageShell и его копии на /dialogues, /profile), тот же `flex-1` растягивает
- * блок ПО ВЫСОТЕ — под инпутом появляется пустой провал, а всё, что ниже,
+ * блок по высоте - под инпутом появляется пустой провал, а всё, что ниже,
  * прижимается к низу окна. В таких местах передавайте className="w-full".
  */
 export function SearchInput({
@@ -216,7 +230,7 @@ export function PillTabs<T extends string>({
   );
 }
 
-// ── Кастомный выпадающий список (порт makeCustomSelect, scripts.js:30-130) ──
+// Кастомный выпадающий список
 
 export interface SelectOption<T extends string = string> {
   value: T;
@@ -225,8 +239,8 @@ export interface SelectOption<T extends string = string> {
 }
 
 /**
- * Замена нативному <select> в стиле платформы. Управляемый компонент:
- * пустое значение показывает placeholder, как опция с value="" в легаси.
+ * Замена нативному <select> в стиле платформы. Управляемый компонент: пустое
+ * значение показывает placeholder.
  */
 export function CustomSelect<T extends string = string>({
   value,
@@ -251,7 +265,7 @@ export function CustomSelect<T extends string = string>({
 
   const selected = options.find((o) => o.value === value) || null;
 
-  // Закрытие по клику вне и по Esc (порт onDocClick).
+  // Закрытие по клику вне и по Esc.
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {

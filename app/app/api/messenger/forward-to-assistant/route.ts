@@ -1,12 +1,12 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { randomUUID } from 'node:crypto';
-import { prisma } from '@/lib/db';
+import type { Prisma } from '@prisma/client';
+import { isoUtc, prisma } from '@/lib/db';
 import { badRequest, initials, requireUser, shortName } from '@/lib/auth';
 import type { CurrentUser } from '@/lib/auth';
+import { asUuid } from '@/lib/ids';
 
-// Пересылка выбранных сообщений в НОВЫЙ диалог с ассистентом.
-// Порт POST /api/messenger/forward-to-assistant из backend/routes/messenger.py.
+// Пересылка выбранных сообщений в новый диалог с ассистентом.
 //
 // Снимок сообщений кладётся в dialogue.pending_forward: страница чата покажет
 // его как пересланный блок, а при первой отправке он попадёт в контекст модели.
@@ -27,10 +27,7 @@ export async function POST(request: NextRequest) {
 
   // Тело приходит с Body(..., embed=True), то есть завёрнутым в имя параметра.
   const raw = Array.isArray(body.message_ids) ? body.message_ids : [];
-  const ids = raw
-    .map((v) => Number(v))
-    .filter((v) => Number.isInteger(v) && v)
-    .slice(0, 30);
+  const ids = [...new Set(raw.map(asUuid).filter((v): v is string => v !== null))].slice(0, 30);
   if (!ids.length) return badRequest('Не выбраны сообщения');
 
   const msgs = await prisma.user_messages.findMany({
@@ -38,10 +35,10 @@ export async function POST(request: NextRequest) {
     orderBy: { id: 'asc' },
   });
 
-  // Имена отправителей и собеседников — одним запросом вместо обхода по одному.
-  const peopleIds = new Set<number>();
+  // Имена отправителей и собеседников - одним запросом вместо обхода по одному.
+  const peopleIds = new Set<string>();
   for (const m of msgs) {
-    if (m.sender_id) peopleIds.add(m.sender_id);
+    peopleIds.add(m.sender_id);
     if (m.recipient_id) peopleIds.add(m.recipient_id);
   }
   const people = peopleIds.size
@@ -53,9 +50,9 @@ export async function POST(request: NextRequest) {
     where: { message_id: { in: ids } },
     orderBy: { id: 'asc' },
   });
-  const filesByMsg = new Map<number, typeof files>();
+  const filesByMsg = new Map<string, typeof files>();
   for (const f of files) {
-    if (f.message_id == null) continue; // вложение без привязки — пропускаем
+    if (f.message_id == null) continue; // вложение без привязки - пропускаем
     const list = filesByMsg.get(f.message_id) || [];
     list.push(f);
     filesByMsg.set(f.message_id, list);
@@ -63,12 +60,12 @@ export async function POST(request: NextRequest) {
 
   const items: Record<string, unknown>[] = [];
   for (const m of msgs) {
-    // Только сообщения из бесед, где пересылающий — участник.
+    // Только сообщения из бесед, где пересылающий - участник.
     if (!m.is_general && user.id !== m.sender_id && user.id !== m.recipient_id) continue;
     const fm = (m.forwarded_meta || {}) as Record<string, unknown>;
-    if (fm.system) continue; // служебные строки («закреплено» и т.п.) не пересылаем
+    if (fm.system) continue; // служебные строки ("закреплено" и т.п.) не пересылаем
 
-    const sender = m.sender_id ? byId.get(m.sender_id) : undefined;
+    const sender = byId.get(m.sender_id);
     let chatLabel: string;
     if (m.is_general) {
       chatLabel = 'Общий чат';
@@ -82,8 +79,7 @@ export async function POST(request: NextRequest) {
       from_name: fm.ai ? 'HR-ассистент' : sender ? shortName(sender) : '—',
       from_initials: sender ? initials(sender) : '?',
       chat: chatLabel,
-      // Время с явной меткой UTC — как в Python (.replace(tzinfo=utc).isoformat()).
-      sent_at: (m.created_at ?? new Date()).toISOString().replace('Z', '+00:00'),
+      sent_at: isoUtc(m.created_at),
       text: (fm.content as string) || m.content || '',
       ai: Boolean(fm.ai),
       attachments: (filesByMsg.get(m.id) || []).map((f) => ({
@@ -105,21 +101,10 @@ export async function POST(request: NextRequest) {
     data: {
       user_id: user.id,
       title: DEFAULT_TITLE,
-      is_finished: false,
-      memory_covers_up_to: 0,
-      // Prisma требует явного приведения: снимок хранится JSON-массивом.
-      pending_forward: items as unknown as import('@prisma/client').Prisma.InputJsonValue,
+      pending_forward: items as unknown as Prisma.InputJsonValue,
     },
     select: { id: true },
   });
-  const session = await prisma.chat_sessions.create({
-    data: { id: randomUUID().replace(/-/g, ''), dialogue_id: dialogue.id },
-    select: { id: true },
-  });
 
-  return NextResponse.json({
-    success: true,
-    dialogue_id: dialogue.id,
-    session_id: session.id,
-  });
+  return NextResponse.json({ success: true, dialogue_id: dialogue.id });
 }

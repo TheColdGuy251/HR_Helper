@@ -6,10 +6,10 @@ import { Card, EmptyState, ErrorCallout, PrimaryButton, SearchInput } from '@/co
 import GroupBlocks, { buildSections } from '@/components/kb/group-blocks';
 import KbFilters, { type FilterDef } from '@/components/kb/filters-modal';
 
-// Вкладка «Веб-источники» — порт loadSources/renderSources из kb.js.
+// Вкладка "Веб-источники".
 
 interface KbSource {
-  id: number;
+  id: string;
   name: string;
   url: string;
   is_enabled: boolean;
@@ -17,7 +17,7 @@ interface KbSource {
   refresh_interval_hours: number;
   last_crawled_at: string | null;
   last_status: string | null;
-  document_id: number | null;
+  document_id: string | null;
   doc_status: string | null;
   chunks_count: number;
 }
@@ -25,13 +25,13 @@ interface KbSource {
 const inputCls =
   'w-full px-4 py-2.5 bg-white border border-gray-200 rounded-xl focus:outline-none focus:border-[#2563eb] text-sm text-slate-700';
 
-/** Группа источника — сайт (hostname), как в kb.js:765. */
+/** Группа источника - сайт (hostname). */
 function srcGroupOf(s: KbSource): { key: string; name: string } {
   let host = 'прочее';
   try {
     host = new URL(s.url).hostname.replace(/^www\./, '') || 'прочее';
   } catch {
-    /* некорректный URL — в «прочее» */
+    /* некорректный URL - в "прочее" */
   }
   return { key: host, name: host };
 }
@@ -41,7 +41,7 @@ export default function SourcesTab({ canEdit }: { canEdit: boolean }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
-  // Фильтры вкладки — все в модалке «Фильтры» (kb.html:285-310).
+  // Фильтры вкладки - все в модалке "Фильтры".
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [name, setName] = useState('');
   const [url, setUrl] = useState('');
@@ -83,7 +83,7 @@ export default function SourcesTab({ canEdit }: { canEdit: boolean }) {
       setUrl('');
       setIntervalHours('24');
       load(true);
-      // Индексация идёт в фоне — подтягиваем статус по мере готовности.
+      // Индексация идёт в фоне - подтягиваем статус по мере готовности.
       timersRef.current.push(setTimeout(() => load(true), 3000));
       timersRef.current.push(setTimeout(() => load(true), 9000));
     } catch (err) {
@@ -93,7 +93,7 @@ export default function SourcesTab({ canEdit }: { canEdit: boolean }) {
     }
   };
 
-  const patchSource = async (id: number, body: { priority?: number; is_enabled?: boolean }) => {
+  const patchSource = async (id: string, body: { priority?: number; is_enabled?: boolean }) => {
     try {
       await apiPatch(`/api/kb/sources/${id}`, body);
       load(true);
@@ -102,7 +102,7 @@ export default function SourcesTab({ canEdit }: { canEdit: boolean }) {
     }
   };
 
-  const deleteSource = async (id: number) => {
+  const deleteSource = async (id: string) => {
     if (!window.confirm('Удалить источник?')) return;
     try {
       await apiDelete(`/api/kb/sources/${id}`);
@@ -112,7 +112,7 @@ export default function SourcesTab({ canEdit }: { canEdit: boolean }) {
     }
   };
 
-  // Фильтры вкладки — порт srcPredicate из kb.js:699 + группа + поиск.
+  // Фильтры вкладки + группа + поиск.
   const q = search.trim().toLowerCase();
   const filtered = items.filter((s) => {
     if (filters.group && srcGroupOf(s).key !== filters.group) return false;
@@ -127,7 +127,7 @@ export default function SourcesTab({ canEdit }: { canEdit: boolean }) {
     return true;
   });
 
-  // Опции «Сайт» строим по полному списку (kb.js:165 fillGroupFilter).
+  // Опции "Сайт" строим по полному списку.
   const hosts = [...new Set(items.map((s) => srcGroupOf(s).key))].sort((a, b) => a.localeCompare(b, 'ru'));
   const filterDefs: FilterDef[] = [
     {
@@ -224,7 +224,7 @@ export default function SourcesTab({ canEdit }: { canEdit: boolean }) {
 
       {error && <ErrorCallout>{error}</ErrorCallout>}
 
-      {/* Плитка групп по сайтам (kb.js:765) */}
+      {/* Плитка групп по сайтам */}
       {loading ? (
         <EmptyState>Загрузка…</EmptyState>
       ) : filtered.length === 0 ? (
@@ -262,8 +262,8 @@ function SourceCard({
 }: {
   source: KbSource;
   canEdit: boolean;
-  onPatch: (id: number, body: { priority?: number; is_enabled?: boolean }) => void;
-  onDelete: (id: number) => void;
+  onPatch: (id: string, body: { priority?: number; is_enabled?: boolean }) => void;
+  onDelete: (id: string) => void;
 }) {
   // Состояние индексации распарсенного документа.
   let idxNote = 'индексируется…';

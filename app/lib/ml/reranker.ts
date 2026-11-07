@@ -2,7 +2,7 @@ import 'server-only';
 import path from 'node:path';
 
 // Кросс-энкодер для переупорядочивания результатов поиска.
-// Порт services/rag/reranker.py: та же модель jina-reranker-v2-base-multilingual,
+// Та же модель jina-reranker-v2-base-multilingual,
 // ONNX-файл которой уже скачан бэкендом и переиспользуется.
 //
 // Модель только мультиязычная: англоязычный фолбэк на русских текстах работает
@@ -63,7 +63,7 @@ async function getRanker(): Promise<Ranker | null> {
 
 /**
  * Переупорядочивает документы по релевантности запросу и возвращает первые topN.
- * Если модель недоступна, отдаёт исходный порядок — так же поступает Python.
+ * Если модель недоступна, отдаёт исходный порядок.
  */
 export async function rerank<T extends { text: string }>(
   query: string,

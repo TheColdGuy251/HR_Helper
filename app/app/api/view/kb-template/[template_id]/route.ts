@@ -3,9 +3,8 @@ import { parsePathId } from '@/lib/kb';
 import { kbTemplateView, viewResponse } from '@/lib/file-view';
 
 /**
- * Контекст просмотра шаблона документа (.docx — docx-preview, .pdf — нативно).
- * Порт GET /kb/templates/{template_id}/view?format=json из backend/routes/pages.py.
- * Про адрес /api/view/… см. комментарий в соседнем kb-document/route.ts.
+ * Контекст просмотра шаблона документа (.docx - docx-preview, .pdf - нативно).
+ * Про адрес /api/view/... см. комментарий в соседнем kb-document/route.ts.
  */
 
 type Ctx = { params: Promise<{ template_id: string }> };

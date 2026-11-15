@@ -32,13 +32,15 @@
     "pizzip": "^3.2.0",
     "react": "19.2.4",
     "react-dom": "19.2.4",
+    "reactflow": "^11.11.4",
     "sharp": "^0.35.3",
     "snowball-stemmers": "^0.6.0",
     "unpdf": "^1.8.0",
     "web-push": "^3.6.7",
     "xlsx": "^0.18.5",
     "yarn": "^1.22.22",
-    "zod": "latest"
+    "zod": "latest",
+    "zustand": "^5.1.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

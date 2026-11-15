@@ -17,6 +17,7 @@ const NAV_LINKS = [
   { href: '/dialogues', label: 'Диалоги', alsoActive: '/chat' },
   { href: '/messenger', label: 'Мессенджер' },
   { href: '/news', label: 'Новости' },
+  { href: '/editor', label: 'Редактор схем' },
 ];
 
 // Остальные разделы - иконками рядом с уведомлениями: заходят туда реже, а

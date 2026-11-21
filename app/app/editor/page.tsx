@@ -1,44 +1,80 @@
+// app/app/editor/page.tsx
 "use client";
 
-import React, { useCallback } from "react";
+import React, { useCallback, useRef } from "react";
 import ReactFlow, {
   Background,
   Controls,
   ReactFlowProvider,
-  useNodesState,
-  useEdgesState,
-  addEdge,
-  Connection,
 } from "reactflow";
 import "reactflow/dist/style.css";
-
-const initialNodes = [
-  { id: "1", position: { x: 100, y: 100 }, data: { label: "Вход" } },
-  { id: "2", position: { x: 400, y: 100 }, data: { label: "Выход" } },
-];
-const initialEdges = [{ id: "e1-2", source: "1", target: "2" }];
+import Sidebar from "@/components/editor/sidebar"; // (не забудь переименовать файл с маленькой буквы)
+import SettingsPanel from "@/components/editor/settingspanel";
+import { useGraphStore } from "@/app/store/useGraphStore";
+import { NodeType } from "@/app/types";
 
 function FlowEditor() {
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+  const { 
+    nodes, edges, onNodesChange, onEdgesChange, onConnect, 
+    setSelectedNodeId, addNode 
+  } = useGraphStore();
+  
+  const reactFlowWrapper = useRef<HTMLDivElement>(null);
 
-  const onConnect = useCallback(
-    (params: Connection) => setEdges((eds) => addEdge(params, eds)),
-    [setEdges]
+  const onNodeClick = useCallback((_: React.MouseEvent, node: any) => {
+    setSelectedNodeId(node.id);
+  }, [setSelectedNodeId]);
+
+  const onPaneClick = useCallback(() => {
+    setSelectedNodeId(null);
+  }, [setSelectedNodeId]);
+
+  const onDragOver = useCallback((event: React.DragEvent) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+  }, []);
+
+ const onDrop = useCallback((event: React.DragEvent) => {
+    event.preventDefault();
+    const type = event.dataTransfer.getData("application/reactflow") as NodeType;
+    const customLabel = event.dataTransfer.getData("application/reactflow-label");
+    
+    if (!type) return;
+
+      const reactFlowBounds = reactFlowWrapper.current?.getBoundingClientRect();
+      if (!reactFlowBounds) return;
+
+      const position = {
+        x: event.clientX - reactFlowBounds.left,
+        y: event.clientY - reactFlowBounds.top,
+      };
+
+      
+      addNode(type, position, customLabel); 
+    },
+    [addNode]
   );
 
   return (
-    <div style={{ width: "100vw", height: "100vh" }}>
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        onConnect={onConnect}
-      >
-        <Background />
-        <Controls />
-      </ReactFlow>
+    <div className="flex h-screen w-full">
+      <Sidebar />
+      <div className="flex-1 h-full relative" ref={reactFlowWrapper}>
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onConnect={onConnect}
+          onDragOver={onDragOver}
+          onDrop={onDrop}
+          onNodeClick={onNodeClick}
+          onPaneClick={onPaneClick}
+        >
+          <Background />
+          <Controls />
+        </ReactFlow>
+      </div>
+      <SettingsPanel />
     </div>
   );
 }
